@@ -22,6 +22,7 @@ interface SpacetimeExplorerProps {
   remainingQuota?: number | null;
   onQuotaUpdate?: (quota: number) => void;
   isAdmin?: boolean;
+  showLogs?: boolean;
 }
 
 interface Step {
@@ -42,7 +43,8 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   hideHeader = false,
   remainingQuota,
   onQuotaUpdate,
-  isAdmin = false
+  isAdmin = false,
+  showLogs = false
 }, ref) {
   const [source, setSource] = useState(() => initialSource || localStorage.getItem("last_explorer_source") || "");
   const [target, setTarget] = useState(() => initialTarget || localStorage.getItem("last_explorer_target") || "");
@@ -190,11 +192,13 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     };
     
     const updateLastStep = (status: 'success' | 'error' | 'pending', msg?: string) => {
+      if (status === 'error') {
+        addLog(`Step failed: ${msg || "current step"}`, 'error');
+      }
+
       setSearchSteps(prev => {
         if (prev.length === 0) return prev;
         const last = prev[prev.length - 1];
-        if (status === 'success') addLog(`Step completed: ${msg || last.msg}`);
-        if (status === 'error') addLog(`Step failed: ${msg || last.msg}`, 'error');
         return [...prev.slice(0, -1), { msg: msg || last.msg, status }];
       });
     };
@@ -453,8 +457,8 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   const content = (
     <div className={`flex flex-col ${isInline ? "h-auto max-h-full sm:max-h-[600px] w-full" : "max-h-[70vh] w-full"} overflow-y-auto custom-scrollbar transition-all duration-300 ${!isCollapsed ? (isInline ? "p-3 sm:p-4" : "p-6") : "p-0"}`}>
       {!isCollapsed && (
-        <div className={`flex flex-col h-full shrink-0 ${isInline && (isLoading || showResults || error) ? "lg:grid lg:grid-cols-12 lg:gap-6" : ""}`}>
-          <div className={`${isInline && (isLoading || showResults || error) ? "lg:col-span-12 xl:col-span-5" : "w-full"}`}>
+        <div className={`flex flex-col h-full shrink-0 ${isInline && showLogs && (isLoading || showResults || error) ? "lg:grid lg:grid-cols-12 lg:gap-6" : ""}`}>
+          <div className={`${isInline && showLogs && (isLoading || showResults || error) ? "lg:col-span-12 xl:col-span-5" : "w-full"}`}>
             {!showResults && !isLoading && !error && !hideInputs && (
               <motion.div 
                 initial={{ opacity: 0 }}
@@ -661,43 +665,61 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
           </div>
 
           {/* Area 2: Detailed Interaction Process Logs (Admin Only) */}
-          {isInline && (isLoading || showResults || error) && (
+          {showLogs && (isLoading || showResults || error) && (
             <div className="hidden lg:flex lg:col-span-12 xl:col-span-7 flex-col bg-slate-50 rounded-3xl overflow-hidden border border-slate-200 shadow-xl h-[400px] lg:h-full min-h-[400px]">
                <div className="px-4 py-3 bg-white border-b border-slate-100 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest font-mono">Deep Intelligence Interaction Log</span>
                   </div>
-                  <div className="flex gap-1.5">
-                    <div className="w-2 h-2 rounded-full bg-slate-200"></div>
-                    <div className="w-2 h-2 rounded-full bg-slate-200"></div>
-                    <div className="w-2 h-2 rounded-full bg-slate-200"></div>
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => {
+                        const content = detailedLogs
+                          .filter(log => error ? true : (log.type === 'info' || log.type === 'error'))
+                          .map(log => `[${log.timestamp}] ${log.type.toUpperCase()}: ${log.msg}${log.data ? '\n' + JSON.stringify(log.data, null, 2) : ''}`)
+                          .join('\n\n');
+                        navigator.clipboard.writeText(content);
+                        alert("日志已复制到剪贴板");
+                      }}
+                      className="text-[9px] font-bold text-indigo-600 hover:text-indigo-700 bg-indigo-50 px-2 py-1 rounded-md transition-colors"
+                    >
+                      复制全部
+                    </button>
+                    <div className="flex gap-1.5 ml-2">
+                      <div className="w-2 h-2 rounded-full bg-slate-200"></div>
+                      <div className="w-2 h-2 rounded-full bg-slate-200"></div>
+                      <div className="w-2 h-2 rounded-full bg-slate-200"></div>
+                    </div>
                   </div>
                </div>
-               <div ref={logsScrollRef} className="flex-1 overflow-y-auto p-4 custom-scrollbar font-mono text-[10px] space-y-3">
+               <div ref={logsScrollRef} className="flex-1 overflow-y-auto p-4 custom-scrollbar font-mono text-[10px] space-y-2 select-text">
                   {detailedLogs.length === 0 && (
                     <div className="h-full flex items-center justify-center text-slate-400 italic">
                       等待检索协议启动...
                     </div>
                   )}
-                  {detailedLogs.map((log, i) => (
-                    <div key={i} className={`p-3 rounded-xl border leading-tight ${
-                      log.type === 'error' ? 'bg-red-50 border-red-100 text-red-600' :
-                      log.type === 'ai-req' ? 'bg-indigo-50 border-indigo-100 text-indigo-600' :
-                      log.type === 'ai-res' ? 'bg-emerald-50 border-emerald-100 text-emerald-600' :
-                      'bg-white border-slate-200 text-slate-600 shadow-sm'
-                    }`}>
-                      <div className="flex items-center justify-between mb-1 opacity-60">
-                        <span className="font-bold">[{log.timestamp}] {log.type.toUpperCase()}</span>
+                  <div className="flex flex-col gap-1">
+                    {detailedLogs.filter(log => error ? true : (log.type === 'info' || log.type === 'error')).map((log, i) => (
+                      <div key={i} className="py-1 border-b border-slate-100 last:border-0">
+                        <div className={`flex items-center gap-2 mb-0.5 ${
+                          log.type === 'error' ? 'text-red-600' :
+                          log.type === 'ai-req' ? 'text-indigo-600' :
+                          log.type === 'ai-res' ? 'text-emerald-600' :
+                          'text-slate-400'
+                        }`}>
+                          <span className="font-bold whitespace-nowrap">[{log.timestamp}]</span>
+                          <span className="font-black uppercase tracking-tighter text-[8px] px-1 bg-slate-100 rounded">{log.type}</span>
+                          <span className="font-bold text-slate-700">{log.msg}</span>
+                        </div>
+                        {log.data && (
+                          <pre className="mt-1 p-2 bg-slate-200/30 rounded border border-slate-200/50 text-[9px] overflow-x-auto whitespace-pre-wrap break-all max-h-[300px] text-slate-500">
+                            {JSON.stringify(log.data, null, 2)}
+                          </pre>
+                        )}
                       </div>
-                      <div className="font-bold mb-1">{log.msg}</div>
-                      {log.data && (
-                        <pre className="mt-1 p-2 bg-slate-100/50 rounded-lg border border-slate-200/50 text-[9px] overflow-x-auto whitespace-pre-wrap break-all max-h-[300px] text-slate-500">
-                          {JSON.stringify(log.data, null, 2)}
-                        </pre>
-                      )}
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                   <div id="logs-end"></div>
                </div>
             </div>

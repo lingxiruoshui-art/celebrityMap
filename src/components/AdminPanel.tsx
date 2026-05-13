@@ -826,6 +826,7 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
                     onRefreshArchive={fetchArchive}
                     onSelectPerson={() => {}}
                     isAdmin={true}
+                    showLogs={true}
                   />
                 </div>
               </div>
