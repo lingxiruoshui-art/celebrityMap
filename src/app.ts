@@ -221,7 +221,32 @@ async function callAI(c: any, db: DatabaseAdapter, prompt: string, responseForma
 }
 
 async function getPortraitUrl(c: any, name: string): Promise<string | null> {
+  const imagesBucket = c.env?.IMAGES;
+  const localPath = `/api/portraits/${encodeURIComponent(name.toLowerCase())}.jpg`;
+  
+  // Just return the local path, the lazy proxy will handle the rest
+  return localPath;
+}
+
+async function addRelationship(db: DatabaseAdapter, p1: number, p2: number, type: string) {
+  const min = Math.min(p1, p2);
+  const max = Math.max(p1, p2);
+  try {
+    await db.prepare("INSERT INTO relationships (person1_id, person2_id, relationship_type) VALUES (?, ?, ?)").run(min, max, type);
+  } catch(e) {}
+}
+
+app.get("/health", (c) => c.json({ status: "ok" }));
+
+// Internal helper to fetch and store image if missing
+async function fetchAndStoreImage(c: any, filename: string) {
+  const imagesBucket = c.env?.IMAGES;
+  if (!imagesBucket) return null;
+
+  // Extract name from portraits/name.jpg
+  const name = decodeURIComponent(filename.replace(/\.jpg$/i, ''));
   const headers = { "User-Agent": "HistoricalArchiveApp/1.0" };
+  
   try {
     let finalUrl = "";
     
@@ -261,48 +286,49 @@ async function getPortraitUrl(c: any, name: string): Promise<string | null> {
       finalUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent("Historical portrait of " + name + ", realistic oil painting style, highly detailed, historical accuracy")}`;
     }
 
-    const imagesBucket = c.env?.IMAGES;
-    if (imagesBucket && finalUrl) {
-        try {
-            const imageRes = await fetch(finalUrl, { headers: { "User-Agent": "HistoricalArchiveApp/1.0" } });
-            if (!imageRes.ok) throw new Error(`HTTP error ${imageRes.status}`);
-            const contentType = imageRes.headers.get("content-type") || "image/jpeg";
-            const buffer = await imageRes.arrayBuffer();
-            const key = `portraits/${encodeURIComponent(name.toLowerCase())}.jpg`;
-            await imagesBucket.put(key, buffer, { httpMetadata: { contentType } });
-            
-            // If R2 upload is successful, use our own endpoint to serve the image
-            return `/api/portraits/${encodeURIComponent(name.toLowerCase())}.jpg`;
-        } catch (e) { console.error("R2 Error:", e); }
+    if (finalUrl) {
+      const imageRes = await fetch(finalUrl, { headers });
+      if (imageRes.ok) {
+        const contentType = imageRes.headers.get("content-type") || "image/jpeg";
+        const buffer = await imageRes.arrayBuffer();
+        const key = `portraits/${filename}`;
+        await imagesBucket.put(key, buffer, { httpMetadata: { contentType: contentType } });
+        return { body: buffer, contentType };
+      }
     }
-    return finalUrl;
   } catch (e) {
-    return null;
+    console.error("Lazy transfer error for", name, e);
   }
+  return null;
 }
-
-async function addRelationship(db: DatabaseAdapter, p1: number, p2: number, type: string) {
-  const min = Math.min(p1, p2);
-  const max = Math.max(p1, p2);
-  try {
-    await db.prepare("INSERT INTO relationships (person1_id, person2_id, relationship_type) VALUES (?, ?, ?)").run(min, max, type);
-  } catch(e) {}
-}
-
-app.get("/health", (c) => c.json({ status: "ok" }));
 
 app.get("/portraits/:filename", async (c) => {
   const imagesBucket = c.env?.IMAGES;
-  if (!imagesBucket) return c.json({ error: "R2 Image Storage not configured" }, 404);
-  
   const filename = c.req.param("filename");
-  const object = await imagesBucket.get(`portraits/${filename}`);
-  if (!object) return c.json({ error: "Image not found" }, 404);
+  
+  if (!imagesBucket) {
+      // If R2 is not available, maybe try to redirect to Wikidata? 
+      // But let's just 404 to avoid complexity
+      return c.json({ error: "R2 Image Storage not configured" }, 404);
+  }
+  
+  let object = await imagesBucket.get(`portraits/${filename}`);
+  
+  if (!object) {
+    // Lazy transfer!
+    const result = await fetchAndStoreImage(c, filename);
+    if (result) {
+      const headers = new Headers();
+      headers.set("Content-Type", result.contentType);
+      headers.set("Cache-Control", "public, max-age=31536000, immutable");
+      return new Response(result.body as any, { headers });
+    }
+    return c.json({ error: "Image not found" }, 404);
+  }
   
   const headers = new Headers();
   object.writeHttpMetadata(headers);
   headers.set("etag", object.httpEtag);
-  // Add caching headers to improve performance and save R2 read costs
   headers.set("Cache-Control", "public, max-age=31536000, immutable");
   
   return new Response(object.body as any, { headers });
@@ -371,111 +397,30 @@ app.post("/admin/repair-images", async (c) => {
   if (c.req.header("x-admin-password") !== getAdminPassword(c)) return c.json({ error: "Unauthorized" }, 401);
   const db = await getDb(c);
   
-  c.executionCtx.waitUntil((async () => {
-    const people = await db.prepare("SELECT * FROM people").all() as any[];
-    const headers = { "User-Agent": "HistoricalArchiveApp/1.0" };
-    const imagesBucket = c.env?.IMAGES;
-    if (!imagesBucket) return;
-    
-    for (const p of people) {
-        if (!p.image_url) continue;
-        console.log("Repairing image for:", p.name);
-        try {
-            // Re-fetch from Wikidata to get the true image URL
-            let finalUrl = "";
-            const searchWikidata = async (lang: string) => {
-              const res = await fetch(`https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(p.name)}&language=${lang}&format=json`, { headers });
-              const queryData = await res.json();
-              if (queryData.search && queryData.search.length > 0) {
-                const entity = queryData.search[0];
-                const entityRes = await fetch(`https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${entity.id}&props=claims&format=json`, { headers });
-                const entityData = await entityRes.json();
-                const claims = entityData.entities[entity.id].claims;
-                if (claims && claims.P18 && claims.P18.length > 0) {
-                  const imageName = claims.P18[0].mainsnak.datavalue.value;
-                  const md5Res = await fetch(`https://en.wikipedia.org/w/api.php?action=query&titles=File:${encodeURIComponent(imageName)}&prop=imageinfo&iiprop=url&format=json`, { headers });
-                  const md5Data = await md5Res.json();
-                  const pages = md5Data.query.pages;
-                  const pageId = Object.keys(pages)[0];
-                  if (pageId !== "-1" && pages[pageId].imageinfo) {
-                    return pages[pageId].imageinfo[0].url;
-                  }
-                }
-              }
-              return "";
-            };
-            
-            finalUrl = await searchWikidata("zh") || await searchWikidata("en");
-            
-            if (!finalUrl) {
-                const wikiRes = await fetch(`https://zh.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(p.name)}&prop=pageimages&format=json&pithumbsize=500`, { headers });
-                const wikiData = await wikiRes.json();
-                const pages = wikiData.query.pages;
-                const pageId = Object.keys(pages)[0];
-                if (pageId !== "-1" && pages[pageId].thumbnail) {
-                    finalUrl = pages[pageId].thumbnail.source;
-                }
-            }
-            
-            if (finalUrl) {
-                const imageRes = await fetch(finalUrl, { headers });
-                if (imageRes.ok) {
-                    const contentType = imageRes.headers.get("content-type") || "image/jpeg";
-                    const buffer = await imageRes.arrayBuffer();
-                    const key = `portraits/${encodeURIComponent(p.name.toLowerCase())}.jpg`;
-                    await imagesBucket.put(key, buffer, { httpMetadata: { contentType } });
-                    const newUrl = `/api/portraits/${encodeURIComponent(p.name.toLowerCase())}.jpg`;
-                    await db.prepare("UPDATE people SET image_url = ? WHERE id = ?").run(newUrl, p.id);
-                    console.log("Repaired image for:", p.name, "size:", buffer.byteLength);
-                } else {
-                    console.error("Failed to fetch final url for:", p.name);
-                }
-            }
-        } catch (e) {
-            console.error("Repair error for", p.name, e);
-        }
-    }
-  })());
-
-  return c.json({ success: true, message: "Repairing images in background" });
+  // Instead of batch processing, we just update all database records to use the local proxy path
+  // This triggers the lazy-loading logic in the portraits route when each image is requested
+  try {
+      const people = await db.prepare("SELECT id, name FROM people").all() as any[];
+      for (const p of people) {
+          const newUrl = `/api/portraits/${encodeURIComponent(p.name.toLowerCase())}.jpg`;
+          await db.prepare("UPDATE people SET image_url = ? WHERE id = ?").run(newUrl, p.id);
+      }
+      return c.json({ success: true, message: "所有人物图片已切换至本地代理模式（按需异步加载）" });
+  } catch (e: any) {
+      return c.json({ error: e.message }, 500);
+  }
 });
 
 app.get("/archive", async (c) => {
   const db = await getDb(c);
-  const people = await db.prepare("SELECT * FROM people ORDER BY created_at DESC").all() as any[];
+  let people = await db.prepare("SELECT * FROM people ORDER BY created_at DESC").all() as any[];
   const relationships = await db.prepare("SELECT * FROM relationships").all();
   
-  const syncTask = (async () => {
-      const imagesBucket = c.env?.IMAGES;
-      if (!imagesBucket) return;
-      for (const p of people) {
-          if (p.image_url && p.image_url.startsWith("http") && !p.image_url.includes("/api/portraits/")) {
-              try {
-                  const imageRes = await fetch(p.image_url, { headers: { "User-Agent": "HistoricalArchiveApp/1.0" } });
-                  if (imageRes.ok) {
-                      const contentType = imageRes.headers.get("content-type") || "image/jpeg";
-                      const buffer = await imageRes.arrayBuffer();
-                      const key = `portraits/${encodeURIComponent(p.name.toLowerCase())}.jpg`;
-                      await imagesBucket.put(key, buffer, { httpMetadata: { contentType } });
-                      const newUrl = `/api/portraits/${encodeURIComponent(p.name.toLowerCase())}.jpg`;
-                      await db.prepare("UPDATE people SET image_url = ? WHERE id = ?").run(newUrl, p.id);
-                  }
-              } catch (e) {
-                  console.error(`Sync image error for ${p.name}:`, e);
-              }
-          }
-      }
-  })();
-
-  try {
-      if (c.executionCtx && c.executionCtx.waitUntil) {
-          c.executionCtx.waitUntil(syncTask);
-      } else {
-          syncTask.catch(console.error);
-      }
-  } catch (e) {
-      syncTask.catch(console.error);
-  }
+  // Transform image_url to local proxy path if it's not already, to enable lazy loading/transfer
+  people = people.map(p => ({
+    ...p,
+    image_url: `/api/portraits/${encodeURIComponent(p.name.toLowerCase())}.jpg`
+  }));
 
   return c.json({ people, relationships });
 });

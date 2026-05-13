@@ -997,8 +997,8 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
                   </div>
                   <div className="flex flex-col sm:flex-row items-center gap-4 border border-orange-100 bg-orange-50/30 p-4 rounded-2xl">
                      <div className="flex-1">
-                        <h5 className="text-sm font-bold text-slate-800 mb-1">修复损坏的立绘 / 照片转存</h5>
-                        <p className="text-xs text-slate-500">如果发现人物列表中的图片加载失败或显示为空白（通常是因为防盗链或上传截断），请点击此按钮让服务器尝试重新拉取并存入 Cloudflare R2。</p>
+                        <h5 className="text-sm font-bold text-slate-800 mb-1">图片代理模式 / 异步转存修复</h5>
+                        <p className="text-xs text-slate-500">如果发现人物列表中的图片加载失败或显示为空白，请点击此按钮将所有人物图片切换为“本地代理模式”。系统将在用户访问该图片时，自动从云端检索并转存至 R2。</p>
                      </div>
                      <button 
                        onClick={async () => {
