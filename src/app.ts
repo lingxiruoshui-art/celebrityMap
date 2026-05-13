@@ -15,6 +15,11 @@ export const app = new Hono<{
   Variables: { dbAdapter: DatabaseAdapter } 
 }>().basePath('/api');
 
+app.onError((err, c) => {
+  console.error("Hono error:", err);
+  return c.json({ error: err.message || "Internal Server Error" }, 500);
+});
+
 // Global for Node fallback
 let nodeDbInstance: DatabaseAdapter | null = null;
 let dbInitialized = false;
@@ -28,12 +33,12 @@ async function getDb(c: any): Promise<DatabaseAdapter> {
     // Native D1 binding
     db = new D1DatabaseAdapter(c.env.DB);
   } else {
-    throw new Error("No database adapter provided");
+    throw new Error(`No database adapter provided. Ensure D1 is bound as 'DB'. Environment keys available: ${c.env ? Object.keys(c.env).join(', ') : 'none'}`);
   }
   
   if (!dbInitialized) {
-    await db.exec(`
-      CREATE TABLE IF NOT EXISTS people (
+    const initQueries = [
+      `CREATE TABLE IF NOT EXISTS people (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT UNIQUE NOT NULL,
         category TEXT NOT NULL,
@@ -48,9 +53,8 @@ async function getDb(c: any): Promise<DatabaseAdapter> {
         latitude REAL DEFAULT 0,
         longitude REAL DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-      
-      CREATE TABLE IF NOT EXISTS relationships (
+      )`,
+      `CREATE TABLE IF NOT EXISTS relationships (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         person1_id INTEGER NOT NULL,
         person2_id INTEGER NOT NULL,
@@ -58,20 +62,21 @@ async function getDb(c: any): Promise<DatabaseAdapter> {
         FOREIGN KEY(person1_id) REFERENCES people(id),
         FOREIGN KEY(person2_id) REFERENCES people(id),
         UNIQUE(person1_id, person2_id)
-      );
-
-      CREATE TABLE IF NOT EXISTS config (
+      )`,
+      `CREATE TABLE IF NOT EXISTS config (
         key TEXT PRIMARY KEY,
         value TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS guest_usage (
+      )`,
+      `CREATE TABLE IF NOT EXISTS guest_usage (
         ip TEXT,
         date TEXT,
         count INTEGER,
         PRIMARY KEY(ip, date)
-      );
-    `);
+      )`
+    ];
+    for (const q of initQueries) {
+      await db.prepare(q).run();
+    }
     
     const migrations = [
       "ALTER TABLE people ADD COLUMN latitude REAL DEFAULT 0",
@@ -81,7 +86,7 @@ async function getDb(c: any): Promise<DatabaseAdapter> {
       "ALTER TABLE people ADD COLUMN birthplace TEXT"
     ];
     for (const m of migrations) {
-      try { await db.exec(m); } catch (e) {}
+      try { await db.prepare(m).run(); } catch (e) {}
     }
     dbInitialized = true;
   }
