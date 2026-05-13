@@ -683,12 +683,17 @@ export default function NetworkGraph({
         <div 
           className="absolute z-[100] pointer-events-none"
           style={{ 
-            left: selectedRelationship.x, 
+            left: Math.max(
+              Math.min(400, dimensions.width) / 2 + 8,
+              Math.min(dimensions.width - Math.min(400, dimensions.width) / 2 - 8, selectedRelationship.x)
+            ),
             top: selectedRelationship.y,
-            transform: 'translate(-50%, -100%) translateY(-20px)'
+            transform: selectedRelationship.y < 350 
+              ? 'translate(-50%, 0) translateY(20px)' 
+              : 'translate(-50%, -100%) translateY(-20px)'
           }}
         >
-          <div className="bg-white/95 backdrop-blur-md p-4 rounded-2xl shadow-2xl border border-indigo-100 w-[400px] pointer-events-auto animate-in fade-in zoom-in slide-in-from-bottom-2 duration-300">
+          <div className={`bg-white/95 backdrop-blur-md p-4 rounded-2xl shadow-2xl border border-indigo-100 w-[calc(100vw-1rem)] sm:w-[400px] max-w-[400px] pointer-events-auto animate-in fade-in zoom-in duration-300 ${selectedRelationship.y < 350 ? 'slide-in-from-top-2' : 'slide-in-from-bottom-2'}`}>
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-1.5 px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded-full text-[9px] font-black uppercase tracking-wider border border-indigo-100">
                 <Quote className="w-2.5 h-2.5" />

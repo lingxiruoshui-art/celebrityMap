@@ -504,34 +504,34 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 xl:p-8 backdrop-blur-md bg-slate-900/40">
-      <div className="bg-white rounded-[2rem] shadow-2xl shadow-slate-900/20 w-full max-w-6xl overflow-hidden flex h-[85vh]">
+      <div className="bg-white lg:rounded-[2rem] rounded-2xl shadow-2xl shadow-slate-900/20 w-full max-w-6xl overflow-hidden flex flex-col md:flex-row h-[90vh] md:h-[85vh]">
         {/* Sidebar */}
-        <div className="w-56 shrink-0 border-r border-slate-100 flex flex-col bg-slate-50/50">
-          <div className="p-6 h-20 flex items-center gap-3 border-b border-slate-100 bg-white">
-             <Settings className="w-6 h-6 text-indigo-600" />
-             <h2 className="font-bold text-slate-800 tracking-tight">后台管理</h2>
+        <div className="w-full md:w-56 shrink-0 border-b md:border-b-0 md:border-r border-slate-100 flex flex-col bg-slate-50/50">
+          <div className="p-4 md:p-6 h-14 md:h-20 flex items-center gap-3 border-b border-slate-100 bg-white shrink-0">
+             <Settings className="w-5 h-5 md:w-6 md:h-6 text-indigo-600" />
+             <h2 className="font-bold text-slate-800 tracking-tight text-lg md:text-xl">后台管理</h2>
           </div>
           
-          <nav className="flex-1 p-4 space-y-2">
+          <nav className="p-2 md:p-4 flex flex-row md:flex-col gap-2 space-y-0 md:space-y-2 overflow-x-auto custom-scrollbar shrink-0 bg-white md:bg-transparent">
             <button 
               onClick={() => setActiveTab("archive_plus")}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-bold transition-all ${activeTab === 'archive_plus' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'text-slate-500 hover:bg-white hover:text-slate-800 hover:shadow-sm border border-transparent hover:border-slate-200'}`}
+              className={`flex items-center gap-2 md:gap-3 px-3 py-2 md:px-4 md:py-3 rounded-xl md:rounded-2xl text-xs md:text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'archive_plus' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'text-slate-500 hover:bg-white hover:text-slate-800 hover:shadow-sm border border-transparent hover:border-slate-200'}`}
             >
-              <UserPlus className="w-4 h-4" />
+              <UserPlus className="w-3.5 h-3.5 md:w-4 md:h-4 shrink-0" />
               <span>时空入库</span>
             </button>
             <button 
               onClick={() => setActiveTab("archive")}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-bold transition-all ${activeTab === 'archive' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'text-slate-500 hover:bg-white hover:text-slate-800 hover:shadow-sm border border-transparent hover:border-slate-200'}`}
+              className={`flex items-center gap-2 md:gap-3 px-3 py-2 md:px-4 md:py-3 rounded-xl md:rounded-2xl text-xs md:text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'archive' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'text-slate-500 hover:bg-white hover:text-slate-800 hover:shadow-sm border border-transparent hover:border-slate-200'}`}
             >
-              <BookOpen className="w-4 h-4" />
+              <BookOpen className="w-3.5 h-3.5 md:w-4 md:h-4 shrink-0" />
               <span>馆藏管理</span>
             </button>
             <button 
               onClick={() => setActiveTab("config")}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-bold transition-all ${activeTab === 'config' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'text-slate-500 hover:bg-white hover:text-slate-800 hover:shadow-sm border border-transparent hover:border-slate-200'}`}
+              className={`flex items-center gap-2 md:gap-3 px-3 py-2 md:px-4 md:py-3 rounded-xl md:rounded-2xl text-xs md:text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'config' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'text-slate-500 hover:bg-white hover:text-slate-800 hover:shadow-sm border border-transparent hover:border-slate-200'}`}
             >
-              <Settings className="w-4 h-4" />
+              <Settings className="w-3.5 h-3.5 md:w-4 md:h-4 shrink-0" />
               <span>系统配置</span>
             </button>
           </nav>
@@ -542,18 +542,18 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
           <AnimatePresence>
             {notification && (
               <motion.div
-                initial={{ opacity: 0, x: 20, y: -20 }}
-                animate={{ opacity: 1, x: 0, y: 0 }}
-                exit={{ opacity: 0, x: 20 }}
-                className={`absolute top-4 right-4 z-[60] px-4 py-2 rounded-xl shadow-xl font-bold text-xs flex items-center gap-2 border backdrop-blur-md ${
+                initial={{ opacity: 0, y: -20, x: "-50%" }}
+                animate={{ opacity: 1, y: 0, x: "-50%" }}
+                exit={{ opacity: 0, y: -20, x: "-50%" }}
+                className={`absolute top-6 left-1/2 z-[70] px-5 py-2.5 rounded-full shadow-2xl font-bold text-sm flex items-center gap-2 border backdrop-blur-md whitespace-nowrap ${
                   notification.type === 'success' 
-                  ? 'bg-emerald-500/90 text-white border-emerald-400' 
+                  ? 'bg-emerald-500/95 text-white border-emerald-400' 
                   : notification.type === 'error'
-                  ? 'bg-red-500/90 text-white border-red-400'
-                  : 'bg-indigo-500/90 text-white border-indigo-400'
+                  ? 'bg-red-500/95 text-white border-red-400'
+                  : 'bg-indigo-500/95 text-white border-indigo-400'
                 }`}
               >
-                {notification.type === 'success' ? <Sparkles className="w-3.5 h-3.5" /> : <Info className="w-3.5 h-3.5" />}
+                {notification.type === 'success' ? <Sparkles className="w-4 h-4" /> : <Info className="w-4 h-4" />}
                 {notification.msg}
               </motion.div>
             )}

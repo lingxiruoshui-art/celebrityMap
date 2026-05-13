@@ -188,59 +188,61 @@ export default function App() {
       <div className="absolute inset-0 z-0 bg-gradient-to-br from-slate-50/80 via-slate-100/90 to-white/80 pointer-events-none" />
 
       {/* Header: Navigation & System Status */}
-      <header className="h-16 shrink-0 border-b border-slate-200/50 bg-white/60 backdrop-blur-xl z-10 shadow-sm transition-all duration-500">
-        <div className="max-w-[1800px] w-full mx-auto h-full px-6 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <AnimatedLogo />
-            <div>
-              <h1 className="text-xl font-bold tracking-tight text-slate-800 capitalize drop-shadow-sm leading-tight">
+      <header className="h-14 sm:h-16 shrink-0 border-b border-slate-200/50 bg-white/60 backdrop-blur-xl z-10 shadow-sm transition-all duration-500">
+        <div className="max-w-[1800px] w-full mx-auto h-full px-3 sm:px-6 flex items-center justify-between">
+          <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-shrink-0">
+            <div className="scale-75 sm:scale-100 origin-left flex shrink-0">
+              <AnimatedLogo />
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-[17px] sm:text-xl font-bold tracking-tight text-slate-800 capitalize drop-shadow-sm leading-none sm:leading-tight whitespace-nowrap">
                 名人图谱
               </h1>
-              <p className="text-slate-400 font-bold text-[10px] uppercase tracking-[0.2em] mt-0.5">
+              <p className="text-slate-400 font-bold text-[8px] sm:text-[10px] uppercase tracking-[0.1em] sm:tracking-[0.2em] mt-0.5 sm:mt-1 whitespace-nowrap overflow-hidden text-ellipsis">
                 关系知识探索平台
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-6 text-sm">
-            <div className="hidden sm:flex text-sm px-4 py-1.5 rounded-xl border border-slate-200 text-indigo-600 font-medium bg-white/80 shadow-sm whitespace-nowrap items-center justify-center">
+          <div className="flex items-center gap-2 sm:gap-6 text-sm flex-shrink-0">
+            <div className="hidden lg:flex text-sm px-4 py-1.5 rounded-xl border border-slate-200 text-indigo-600 font-medium bg-white/80 shadow-sm whitespace-nowrap items-center justify-center">
               共收录：{data.people.length} 位
             </div>
             {remainingQuota !== null && !isAuthorized && (
               <div 
-                className="group relative flex items-center gap-2 px-3 py-1.5 bg-indigo-50 border border-indigo-100 rounded-xl transition-colors"
+                className="group relative flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1 sm:py-1.5 bg-indigo-50 border border-indigo-100 rounded-lg sm:rounded-xl transition-colors"
                 title="所有访客共用的每日探索额度，北京时间0点自动重置"
               >
-                <Zap className="w-3.5 h-3.5 text-indigo-500 animate-pulse" />
-                <span className="text-xs font-bold text-slate-600 flex items-center gap-1">
-                  <span className="hidden group-hover:inline transition-all duration-300">网站今日剩余次数:</span>
+                <Zap className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-indigo-500 animate-pulse" />
+                <span className="text-[10px] sm:text-xs font-bold text-slate-600 flex items-center gap-1">
+                  <span className="hidden sm:group-hover:inline transition-all duration-300 whitespace-nowrap">网站今日剩余次数:</span>
                   <span className="text-indigo-600 font-black">{remainingQuota}</span>
                 </span>
               </div>
             )}
             <button
               onClick={() => setIsAdminOpen(true)}
-              className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors border border-transparent hover:border-indigo-100"
+              className="p-1.5 sm:p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors border border-transparent hover:border-indigo-100"
               title="后台管理"
             >
-              <Settings className="w-5 h-5" />
+              <Settings className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
             {isAuthorized && (
               <button
                 onClick={handleLogout}
-                className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors border border-transparent hover:border-red-100"
+                className="p-1.5 sm:p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors border border-transparent hover:border-red-100"
                 title="退出登录探索模式"
               >
-                <LogOut className="w-5 h-5" />
+                <LogOut className="w-4 h-4 sm:w-5 sm:h-5" />
               </button>
             )}
           </div>
         </div>
       </header>
 
-      <main className="flex-1 flex overflow-hidden max-w-[1800px] w-full mx-auto relative z-10 p-6 pt-0 gap-6">
+      <main className="flex-1 flex flex-col lg:flex-row overflow-hidden max-w-[1800px] w-full mx-auto relative z-10 p-3 lg:p-6 pt-2 lg:pt-0 gap-3 lg:gap-6">
         {/* Left Column: List & Details */}
-        <aside className="w-[450px] xl:w-[500px] border border-slate-200/60 bg-white/70 backdrop-blur-2xl flex flex-col overflow-hidden rounded-3xl shadow-xl shadow-slate-200/50">
-          <div className="p-6 pb-0">
+        <aside className="w-full lg:w-[450px] xl:w-[500px] h-[45%] lg:h-auto border border-slate-200/60 bg-white/70 backdrop-blur-2xl flex flex-col overflow-hidden rounded-2xl lg:rounded-3xl shadow-xl shadow-slate-200/50 flex-shrink-0">
+          <div className="p-4 lg:p-6 pb-0">
             <div className="flex items-center gap-3 mb-4">
               <div className="relative flex-1 min-w-0 group">
                 <input
@@ -278,9 +280,9 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex-1 p-6 pt-0 overflow-y-auto">
+          <div className="flex-1 p-4 lg:p-6 pt-0 overflow-y-auto">
             {error && (
-              <div className="bg-red-50 text-red-600 p-4 rounded-xl border border-red-100 text-sm mb-6 flex items-start gap-2 shadow-sm">
+              <div className="bg-red-50 text-red-600 p-3 lg:p-4 rounded-xl border border-red-100 text-sm mb-4 lg:mb-6 flex items-start gap-2 shadow-sm">
                 <span className="font-bold">!</span> {error}
               </div>
             )}
@@ -421,7 +423,7 @@ export default function App() {
                   <h3 className="text-xs uppercase tracking-widest text-slate-400 font-bold mb-3 flex items-center gap-2">
                     <Network className="w-4 h-4 text-slate-400" /> 时空关系网络
                   </h3>
-                  <div className="flex flex-col gap-2.5 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                  <div className="flex flex-col gap-2.5">
                     {paginatedConnections.map((rel, i) => {
                       const archivedPerson = rel.archivedPerson;
                       return (
@@ -584,9 +586,9 @@ export default function App() {
                   exit={{ opacity: 0, scale: 0.95 }}
                   drag
                   dragMomentum={false}
-                  className="absolute top-4 right-4 z-20 flex flex-col pointer-events-none"
+                  className="absolute top-2 w-[calc(100%-1rem)] right-2 sm:right-4 sm:top-4 z-20 flex flex-col pointer-events-none sm:w-[320px] max-w-full max-h-[calc(100%-1rem)]"
                 >
-                  <div className="bg-white/90 backdrop-blur-md rounded-2xl border border-slate-200/60 shadow-xl pointer-events-auto overflow-hidden flex flex-col">
+                  <div className="bg-white/90 backdrop-blur-md rounded-2xl border border-slate-200/60 shadow-xl pointer-events-auto overflow-hidden flex flex-col max-h-full">
                     <SpacetimeExplorer
                       onClose={() => setIsSixDegreesOpen(false)}
                       onRefreshArchive={fetchArchive}

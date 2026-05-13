@@ -57,12 +57,19 @@ View your app in AI Studio: https://ai.studio/apps/309319c0-ccbb-434d-afc5-4fc77
 *   `ADMIN_PASSWORD`: 管理员后台密码（选填，默认 admin）。
 *   `GEMINI_API_KEY`: Google Gemini API 密钥（选填，也可以在进入后台后动态配置）。
 
-### 4. 自动初始化
+### 4. 自动初始化与深度适配
 
 完成绑定并重新发布后，**程序在首次访问任何 API 接口时，会自动检测并创建 D1 数据库中的表结构**。你无需手动上传任何 `.sql` 文件。
 
-### 5. AI Studio 测试
+此外，本代码已针对 Cloudflare Worker / Pages 的限制进行了以下专门适配：
+*   **完美兼容 SPA 路由**：前端是基于 React 状态流的纯单页面架构，无需配置 Cloudflare 的 `_routes.json` 或 `_redirects` 规则。
+*   **R2 图片内联代理**：当你绑定了 R2 `IMAGES` 时，程序会自动通过内部路由 `/api/portraits/*` 加载图片并添加长效缓存 (Cache-Control)，无需配置自定义域名即可实现秒开，节省费用。
+*   **自动镜像转存**：已添加后台自动镜像功能，每次加载图谱数据时，如果检测到历史遗留的人物图片仍然使用外部 URL（或 Pollinations.ai 链接），系统将在请求后台中自动抓取图片存入 R2，并将记录无缝更新为 `/api/portraits/*` 本地路由，整个过程静默完成，后续不再重复请求外部网络。
+*   **同构数据库**：利用 Hono + Database Adapter 模式，使得在 Cloudflare 环境中完美对接原生 D1 API，在 Node 本地环境中无缝切换为 sqlite。
 
-在 AI Studio 中，程序会自动降级为本地 Node.js 模式：
-*   **数据库**：自动存储在根目录的 `celebrity_graph.sqlite`。
-*   **图片**：直接引用外部 URL 或 Pollinations AI 生成的地址。
+### 5. AI Studio 预览环境测试
+
+在 AI Studio 的实时预览环境中，程序会自动降级为本地 Node.js 模式：
+*   **数据库**：自动回退使用 `better-sqlite3` 存储在根目录的 `celebrity_graph.sqlite`。
+*   **图片**：由于未挂载 R2，回退到直接引用外部 URL 或 Pollinations AI 生成的地址。
+

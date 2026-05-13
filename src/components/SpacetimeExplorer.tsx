@@ -416,9 +416,9 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   };
 
   const content = (
-    <div className={`flex flex-col ${isInline ? "h-auto max-h-[500px] w-full" : "max-h-[70vh] w-full"} overflow-hidden transition-all duration-300 ${!isCollapsed ? (isInline ? "p-4" : "p-6") : "p-0"}`}>
+    <div className={`flex flex-col ${isInline ? "h-auto max-h-full sm:max-h-[500px] w-full" : "max-h-[70vh] w-full"} overflow-y-auto custom-scrollbar transition-all duration-300 ${!isCollapsed ? (isInline ? "p-3 sm:p-4" : "p-6") : "p-0"}`}>
       {!isCollapsed && (
-        <div className="flex flex-col h-full overflow-hidden">
+        <div className="flex flex-col h-full shrink-0">
           {!showResults && !isLoading && !error && !hideInputs && (
             <motion.div 
               initial={{ opacity: 0 }}

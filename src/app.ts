@@ -269,6 +269,9 @@ async function getPortraitUrl(c: any, name: string): Promise<string | null> {
             const buffer = await imageRes.arrayBuffer();
             const key = `portraits/${encodeURIComponent(name.toLowerCase())}.jpg`;
             await imagesBucket.put(key, buffer, { httpMetadata: { contentType } });
+            
+            // If R2 upload is successful, use our own endpoint to serve the image
+            return `/api/portraits/${encodeURIComponent(name.toLowerCase())}.jpg`;
         } catch (e) { console.error("R2 Error:", e); }
     }
     return finalUrl;
@@ -286,6 +289,23 @@ async function addRelationship(db: DatabaseAdapter, p1: number, p2: number, type
 }
 
 app.get("/health", (c) => c.json({ status: "ok" }));
+
+app.get("/portraits/:filename", async (c) => {
+  const imagesBucket = c.env?.IMAGES;
+  if (!imagesBucket) return c.json({ error: "R2 Image Storage not configured" }, 404);
+  
+  const filename = c.req.param("filename");
+  const object = await imagesBucket.get(`portraits/${filename}`);
+  if (!object) return c.json({ error: "Image not found" }, 404);
+  
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set("etag", object.httpEtag);
+  // Add caching headers to improve performance and save R2 read costs
+  headers.set("Cache-Control", "public, max-age=31536000, immutable");
+  
+  return new Response(object.body as any, { headers });
+});
 
 app.post("/admin/verify", async (c) => {
   const { password } = await c.req.json();
@@ -348,8 +368,41 @@ app.post("/admin/people/batch-delete", async (c) => {
 
 app.get("/archive", async (c) => {
   const db = await getDb(c);
-  const people = await db.prepare("SELECT * FROM people ORDER BY created_at DESC").all();
+  const people = await db.prepare("SELECT * FROM people ORDER BY created_at DESC").all() as any[];
   const relationships = await db.prepare("SELECT * FROM relationships").all();
+  
+  const syncTask = (async () => {
+      const imagesBucket = c.env?.IMAGES;
+      if (!imagesBucket) return;
+      for (const p of people) {
+          if (p.image_url && p.image_url.startsWith("http") && !p.image_url.includes("/api/portraits/")) {
+              try {
+                  const imageRes = await fetch(p.image_url);
+                  if (imageRes.ok) {
+                      const contentType = imageRes.headers.get("content-type") || "image/jpeg";
+                      const buffer = await imageRes.arrayBuffer();
+                      const key = `portraits/${encodeURIComponent(p.name.toLowerCase())}.jpg`;
+                      await imagesBucket.put(key, buffer, { httpMetadata: { contentType } });
+                      const newUrl = `/api/portraits/${encodeURIComponent(p.name.toLowerCase())}.jpg`;
+                      await db.prepare("UPDATE people SET image_url = ? WHERE id = ?").run(newUrl, p.id);
+                  }
+              } catch (e) {
+                  console.error(`Sync image error for ${p.name}:`, e);
+              }
+          }
+      }
+  })();
+
+  try {
+      if (c.executionCtx && c.executionCtx.waitUntil) {
+          c.executionCtx.waitUntil(syncTask);
+      } else {
+          syncTask.catch(console.error);
+      }
+  } catch (e) {
+      syncTask.catch(console.error);
+  }
+
   return c.json({ people, relationships });
 });
 
