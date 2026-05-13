@@ -1,8 +1,8 @@
 import React, { useState, useEffect, FormEvent, useRef } from "react";
-import { X, RefreshCw, Trash2, Settings, Save, Sparkles, User, Search, Eye, UserPlus, ChevronLeft, ChevronRight, BookOpen, Zap, Info } from "lucide-react";
+import { X, RefreshCw, Trash2, Settings, Save, Sparkles, User, Search, Eye, UserPlus, ChevronLeft, ChevronRight, BookOpen, Zap, Info, Database } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Person } from "../types";
-import SpacetimeExplorer from "./SpacetimeExplorer";
+import SpacetimeExplorer, { SpacetimeExplorerHandle } from "./SpacetimeExplorer";
 import ConfirmDialog from "./ConfirmDialog";
 
 interface AdminPanelProps {
@@ -41,7 +41,7 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
   const [fetchSource, setFetchSource] = useState("");
   const [fetchTarget, setFetchTarget] = useState("");
   const [isGeneratingTarget, setIsGeneratingTarget] = useState(false);
-  const explorerRef = useRef<{ start: () => void; clear: () => void } | null>(null);
+  const explorerRef = useRef<SpacetimeExplorerHandle | null>(null);
 
   const startResize = (e: React.MouseEvent, col: keyof typeof colWidths) => {
     e.preventDefault();
@@ -825,6 +825,7 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
                     onClose={() => {}}
                     onRefreshArchive={fetchArchive}
                     onSelectPerson={() => {}}
+                    isAdmin={true}
                   />
                 </div>
               </div>

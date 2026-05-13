@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { getGemini, ARCHIVE_PROMPT, ARCHIVE_SCHEMA, PATH_PROMPT, PATH_SCHEMA, VALIDATION_PROMPT, VALIDATION_SCHEMA } from "../services/geminiService";
 
 export interface SpacetimeExplorerHandle {
-  start: () => void;
+  start: (overrideSource?: string, overrideTarget?: string) => void;
   clear: () => void;
 }
 
@@ -50,10 +50,12 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   useImperativeHandle(ref, () => ({
     start: (overrideSource?: string, overrideTarget?: string) => {
       console.log("SpacetimeExplorer start called with:", source, target, "overrides:", overrideSource, overrideTarget);
+      setIsCollapsed(false);
       handleSearch(overrideSource, overrideTarget);
     },
     clear: () => {
       clearResults();
+      if (hideHeader) setIsCollapsed(true);
     }
   }));
 
@@ -76,7 +78,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   const [path, setPath] = useState<Step[] | null>(null);
   const [newArrivals, setNewArrivals] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [isCollapsed, setIsCollapsed] = useState(true);
+  const [isCollapsed, setIsCollapsed] = useState(() => hideHeader ? false : true);
   const [searchSteps, setSearchSteps] = useState<{msg: string, status: 'pending' | 'success' | 'error'}[]>([]);
   const [showResults, setShowResults] = useState(false);
   const [metadata, setMetadata] = useState<{
@@ -151,6 +153,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
       return;
     }
     
+    setIsCollapsed(false);
     setIsLoading(true);
     setError(null);
     setPath(null);
@@ -194,7 +197,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
       }
       updateLastStep('success');
 
-      addStep(`正在识别人物身份: ${source} 与 ${target}...`);
+      addStep(`正在识别人物身份: ${finalSource} 与 ${finalTarget}...`);
       
       const callAIProxy = async (prompt: string, responseFormat: 'text' | 'json' = 'json', schema?: any) => {
         const res = await fetch("/api/ai/proxy", {
@@ -250,13 +253,13 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
         return parsed;
       };
 
-      const [srcValid, tgtValid] = await Promise.all([validate(source), validate(target)]);
+      const [srcValid, tgtValid] = await Promise.all([validate(finalSource), validate(finalTarget)]);
       
       if (!srcValid.accepted) throw new Error(`起点人物无效: ${srcValid.reason || '原因未知'}`);
       if (!tgtValid.accepted) throw new Error(`终点人物无效: ${tgtValid.reason || '原因未知'}`);
       
-      const normalizedSource = srcValid.normalizedName || source;
-      const normalizedTarget = tgtValid.normalizedName || target;
+      const normalizedSource = srcValid.normalizedName || finalSource;
+      const normalizedTarget = tgtValid.normalizedName || finalTarget;
       updateLastStep('success', `识别成功: ${normalizedSource} 与 ${normalizedTarget}`);
 
       addStep("正在扫描馆藏路径...");
