@@ -209,7 +209,12 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
   };
 
   useEffect(() => {
-    fetchArchive();
+    if (activeTab === 'archive') {
+      fetchArchive();
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
     if (adminPassword) {
       fetchConfig();
     }
@@ -585,7 +590,7 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
             </div>
           </div>
 
-          <div className={`flex-1 ${activeTab === 'archive_plus' ? 'overflow-hidden flex flex-col p-4 sm:p-6' : 'overflow-y-auto p-5'} bg-slate-50/30`}>
+          <div className={`flex-1 ${activeTab === 'archive_plus' ? 'overflow-hidden flex flex-col p-4 sm:p-6 pb-2 sm:pb-2 pt-2 sm:pt-4' : 'overflow-y-auto p-5'} bg-slate-50/30`}>
           {activeTab === "archive" && (
             <div className="space-y-6 animate-in fade-in duration-500 pb-8">
               

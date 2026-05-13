@@ -473,15 +473,15 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   };
 
   const content = (
-    <div className={`flex flex-col h-full w-full overflow-hidden transition-all duration-300 ${!isCollapsed ? (isInline ? "p-0" : "p-6") : "p-0"}`}>
+    <div className={`flex flex-col flex-1 min-h-0 w-full overflow-hidden transition-all duration-300 ${!isCollapsed ? (isInline ? "p-0" : "p-6") : "p-0"}`}>
       {!isCollapsed && (
-        <div className={`flex-1 flex flex-col lg:flex-row overflow-hidden min-h-0 bg-white ${showLogs ? "" : "items-center"}`}>
+        <div className={`flex-1 flex flex-col lg:flex-row items-stretch overflow-hidden min-h-0 bg-white`}>
           {/* Main Controls & Results Column (Responsive Width - Now on Left) */}
-          <div className={`${showLogs ? "w-full lg:w-[360px] xl:w-[420px] lg:border-r border-slate-100 bg-slate-50/20 shadow-[-10px_0_20px_-10px_rgba(0,0,0,0.05)_inset]" : "w-full max-w-[440px] mx-auto"} flex flex-col flex-1 lg:flex-none lg:shrink-0 overflow-hidden min-h-[40%] lg:min-h-0`}>
-              <div className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5 sm:px-6 sm:pb-6 space-y-6">
+          <div className={`${showLogs ? "w-full lg:w-[360px] xl:w-[420px] lg:border-r border-slate-100 bg-slate-50/20 shadow-[-10px_0_20px_-10px_rgba(0,0,0,0.05)_inset]" : "w-full max-w-[440px] mx-auto"} flex flex-col flex-1 lg:flex-none lg:shrink-0 overflow-hidden min-h-[40%] lg:min-h-0 max-h-full`}>
+              <div className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5 sm:px-6 sm:pb-6 space-y-4">
                 {!showResults && !error && !hideInputs && (
-                  <div className="space-y-4 pt-2 pb-6 border-b border-slate-100 mb-2">
-                    <div className="space-y-2">
+                  <div className="space-y-3 pt-0 pb-6 border-b border-slate-100 mb-2">
+                    <div className="space-y-1.5">
                       <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1 font-mono">起点人物</label>
                       <div className="relative group">
                         <input 
@@ -496,7 +496,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                       </div>
                     </div>
                     
-                    <div className="space-y-2">
+                    <div className="space-y-1.5">
                       <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1 font-mono">终点人物 (拟收录)</label>
                       <div className="relative group">
                         <input 
@@ -696,7 +696,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                   </div>
                </div>
                
-               <div ref={logsScrollRef} className="flex-1 overflow-y-auto p-5 custom-scrollbar font-mono text-[11px] space-y-3 select-text bg-white">
+               <div ref={logsScrollRef} className="flex-1 overflow-y-auto p-4 sm:p-5 custom-scrollbar font-mono text-[11px] space-y-3 select-text bg-white">
                   {detailedLogs.length === 0 && (
                     <div className="h-full flex items-center justify-center text-slate-300 italic flex-col gap-2 py-20">
                       <Loader2 className="w-6 h-6 animate-spin opacity-20" />
@@ -745,7 +745,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
         : 'w-full sm:w-[380px]';
 
     return (
-      <div className={`flex flex-col h-full max-w-full transition-all duration-300 ${isCollapsed ? 'w-auto' : finalWidth}`}>
+      <div className={`flex flex-col min-h-0 overflow-hidden h-full max-w-full transition-all duration-300 ${isCollapsed ? 'w-auto' : finalWidth}`}>
         {!hideHeader && (
           <div className="px-3 py-2 bg-slate-50/50 border-b border-slate-100 flex items-center justify-between cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => setIsCollapsed(!isCollapsed)}>
             <div className="flex items-center gap-1.5 pr-2">

@@ -773,7 +773,7 @@ export default function NetworkGraph({
                   开启跨时空对话
                 </button>
               ) : (
-                <div className="mt-2 p-3 bg-slate-50/50 rounded-xl border border-slate-100 text-xs text-slate-700 max-h-[160px] sm:max-h-[240px] overflow-y-auto nice-scrollbar">
+                <div className="mt-2 p-3 bg-slate-50/50 rounded-xl border border-slate-100 text-xs text-slate-700 max-h-[160px] sm:max-h-[240px] overflow-y-auto custom-scrollbar">
                   {chatState.isLoading ? (
                     <div className="flex items-center justify-center gap-2 py-4 text-slate-400">
                       <Loader2 className="w-4 h-4 animate-spin" />

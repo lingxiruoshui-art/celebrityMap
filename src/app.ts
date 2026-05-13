@@ -547,8 +547,50 @@ app.post("/pathfind", async (c) => {
 
 app.post("/archiver/chat", async (c) => {
   const db = await getDb(c);
-  // Skipped impl if unmodified
-  return c.json({ messages: [] });
+  try {
+    const { person1, person2 } = await c.req.json();
+    
+    if (!person1 || !person2) {
+      return c.json({ error: "Missing person1 or person2" }, 400);
+    }
+
+    const prompt = `请发挥你的想象力，设计一段2-3轮的简短对话。对话双方是历史/现实人物：【${person1}】和【${person2}】。
+对话风格要求稍微幽默、有趣一些，可以有跨时空、跨领域的趣味性碰撞。结合他们各自著名的成就、思想、或名言等元素。
+
+请严格返回以下JSON格式：
+{
+  "messages": [
+    { "speaker": "${person1}或${person2}", "text": "对话内容..." },
+    ...
+  ]
+}`;
+
+    const schema = {
+      type: "object",
+      properties: {
+        messages: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              speaker: { type: "string" },
+              text: { type: "string" }
+            },
+            required: ["speaker", "text"]
+          }
+        }
+      },
+      required: ["messages"]
+    };
+
+    const responseText = await callAI(c, db, prompt, "json", schema);
+    const parsed = JSON.parse(responseText);
+    
+    return c.json({ messages: parsed.messages || [] });
+  } catch (error: any) {
+    console.error("Chat generation failed:", error);
+    return c.json({ error: "对话生成失败", details: error.message || String(error) }, 500);
+  }
 });
 
 app.get("/archiver/random-pair", async (c) => {
@@ -562,30 +604,19 @@ app.get("/archiver/random-pair", async (c) => {
 app.post("/archiver/admin-pick-pair", async (c) => {
   const db = await getDb(c);
   
-  // Logic for picking pair 
-  // Priority 1: From people db
-  // Priority 2: From connections but not in people
-  // Priority 3: Let frontend ask AI
-  
   const people = await db.prepare("SELECT name, raw_relationships FROM people").all() as any[];
   const archivedNames = people.map(p => p.name);
   const archivedSet = new Set(archivedNames);
   
-  let sourceName = "";
-  let targetName = "";
-  
-  // Mix and shuffle
-  const shuffle = (array: any[]) => array.sort(() => 0.5 - Math.random());
-  
-  // Priority 1
-  if (archivedNames.length >= 2) {
-      const shuffled = shuffle([...archivedNames]);
-      sourceName = shuffled[0];
-      targetName = shuffled[1];
-      return c.json({ sourceName, targetName, source: "db" });
+  if (archivedNames.length === 0) {
+      return c.json({ error: "No people in database to start from" });
   }
 
-  // Priority 2
+  const shuffle = (array: any[]) => array.sort(() => 0.5 - Math.random());
+  
+  let sourceName = shuffle([...archivedNames])[0];
+  let targetName = "";
+  
   const connectedUnarchived = new Set<string>();
   people.forEach(p => {
     try {
@@ -599,22 +630,23 @@ app.post("/archiver/admin-pick-pair", async (c) => {
   
   const unarch = Array.from(connectedUnarchived);
   
-  if (archivedNames.length === 1 && unarch.length >= 1) {
-      sourceName = archivedNames[0];
-      targetName = shuffle(unarch)[0];
-      return c.json({ sourceName, targetName, source: "mixed" });
+  const poolUnarchived: string[] = [];
+  for (const cat of CATEGORIES) {
+      FIGURE_POOL[cat]?.forEach((n: string) => { 
+          if (!archivedSet.has(n)) poolUnarchived.push(n); 
+      });
   }
+
+  const allUnarchived = [...unarch, ...poolUnarchived];
   
-  if (unarch.length >= 2) {
-      const shuffled = shuffle(unarch);
-      sourceName = shuffled[0];
-      targetName = shuffled[1];
-      return c.json({ sourceName, targetName, source: "unarchived" });
+  if (allUnarchived.length > 0) {
+      targetName = shuffle(allUnarchived)[0];
+      return c.json({ sourceName, targetName, source: "mixed" });
   }
   
   // Need AI fallback
   return c.json({ 
-     sourceName: archivedNames[0] || "",
+     sourceName: sourceName || "",
      targetName: "",
      needsAI: true
   });
