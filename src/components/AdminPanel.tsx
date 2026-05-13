@@ -503,8 +503,8 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
   const paginatedPeople = filteredAndSortedPeople.slice(startIndex, startIndex + itemsPerPage);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 xl:p-8 backdrop-blur-md bg-slate-900/40">
-      <div className="bg-white lg:rounded-[2rem] rounded-2xl shadow-2xl shadow-slate-900/20 w-full max-w-6xl overflow-hidden flex flex-col md:flex-row h-[90vh] md:h-[85vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 xl:p-8 backdrop-blur-md bg-slate-900/40 font-sans">
+      <div className="bg-white lg:rounded-[2rem] rounded-2xl shadow-2xl shadow-slate-900/20 w-full max-w-7xl overflow-hidden flex flex-col md:flex-row h-[90vh] md:h-[88vh]">
         {/* Sidebar */}
         <div className="w-full md:w-56 shrink-0 border-b md:border-b-0 md:border-r border-slate-100 flex flex-col bg-slate-50/50">
           <div className="p-4 md:p-6 h-14 md:h-20 flex items-center gap-3 border-b border-slate-100 bg-white shrink-0">
