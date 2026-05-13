@@ -32,12 +32,9 @@ export class D1DatabaseAdapter implements DatabaseAdapter {
   }
 
   async exec(sql: string): Promise<void> {
-    // D1 doesn't have a direct exec for multiple statements, so we'd normally split or use batch
-    // For simplicity, we just run it as is if it's a single statement, or assume it's used for init
     await this.d1.exec(sql);
   }
 
   pragma(sql: string): void {
-    // D1 doesn't support pragma in the same way, usually ignored or set via wrangler
   }
 }

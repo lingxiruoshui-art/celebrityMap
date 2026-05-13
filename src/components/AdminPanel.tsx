@@ -1,5 +1,5 @@
 import React, { useState, useEffect, FormEvent, useRef } from "react";
-import { X, RefreshCw, Trash2, Settings, Save, Sparkles, User, Search, Eye, UserPlus, ChevronLeft, ChevronRight, BookOpen, Zap, Info, Database } from "lucide-react";
+import { X, RefreshCw, Trash2, Settings, Save, Sparkles, User, Search, Eye, UserPlus, ChevronLeft, ChevronRight, BookOpen, Zap, Info, Database, Library, Activity, PlusCircle, SlidersHorizontal, ShieldCheck } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Person } from "../types";
 import SpacetimeExplorer, { SpacetimeExplorerHandle } from "./SpacetimeExplorer";
@@ -506,32 +506,32 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 xl:p-8 backdrop-blur-md bg-slate-900/40 font-sans">
       <div className="bg-white lg:rounded-[2rem] rounded-2xl shadow-2xl shadow-slate-900/20 w-full max-w-7xl overflow-hidden flex flex-col md:flex-row h-[90vh] md:h-[88vh]">
         {/* Sidebar */}
-        <div className="w-full md:w-56 shrink-0 border-b md:border-b-0 md:border-r border-slate-100 flex flex-col bg-slate-50/50">
-          <div className="p-4 md:p-6 h-14 md:h-20 flex items-center gap-3 border-b border-slate-100 bg-white shrink-0">
-             <Settings className="w-5 h-5 md:w-6 md:h-6 text-indigo-600" />
-             <h2 className="font-bold text-slate-800 tracking-tight text-lg md:text-xl">后台管理</h2>
+        <div className="w-full md:w-48 shrink-0 border-b md:border-b-0 md:border-r border-slate-100 flex flex-col bg-slate-50/50">
+          <div className="p-4 md:p-5 h-14 md:h-16 flex items-center gap-3 border-b border-slate-100 bg-white shrink-0">
+             <ShieldCheck className="w-5 h-5 text-indigo-600" />
+             <h2 className="font-bold text-slate-800 tracking-tight text-base md:text-lg">后台管理</h2>
           </div>
           
-          <nav className="p-2 md:p-4 flex flex-row md:flex-col gap-2 space-y-0 md:space-y-2 overflow-x-auto custom-scrollbar shrink-0 bg-white md:bg-transparent">
+          <nav className="p-2 md:p-3 flex flex-row md:flex-col gap-1.5 space-y-0 md:space-y-1.5 overflow-x-auto custom-scrollbar shrink-0 bg-white md:bg-transparent">
             <button 
               onClick={() => setActiveTab("archive_plus")}
-              className={`flex items-center gap-2 md:gap-3 px-3 py-2 md:px-4 md:py-3 rounded-xl md:rounded-2xl text-xs md:text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'archive_plus' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'text-slate-500 hover:bg-white hover:text-slate-800 hover:shadow-sm border border-transparent hover:border-slate-200'}`}
+              className={`flex items-center gap-2 md:gap-2.5 px-3 py-2 md:px-3 text-xs md:text-[13px] font-bold transition-all whitespace-nowrap rounded-lg md:rounded-xl ${activeTab === 'archive_plus' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100' : 'text-slate-500 hover:bg-white hover:text-slate-800 border border-transparent hover:border-slate-200'}`}
             >
-              <UserPlus className="w-3.5 h-3.5 md:w-4 md:h-4 shrink-0" />
+              <PlusCircle className="w-3.5 h-3.5 shrink-0" />
               <span>时空入库</span>
             </button>
             <button 
               onClick={() => setActiveTab("archive")}
-              className={`flex items-center gap-2 md:gap-3 px-3 py-2 md:px-4 md:py-3 rounded-xl md:rounded-2xl text-xs md:text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'archive' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'text-slate-500 hover:bg-white hover:text-slate-800 hover:shadow-sm border border-transparent hover:border-slate-200'}`}
+              className={`flex items-center gap-2 md:gap-2.5 px-3 py-2 md:px-3 text-xs md:text-[13px] font-bold transition-all whitespace-nowrap rounded-lg md:rounded-xl ${activeTab === 'archive' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100' : 'text-slate-500 hover:bg-white hover:text-slate-800 border border-transparent hover:border-slate-200'}`}
             >
-              <BookOpen className="w-3.5 h-3.5 md:w-4 md:h-4 shrink-0" />
+              <Library className="w-3.5 h-3.5 shrink-0" />
               <span>馆藏管理</span>
             </button>
             <button 
               onClick={() => setActiveTab("config")}
-              className={`flex items-center gap-2 md:gap-3 px-3 py-2 md:px-4 md:py-3 rounded-xl md:rounded-2xl text-xs md:text-sm font-bold transition-all whitespace-nowrap ${activeTab === 'config' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'text-slate-500 hover:bg-white hover:text-slate-800 hover:shadow-sm border border-transparent hover:border-slate-200'}`}
+              className={`flex items-center gap-2 md:gap-2.5 px-3 py-2 md:px-3 text-xs md:text-[13px] font-bold transition-all whitespace-nowrap rounded-lg md:rounded-xl ${activeTab === 'config' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100' : 'text-slate-500 hover:bg-white hover:text-slate-800 border border-transparent hover:border-slate-200'}`}
             >
-              <Settings className="w-3.5 h-3.5 md:w-4 md:h-4 shrink-0" />
+              <SlidersHorizontal className="w-3.5 h-3.5 shrink-0" />
               <span>系统配置</span>
             </button>
           </nav>
@@ -559,9 +559,12 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
             )}
           </AnimatePresence>
 
-          <div className="p-6 h-20 border-b border-slate-100 flex items-center justify-between bg-white shrink-0">
-            <div className="flex items-center gap-4">
-              <h3 className="font-bold text-xl text-slate-800">
+          <div className="p-5 h-16 border-b border-slate-100 flex items-center justify-between bg-white shrink-0">
+            <div className="flex items-center gap-3">
+              {activeTab === 'archive_plus' && <PlusCircle className="w-5 h-5 text-indigo-600" />}
+              {activeTab === 'archive' && <Library className="w-5 h-5 text-indigo-600" />}
+              {activeTab === 'config' && <SlidersHorizontal className="w-5 h-5 text-indigo-600" />}
+              <h3 className="font-bold text-lg text-slate-800 tracking-tight">
                 {activeTab === 'archive_plus' ? '时空入库' : activeTab === 'archive' ? '馆藏管理' : '系统配置'}
               </h3>
             </div>
@@ -576,15 +579,15 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
                   {savingKey === 'all' ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-5 h-5" />}
                 </button>
               )}
-              <button onClick={onClose} className="p-3 hover:bg-slate-100 rounded-full transition-colors text-slate-400 hover:text-slate-600">
+              <button onClick={onClose} className="p-2.5 hover:bg-slate-100 rounded-full transition-colors text-slate-400 hover:text-slate-600">
                 <X className="w-5 h-5" />
               </button>
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto bg-slate-50/30 p-8">
+          <div className={`flex-1 ${activeTab === 'archive_plus' ? 'overflow-hidden flex flex-col p-4 sm:p-6' : 'overflow-y-auto p-5'} bg-slate-50/30`}>
           {activeTab === "archive" && (
-            <div className="space-y-6 animate-in fade-in duration-500">
+            <div className="space-y-6 animate-in fade-in duration-500 pb-8">
               
               <div className="flex justify-end pr-2">
                 <div className="relative w-full max-w-sm group">
@@ -735,92 +738,16 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
           )}
 
           {activeTab === "archive_plus" && (
-            <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in duration-500 pb-12">
-              {autoFetchLogs.length > 0 && (
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 overflow-hidden">
-                  <div className="flex items-center justify-between mb-2">
-                    <h5 className="text-[10px] font-black uppercase tracking-widest text-slate-400">采集日志</h5>
-                    <button onClick={() => setAutoFetchLogs([])} className="text-[10px] text-slate-400 hover:text-red-500 font-bold">清空</button>
-                  </div>
-                  <div className="max-h-24 overflow-y-auto space-y-1 font-mono text-[10px]" ref={logsContainerRef}>
-                    {autoFetchLogs.map((log, i) => (
-                      <div key={i} className={`flex gap-2 ${log.type === 'error' ? 'text-red-500' : log.type === 'success' ? 'text-emerald-500' : 'text-slate-500'}`}>
-                        <span className="shrink-0 opacity-50">[{new Date().toLocaleTimeString()}]</span>
-                        <span className="font-bold">{log.msg}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden p-8">
-                <div className="flex items-center gap-3 mb-8">
-                  <div className="w-1.5 h-6 bg-indigo-500 rounded-full"></div>
-                  <h4 className="text-slate-800 font-bold text-lg tracking-tight leading-none">时空采集配置</h4>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] items-center gap-4 mb-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1">起点人物 (已在库)</label>
-                    <div className="p-3 bg-slate-50/50 border border-slate-100 rounded-xl flex items-center gap-3 transition-all">
-                        <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center text-slate-300 border border-slate-200 shadow-sm">
-                          <User className="w-5 h-5" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-slate-800 font-bold text-sm truncate tracking-tight">{fetchSource || "加载中..."}</div>
-                          <div className="text-[8px] text-slate-400 font-bold uppercase tracking-widest mt-0.5"> Verified Source </div>
-                        </div>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col items-center justify-center md:pt-5">
-                      <div className="w-8 h-8 rounded-full bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-300">
-                        <ChevronRight className="w-4 h-4" />
-                      </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1">目标人物 (拟收录)</label>
-                    <div className="relative group/input">
-                      <input 
-                        type="text"
-                        value={fetchTarget}
-                        onChange={(e) => setFetchTarget(e.target.value)}
-                        placeholder="输入拟收录人物..."
-                        className="w-full pl-10 pr-4 py-3 bg-slate-50/50 border border-slate-100 rounded-xl text-slate-800 font-bold text-sm focus:ring-4 focus:ring-indigo-500/5 focus:bg-white focus:border-indigo-500/20 outline-none transition-all placeholder:text-slate-300 tracking-tight"
-                      />
-                      <div className="absolute left-3.5 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center text-slate-300 transition-all">
-                          <Search className="w-3.5 h-3.5" />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex gap-2.5 mb-6">
-                  <button 
-                    onClick={handlePickRandom}
-                    disabled={isGeneratingTarget}
-                    className="flex items-center gap-2 px-4 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-xl text-xs font-bold transition-all border border-slate-200 disabled:opacity-50 active:scale-95"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isGeneratingTarget ? 'animate-spin text-indigo-500' : ''}`} />
-                    随机更换
-                  </button>
-                  <button 
-                    onClick={() => explorerRef.current?.start(fetchSource, fetchTarget)}
-                    className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-indigo-100 active:scale-[0.98] flex items-center justify-center gap-2"
-                  >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    开启跨时空探索
-                  </button>
-                </div>
-
-                <div className="bg-slate-50/50 rounded-3xl border border-slate-100 overflow-hidden shadow-inner">
+            <div className="h-full flex flex-col animate-in fade-in duration-500 overflow-hidden pb-8">
+              <div className="flex-1 flex flex-col bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden mt-1">
+                <div className="flex-1 min-h-0 bg-white rounded-2xl overflow-hidden">
                   <SpacetimeExplorer 
                     ref={explorerRef}
                     isInline={true}
                     initialSource={fetchSource}
                     initialTarget={fetchTarget}
                     autoStart={false}
-                    hideInputs={true}
+                    hideInputs={false}
                     hideHeader={true}
                     onClose={() => {}}
                     onRefreshArchive={fetchArchive}
@@ -834,40 +761,40 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
           )}
 
           {activeTab === "config" && (
-            <div className="max-w-5xl mx-auto space-y-8 animate-in fade-in duration-500 pb-12">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="max-w-5xl mx-auto space-y-4 animate-in fade-in duration-500 pb-8 uppercase tracking-tight">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* Google Gemini Card */}
-                <div className={`bg-white p-6 rounded-3xl border-2 transition-all shadow-sm flex flex-col h-full ${config.active_model_provider === 'gemini' ? 'border-indigo-500 ring-4 ring-indigo-50' : 'border-slate-100 hover:border-slate-200'}`}>
-                  <div className="flex items-center justify-between mb-6">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${config.active_model_provider === 'gemini' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'bg-slate-100 text-slate-400'}`}>
-                        <Sparkles className="w-5 h-5" />
+                <div className={`bg-white p-4 rounded-2xl border-2 transition-all shadow-sm flex flex-col h-full ${config.active_model_provider === 'gemini' ? 'border-indigo-500 ring-4 ring-indigo-50/50' : 'border-slate-100 hover:border-slate-200'}`}>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2.5">
+                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${config.active_model_provider === 'gemini' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'bg-slate-100 text-slate-400'}`}>
+                        <Sparkles className="w-4.5 h-4.5" />
                       </div>
                       <div>
-                        <h4 className="text-sm font-bold text-slate-800">Google Gemini</h4>
-                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">高级多模态模型</p>
+                        <h4 className="text-[13px] font-bold text-slate-800">Google Gemini</h4>
+                        <p className="text-[9px] text-slate-400 font-black uppercase tracking-widest leading-none">多模态旗舰</p>
                       </div>
                     </div>
                     {config.active_model_provider === 'gemini' ? (
-                      <div className="bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 border border-indigo-100">
-                        <div className="w-1.5 h-1.5 bg-indigo-600 rounded-full animate-pulse"></div>
-                        当前激活
+                      <div className="bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest flex items-center gap-1 border border-indigo-100">
+                        <div className="w-1 h-1 bg-indigo-600 rounded-full animate-pulse"></div>
+                        ACTIVE
                       </div>
                     ) : (
                       <button 
                          onClick={() => saveConfig("active_model_provider", "gemini")}
                         disabled={savingKey !== null}
-                        className="text-[10px] font-black text-slate-400 hover:text-indigo-600 uppercase tracking-widest transition-all hover:bg-slate-50 px-3 py-1 rounded-full border border-slate-100 flex items-center gap-2"
+                        className="text-[9px] font-black text-slate-400 hover:text-indigo-600 uppercase tracking-widest transition-all hover:bg-slate-50 px-2.5 py-0.5 rounded-full border border-slate-100 flex items-center gap-1.5"
                       >
-                        {savingKey === 'active_model_provider' ? <RefreshCw className="w-3 h-3 animate-spin" /> : null}
-                        激活此模型
+                        {savingKey === 'active_model_provider' ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : null}
+                        激活
                       </button>
                     )}
                   </div>
                   
-                  <div className="space-y-4 flex-1">
-                    <div className="space-y-1.5">
-                      <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 px-1">模型 ID</label>
+                  <div className="space-y-3 flex-1 px-1">
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-black uppercase tracking-widest text-slate-400">模型 ID</label>
                       <input 
                         type="text"
                         placeholder="gemini-1.5-flash"
@@ -877,8 +804,8 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
                         className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
                       />
                     </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 px-1">Gemini API Key</label>
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-black uppercase tracking-widest text-slate-400">API KEY</label>
                       <input 
                         type="password"
                         placeholder="sk-..."
@@ -892,37 +819,37 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
                 </div>
 
                 {/* Aliyun DashScope Card */}
-                <div className={`bg-white p-6 rounded-3xl border-2 transition-all shadow-sm flex flex-col h-full ${config.active_model_provider === 'aliyun' ? 'border-orange-500 ring-4 ring-orange-50' : 'border-slate-100 hover:border-slate-200'}`}>
-                  <div className="flex items-center justify-between mb-6">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${config.active_model_provider === 'aliyun' ? 'bg-orange-500 text-white shadow-lg shadow-orange-200' : 'bg-slate-100 text-slate-400'}`}>
-                        <RefreshCw className="w-5 h-5" />
+                <div className={`bg-white p-4 rounded-2xl border-2 transition-all shadow-sm flex flex-col h-full ${config.active_model_provider === 'aliyun' ? 'border-orange-500 ring-4 ring-orange-50/50' : 'border-slate-100 hover:border-slate-200'}`}>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2.5">
+                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${config.active_model_provider === 'aliyun' ? 'bg-orange-500 text-white shadow-lg shadow-orange-100' : 'bg-slate-100 text-slate-400'}`}>
+                        <Zap className="w-4.5 h-4.5" />
                       </div>
                       <div>
-                        <h4 className="text-sm font-bold text-slate-800">阿里百炼 (Qwen)</h4>
-                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">通义千问系列</p>
+                        <h4 className="text-[13px] font-bold text-slate-800">阿里百炼 (QWEN)</h4>
+                        <p className="text-[9px] text-slate-400 font-black uppercase tracking-widest leading-none">通义大模型</p>
                       </div>
                     </div>
                     {config.active_model_provider === 'aliyun' ? (
-                      <div className="bg-orange-50 text-orange-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 border border-orange-100">
-                        <div className="w-1.5 h-1.5 bg-orange-600 rounded-full animate-pulse"></div>
-                        当前激活
+                      <div className="bg-orange-50 text-orange-600 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest flex items-center gap-1 border border-orange-100">
+                        <div className="w-1 h-1 bg-orange-600 rounded-full animate-pulse"></div>
+                        ACTIVE
                       </div>
                     ) : (
                       <button 
                         onClick={() => saveConfig("active_model_provider", "aliyun")}
                         disabled={savingKey !== null}
-                        className="text-[10px] font-black text-slate-400 hover:text-orange-500 uppercase tracking-widest transition-all hover:bg-slate-50 px-3 py-1 rounded-full border border-slate-100 flex items-center gap-2"
+                        className="text-[9px] font-black text-slate-400 hover:text-orange-500 uppercase tracking-widest transition-all hover:bg-slate-50 px-2.5 py-0.5 rounded-full border border-slate-100 flex items-center gap-1.5"
                       >
-                        {savingKey === 'active_model_provider' ? <RefreshCw className="w-3 h-3 animate-spin" /> : null}
-                        激活此模型
+                        {savingKey === 'active_model_provider' ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : null}
+                        激活
                       </button>
                     )}
                   </div>
                   
-                  <div className="space-y-4 flex-1">
-                    <div className="space-y-1.5">
-                      <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 px-1">模型 ID</label>
+                  <div className="space-y-3 flex-1 px-1">
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-black uppercase tracking-widest text-slate-400">模型 ID</label>
                       <input 
                         type="text"
                         placeholder="qwen-max"
@@ -932,8 +859,8 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
                         className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-orange-500 outline-none transition-all"
                       />
                     </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 px-1">阿里百炼 API Key</label>
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-black uppercase tracking-widest text-slate-400">API KEY</label>
                       <input 
                         type="password"
                         placeholder="sk-..."
@@ -947,28 +874,28 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
                 </div>
 
                 {/* Performance & Quota Settings */}
-                <div className="bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm md:col-span-1">
-                  <div className="flex items-center gap-3 mb-6">
-                    <div className="w-10 h-10 rounded-xl bg-slate-100 text-slate-400 flex items-center justify-center">
-                      <Zap className="w-5 h-5" />
+                <div className="bg-white p-4 rounded-2xl border-2 border-slate-100 shadow-sm md:col-span-2 lg:col-span-1">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-9 h-9 rounded-xl bg-slate-100 text-slate-400 flex items-center justify-center">
+                      <Activity className="w-4.5 h-4.5" />
                     </div>
                     <div>
-                      <h4 className="text-sm font-bold text-slate-800">访问控制与配额</h4>
-                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">限制访客使用频率</p>
+                      <h4 className="text-[13px] font-bold text-slate-800">频率限制</h4>
+                      <p className="text-[9px] text-slate-400 font-black uppercase tracking-widest leading-none">配额管理</p>
                     </div>
                   </div>
 
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between px-1">
-                      <label className="text-[9px] font-black uppercase tracking-widest text-slate-400">访客每日探索限额</label>
+                  <div className="space-y-1.5 px-1">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[9px] font-black uppercase tracking-widest text-slate-400">每日限额</label>
                       {remainingQuota !== null && (
-                        <div className="flex items-center gap-1.5 text-[10px] bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full font-bold">
-                          <Zap className="w-2.5 h-2.5" />
-                          今日剩余: {remainingQuota}
+                        <div className="flex items-center gap-1 text-[9px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded-full font-bold border border-indigo-100">
+                          <Zap className="w-2 h-2" />
+                          剩余: {remainingQuota}
                         </div>
                       )}
                     </div>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
                       <input 
                         type="number"
                         value={config.guest_explore_limit || "5"}
@@ -976,62 +903,17 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
                         onBlur={(e) => saveConfig("guest_explore_limit", e.target.value)}
                         className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
                       />
-                      <div className="text-[10px] text-slate-400 font-bold">次/天</div>
+                      <div className="text-[10px] text-slate-400 font-bold uppercase whitespace-nowrap px-1">次 / 天</div>
                     </div>
-                    <div className="flex items-center gap-1 mt-1">
-                      <Info className="w-3 h-3 text-slate-300" />
-                      <p className="text-[9px] text-slate-400 italic">东八区(北京时间) 00:00 自动重置。</p>
-                    </div>
+                    <p className="text-[9px] text-slate-400 font-medium px-1">00:00 自动重置</p>
                   </div>
                 </div>
-
-                {/* Maintenance Card */}
-                <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex flex-col h-full md:col-span-2">
-                  <div className="flex items-center gap-3 mb-6">
-                    <div className="w-10 h-10 rounded-xl bg-orange-50 text-orange-500 flex items-center justify-center">
-                      <Database className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h4 className="text-sm font-bold text-slate-800">系统维护</h4>
-                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">修复与重置任务</p>
-                    </div>
-                  </div>
-                  <div className="flex flex-col sm:flex-row items-center gap-4 border border-orange-100 bg-orange-50/30 p-4 rounded-2xl">
-                     <div className="flex-1">
-                        <h5 className="text-sm font-bold text-slate-800 mb-1">图片代理模式 / 异步转存修复</h5>
-                        <p className="text-xs text-slate-500">如果发现人物列表中的图片加载失败或显示为空白，请点击此按钮将所有人物图片切换为“本地代理模式”。系统将在用户访问该图片时，自动从云端检索并转存至 R2。</p>
-                     </div>
-                     <button 
-                       onClick={async () => {
-                         try {
-                           showNotification('info', '已触发修复，请在稍后观察效果...');
-                           const res = await fetch("/api/admin/repair-images", {
-                                method: "POST",
-                                headers: { "x-admin-password": adminPassword }
-                           });
-                           const data = await res.json();
-                           if (data.success) {
-                             showNotification('success', '修复任务在后台运行中，刷新页面查看效果。');
-                           } else {
-                             showNotification('error', data.error || '触发修复失败');
-                           }
-                         } catch(e) {
-                             showNotification('error', '触发修复失败，网络错误');
-                         }
-                       }}
-                       className="px-4 py-2.5 shrink-0 bg-white border border-orange-200 text-orange-600 hover:bg-orange-50 font-bold text-xs rounded-xl shadow-sm transition-all"
-                     >
-                       开始修复
-                     </button>
-                  </div>
-                </div>
-
               </div>
             </div>
           )}
         </div>
-        </div>
       </div>
+      
       <ConfirmDialog 
         isOpen={confirmOpen}
         onClose={() => setConfirmOpen(false)}
@@ -1041,9 +923,8 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
         isDanger={confirmData.isDanger}
         isLoading={isLoading}
       />
-
-      {/* Confirm Dialog is now above */}
     </div>
+  </div>
   );
 }
 

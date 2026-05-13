@@ -64,7 +64,6 @@ export default function ConfirmDialog({
                 <button
                   onClick={() => {
                     onConfirm();
-                    // onClose is usually called after the action completes, but we might want to close immediately or wait
                   }}
                   disabled={isLoading}
                   className={`flex-1 py-3 px-4 rounded-2xl font-bold text-sm transition-all shadow-lg disabled:opacity-50 flex items-center justify-center gap-2 ${

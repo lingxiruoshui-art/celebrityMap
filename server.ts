@@ -25,14 +25,27 @@ if (process.env.NODE_ENV !== "production") {
 
 // Node.js implementation using better-sqlite3
 class NodeDatabaseAdapter implements DatabaseAdapter {
-  private db: Database.Database;
+  private db: Database.Database | null = null;
+  private filename: string;
 
   constructor(filename: string) {
-    this.db = new Database(filename);
+    this.filename = filename;
+    try {
+      this.db = new Database(filename);
+      console.log(`Database connected: ${filename}`);
+    } catch (e) {
+      console.error(`Failed to connect to database ${filename}:`, e);
+    }
+  }
+
+  private getDb() {
+    if (!this.db) throw new Error(`Database not connected: ${this.filename}`);
+    return this.db;
   }
 
   prepare(sql: string): StatementAdapter {
-    const stmt = this.db.prepare(sql);
+    const db = this.getDb();
+    const stmt = db.prepare(sql);
     return {
       all: async <T>(...params: any[]) => stmt.all(...params) as T[],
       get: async <T>(...params: any[]) => stmt.get(...params) as T | undefined,
@@ -44,31 +57,55 @@ class NodeDatabaseAdapter implements DatabaseAdapter {
   }
 
   async exec(sql: string): Promise<void> {
-    this.db.exec(sql);
+    this.getDb().exec(sql);
   }
 
   pragma(sql: string): void {
-    this.db.pragma(sql);
+    this.getDb().pragma(sql);
   }
 }
 
-const db = new NodeDatabaseAdapter("celebrity_graph.sqlite");
-db.pragma("journal_mode = WAL");
+let dbAdapter: NodeDatabaseAdapter;
+try {
+  dbAdapter = new NodeDatabaseAdapter("celebrity_graph.sqlite");
+  dbAdapter.pragma("journal_mode = WAL");
+} catch (e) {
+  console.error("Critical error: Database adapter failed, using dummy adapter");
+  // @ts-ignore
+  dbAdapter = {
+    prepare: () => ({ all: async () => [], get: async () => undefined, run: async () => ({ changes: 0, lastInsertRowid: 0 }) }),
+    exec: async () => {},
+    pragma: () => {}
+  };
+}
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // Mount Hono app to /api
-  app.all("/api/*", (req, res) => {
-    // getRequestListener adapts the Node.js req/res to Web Standards Request for Hono
-    getRequestListener((request) => {
-      // Pass the fully constructed environment object to Hono
-      return honoApp.fetch(request, { 
-        ...process.env, 
-        DB_ADAPTER: db 
-      });
-    })(req, res);
+  // Hono handler for /api
+  const apiHandler = getRequestListener((request) => {
+    return honoApp.fetch(request, { 
+      ...process.env, 
+      DB_ADAPTER: dbAdapter 
+    });
+  });
+
+  // Hono API Routes
+  app.all("/api/*", async (req, res) => {
+    try {
+      await apiHandler(req, res);
+    } catch (e) {
+      console.error("Hono fetch error:", e);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Internal Hono Bridge Error" });
+      }
+    }
+  });
+
+  // Health check for Express itself
+  app.get("/express-health", (req, res) => {
+    res.json({ status: "alive" });
   });
 
   if (process.env.NODE_ENV !== "production") {

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useImperativeHandle, forwardRef } from "react";
-import { X, Search, ChevronRight, User, Loader2, Sparkles, AlertCircle, Zap, ChevronDown, ChevronUp, StopCircle, RefreshCw } from "lucide-react";
+import { X, Search, ChevronRight, User, Loader2, Sparkles, AlertCircle, Zap, ChevronDown, ChevronUp, StopCircle, RefreshCw, Save } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { getGemini, ARCHIVE_PROMPT, ARCHIVE_SCHEMA, PATH_PROMPT, PATH_SCHEMA, VALIDATION_PROMPT, VALIDATION_SCHEMA } from "../services/geminiService";
 
@@ -134,11 +134,30 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   const handlePickRandomPair = async () => {
     setIsPickingRandom(true);
     try {
-      const res = await fetch("/api/archiver/random-pair");
-      const data = await res.json();
-      if (data.sourceName && data.targetName) {
-        setSource(data.sourceName);
-        setTarget(data.targetName);
+      if (isAdmin) {
+        const res = await fetch("/api/archiver/admin-pick-pair", { method: "POST" });
+        const data = await res.json();
+        
+        if (data.needsAI) {
+           const genRes = await fetch("/api/archiver/generate-target", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ sourceName: data.sourceName })
+           });
+           const genData = await genRes.json();
+           if (data.sourceName) setSource(data.sourceName);
+           if (genData.targetName) setTarget(genData.targetName);
+        } else {
+           if (data.sourceName) setSource(data.sourceName);
+           if (data.targetName) setTarget(data.targetName);
+        }
+      } else {
+        const res = await fetch("/api/archiver/random-pair");
+        const data = await res.json();
+        if (data.sourceName && data.targetName) {
+          setSource(data.sourceName);
+          setTarget(data.targetName);
+        }
       }
     } catch (e) {
       console.error(e);
@@ -175,15 +194,14 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     abortControllerRef.current = new AbortController();
     const signal = abortControllerRef.current.signal;
 
-    const addLog = (msg: string, type: 'info' | 'ai-req' | 'ai-res' | 'error' = 'info', data?: any) => {
+    const addLog = (msg: string, type: 'ui' | 'api' | 'ai-req' | 'ai-res' | 'error' = 'ui', data?: any) => {
       const log = { timestamp: new Date().toLocaleTimeString(), msg, data, type };
       setDetailedLogs(prev => [...prev, log]);
-      console.log(`[Explorer Log] ${msg}`, data);
     };
 
     const addStep = (msg: string) => {
       setSearchSteps(prev => [...prev, { msg, status: 'pending' }]);
-      addLog(`Step: ${msg}`);
+      // No duplicate addLog here, searchSteps are visible separately
       setTimeout(() => {
         if (scrollRef.current) {
           scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -192,24 +210,25 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     };
     
     const updateLastStep = (status: 'success' | 'error' | 'pending', msg?: string) => {
-      if (status === 'error') {
-        addLog(`Step failed: ${msg || "current step"}`, 'error');
-      }
-
       setSearchSteps(prev => {
         if (prev.length === 0) return prev;
         const last = prev[prev.length - 1];
+        if (status === 'error') {
+           addLog(`步骤失败: ${msg || last.msg}`, 'error');
+        }
         return [...prev.slice(0, -1), { msg: msg || last.msg, status }];
       });
     };
 
     try {
       setDetailedLogs([]);
-      addLog("启动时空探索协议", "info", { source: finalSource, target: finalTarget });
+      addLog("启动时空探索协议会话", "api", { source: finalSource, target: finalTarget, timestamp: new Date().toISOString() });
       addStep("正在初始化跨时空检索协议...");
       
+      addLog("请求馆藏核心元数据", "api", { endpoint: "/api/metadata" });
       const metaRes = await fetch("/api/metadata", { signal });
       const currentMeta = await metaRes.json();
+      addLog("元数据同步成功", "api", currentMeta);
       setMetadata(currentMeta);
       
       const provider = currentMeta.activeProvider || "gemini";
@@ -223,7 +242,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
       addStep(`正在识别人物身份: ${finalSource} 与 ${finalTarget}...`);
       
       const callAIProxy = async (prompt: string, responseFormat: 'text' | 'json' = 'json', schema?: any) => {
-        addLog(`AI 请求通过代理发出 (${responseFormat})`, 'ai-req', { prompt, schema });
+        addLog(`AI 代理请求发送`, 'ai-req', { prompt, responseFormat, schema });
         const res = await fetch("/api/ai/proxy", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -232,14 +251,13 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
         });
         if (!res.ok) {
             const err = await res.json();
-            addLog("AI 服务响应错误", 'error', err);
+            addLog("AI 服务响应失败", 'error', err);
             throw new Error(err.error || "AI 服务异常");
         }
         const data = await res.json();
-        addLog("AI 响应成功", 'ai-res', data);
+        addLog("AI 响应解码成功", 'ai-res', { rawText: data.text });
         return data.text;
       };
-
       const existingArray = currentMeta?.existingNames ? currentMeta.existingNames.split("、") : [];
       const findNormalizedInDB = (name: string) => {
         const trimmed = name.trim();
@@ -455,272 +473,261 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   };
 
   const content = (
-    <div className={`flex flex-col ${isInline ? "h-auto max-h-full sm:max-h-[600px] w-full" : "max-h-[70vh] w-full"} overflow-y-auto custom-scrollbar transition-all duration-300 ${!isCollapsed ? (isInline ? "p-3 sm:p-4" : "p-6") : "p-0"}`}>
+    <div className={`flex flex-col h-full w-full overflow-hidden transition-all duration-300 ${!isCollapsed ? (isInline ? "p-0" : "p-6") : "p-0"}`}>
       {!isCollapsed && (
-        <div className={`flex flex-col h-full shrink-0 ${isInline && showLogs && (isLoading || showResults || error) ? "lg:grid lg:grid-cols-12 lg:gap-6" : ""}`}>
-          <div className={`${isInline && showLogs && (isLoading || showResults || error) ? "lg:col-span-12 xl:col-span-5" : "w-full"}`}>
-            {!showResults && !isLoading && !error && !hideInputs && (
-              <motion.div 
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="flex flex-col"
-              >
-                <div className={`grid grid-cols-1 ${isInline ? "gap-2 px-1" : "md:grid-cols-2 gap-4"} mb-4 shrink-0`}>
-                  <div className="space-y-1.5">
-                  <div className="flex items-center justify-between mb-2 px-0.5">
-                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1 font-mono leading-none">起点人物</label>
-                    {!isInline && (
-                      <button 
-                        onClick={handlePickRandomPair}
-                        disabled={isPickingRandom || isLoading}
-                        className="text-[10px] font-black text-indigo-500 hover:text-indigo-600 flex items-center gap-1 uppercase tracking-widest transition-all disabled:opacity-50"
-                      >
-                        <RefreshCw className={`w-3 h-3 ${isPickingRandom ? 'animate-spin' : ''}`} />
-                        随机选一对
-                      </button>
-                    )}
-                  </div>
-                    <div className="relative px-0.5">
-                      <input 
-                        type="text"
-                        value={source}
-                        onChange={(e) => setSource(e.target.value)}
-                        placeholder="苏格拉底"
-                        className="w-full pl-8 pr-3 py-2 bg-slate-100/50 border border-slate-200 rounded-xl text-[12px] focus:ring-2 focus:ring-indigo-500 focus:bg-white outline-none transition-all font-medium"
-                      />
-                      <User className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-400" />
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    <div className="px-0.5">
-                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1 font-mono leading-none">终点人物</label>
-                    </div>
-                    <div className="relative px-0.5">
-                      <input 
-                        type="text"
-                        value={target}
-                        onChange={(e) => setTarget(e.target.value)}
-                        placeholder="乔布斯"
-                        className="w-full pl-8 pr-3 py-2 bg-slate-100/50 border border-slate-200 rounded-xl text-[12px] focus:ring-2 focus:ring-indigo-500 focus:bg-white outline-none transition-all font-medium"
-                      />
-                      <User className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-400" />
-                    </div>
-                  </div>
-                </div>
-
-                <button 
-                  onClick={() => handleSearch()}
-                  disabled={isLoading || !source.trim() || !target.trim()}
-                  className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-[12px] font-bold rounded-xl transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-2 active:scale-[0.98] shrink-0"
-                >
-                  <Sparkles className="w-4 h-4" />
-                  开启跨时空探索
-                </button>
-              </motion.div>
-            )}
-
-            {isLoading && (
-              <div className="flex-1 flex flex-col pt-4 overflow-hidden">
-                <div className="flex items-center gap-3 p-4 bg-indigo-50 rounded-2xl border border-indigo-100 border-dashed mb-4 relative overflow-hidden">
-                    {/* Pulse background */}
-                    <motion.div 
-                      className="absolute inset-0 bg-indigo-100/50"
-                      animate={{ opacity: [0.3, 0.6, 0.3] }}
-                      transition={{ duration: 2, repeat: Infinity }}
-                    />
-                    
-                    <Loader2 className="w-5 h-5 text-indigo-600 animate-spin relative z-10" />
-                    <div className="flex-1 relative z-10">
-                      <div className="text-[11px] font-black text-indigo-600 tracking-tight">AI 正在编织历史脉络...</div>
-                      <div className="h-1.5 w-full bg-indigo-100/50 rounded-full mt-2 overflow-hidden">
-                        <motion.div 
-                           className="h-full bg-indigo-500"
-                           initial={{ width: "0%" }}
-                           animate={{ width: "100%" }}
-                           transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+        <div className={`flex-1 flex flex-col lg:flex-row overflow-hidden min-h-0 bg-white ${showLogs ? "" : "items-center"}`}>
+          {/* Main Controls & Results Column (Responsive Width - Now on Left) */}
+          <div className={`${showLogs ? "w-full lg:w-[360px] xl:w-[420px] lg:border-r border-slate-100 bg-slate-50/20 shadow-[-10px_0_20px_-10px_rgba(0,0,0,0.05)_inset]" : "w-full max-w-[440px] mx-auto"} flex flex-col flex-1 lg:flex-none lg:shrink-0 overflow-hidden min-h-[40%] lg:min-h-0`}>
+              <div className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5 sm:px-6 sm:pb-6 space-y-6">
+                {!showResults && !error && !hideInputs && (
+                  <div className="space-y-4 pt-2 pb-6 border-b border-slate-100 mb-2">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1 font-mono">起点人物</label>
+                      <div className="relative group">
+                        <input 
+                          type="text"
+                          value={source}
+                          onChange={(e) => setSource(e.target.value)}
+                          placeholder="苏格拉底"
+                          disabled={isLoading}
+                          className="w-full pl-9 pr-3 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-[13px] focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 focus:bg-white outline-none transition-all font-bold placeholder:text-slate-300 shadow-sm disabled:opacity-50"
                         />
+                        <User className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
                       </div>
                     </div>
                     
-                    <button 
-                      onClick={handleStop}
-                      className="ml-2 p-2 bg-white/80 hover:bg-white text-red-500 rounded-xl shadow-sm border border-red-100 transition-all hover:scale-105 active:scale-95 group relative z-10"
-                      title="停止探索"
-                    >
-                      <StopCircle className="w-4 h-4" />
-                    </button>
-                </div>
-                <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scrollbar space-y-2.5 pl-2 border-l-2 border-slate-100 mb-2 min-h-[100px]">
-                  {searchSteps.map((step, i) => (
-                    <motion.div 
-                      key={i}
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: step.status === 'pending' ? 1 : 0.8, x: 0 }}
-                      className="flex items-center gap-2"
-                    >
-                      <div className={`w-1.5 h-1.5 rounded-full ${step.status === 'success' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]' : (step.status === 'error' ? 'bg-red-500' : 'bg-indigo-400 animate-ping')}`} />
-                      <span className={`text-[10px] font-medium transition-colors ${step.status === 'success' ? 'text-slate-500' : 'text-indigo-600'}`}>
-                        {step.msg}
-                        {step.status === 'success' && <span className="ml-1 text-[8px] opacity-60">✓</span>}
-                      </span>
-                    </motion.div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {error && (
-              <div className="flex-1 flex flex-col items-center justify-center py-6 text-center animate-in fade-in zoom-in duration-300">
-                <div className={`w-14 h-14 ${error.includes("中止") ? "bg-slate-100 text-slate-400" : "bg-red-50 text-red-500"} rounded-3xl flex items-center justify-center mb-4 shadow-sm`}>
-                    {error.includes("中止") ? <Search className="w-7 h-7" /> : <AlertCircle className="w-7 h-7" />}
-                </div>
-                <h3 className="text-sm font-black text-slate-800 mb-2">{error.includes("中止") ? "探索已暂停" : "探索遭遇挑战"}</h3>
-                <p className="text-[11px] text-slate-500 leading-relaxed px-4 mb-6 font-medium">{error}</p>
-                <div className="flex gap-3">
-                  <button 
-                    onClick={() => handleSearch()}
-                    className={`${error.includes("中止") ? "bg-indigo-600 text-white hover:bg-indigo-700" : "bg-slate-900 text-white hover:bg-black"} px-6 py-2.5 text-[11px] font-black rounded-xl transition-all shadow-lg active:scale-95 uppercase tracking-widest`}
-                  >
-                    {error.includes("中止") ? "继续探索" : "重新尝试"}
-                  </button>
-                  <button 
-                    onClick={clearResults}
-                    className="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-black rounded-xl transition-all active:scale-95 uppercase tracking-widest"
-                  >
-                    返回
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {showResults && path && (
-              <motion.div 
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="flex-1 flex flex-col overflow-hidden"
-              >
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1">探索发现</h3>
-                  <button 
-                    onClick={clearResults}
-                    className="p-1.5 hover:bg-slate-100 rounded-full transition-colors text-slate-400 hover:text-red-500"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-                
-                <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-4 max-h-[400px]">
-                  {/* Path Summary Header */}
-                  <div className="p-4 bg-gradient-to-br from-indigo-50 to-white border border-indigo-100/50 rounded-2xl shadow-inner">
-                    <div className="flex items-center gap-2 mb-2">
-                        <Zap className="w-4 h-4 text-indigo-600" />
-                        <h4 className="text-[10px] font-black text-slate-800 uppercase tracking-wider">时空关系探索报告</h4>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1 font-mono">终点人物 (拟收录)</label>
+                      <div className="relative group">
+                        <input 
+                          type="text"
+                          value={target}
+                          onChange={(e) => setTarget(e.target.value)}
+                          placeholder="成吉思汗"
+                          disabled={isLoading}
+                          className="w-full pl-9 pr-3 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-[13px] focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 focus:bg-white outline-none transition-all font-bold placeholder:text-slate-300 shadow-sm disabled:opacity-50"
+                        />
+                        <User className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
+                      </div>
                     </div>
-                    <p className="text-[11px] text-slate-500 leading-relaxed font-bold">
-                      成功建立 <span className="text-indigo-600 px-1">{path[0].name}</span> 
-                      与 <span className="text-indigo-600 px-1">{path[path.length-1].name}</span> 之间的历史连接。
-                      链条共包含 <span className="text-indigo-600 px-1">{path.length}</span> 个节点，
+
+                    <div className="pt-2 flex gap-2 w-full">
+                      {isAdmin && (
+                        <button 
+                          onClick={handlePickRandomPair}
+                          disabled={isPickingRandom || isLoading}
+                          className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 disabled:opacity-50 rounded-xl font-bold text-[13px] transition-all flex items-center justify-center gap-1.5 active:scale-[0.98]"
+                        >
+                          <RefreshCw className={`w-4 h-4 ${isPickingRandom ? 'animate-spin' : ''}`} />
+                          <span>随机更换</span>
+                        </button>
+                      )}
+                      <button 
+                        onClick={() => handleSearch()}
+                        disabled={isLoading || !source.trim() || !target.trim()}
+                        className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-[13px] font-bold rounded-xl transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-1.5 active:scale-[0.98] group"
+                      >
+                        {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4 group-hover:animate-pulse" />}
+                        <span>{isLoading ? "正在编织..." : "开启探索"}</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+  
+              {isLoading && (
+                <div className="flex flex-col animate-in fade-in duration-500">
+                  <div className="flex items-center gap-3 p-4 bg-indigo-50/50 rounded-2xl border border-indigo-100 border-dashed mb-4 relative overflow-hidden shrink-0">
+                      <motion.div 
+                        className="absolute inset-0 bg-indigo-100/30"
+                        animate={{ opacity: [0.2, 0.4, 0.2] }}
+                        transition={{ duration: 2, repeat: Infinity }}
+                      />
+                      <Loader2 className="w-5 h-5 text-indigo-600 animate-spin relative z-10 shrink-0" />
+                      <div className="flex-1 relative z-10 min-w-0">
+                        <div className="text-[11px] font-black text-indigo-600 tracking-tight mb-1 truncate">AI 正在编织历史脉络...</div>
+                        <div className="h-1.5 w-full bg-indigo-100/50 rounded-full overflow-hidden">
+                          <motion.div 
+                             className="h-full bg-indigo-500"
+                             initial={{ width: "0%" }}
+                             animate={{ width: "100%" }}
+                             transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
+                          />
+                        </div>
+                      </div>
+                      
+                      <button 
+                        onClick={handleStop}
+                        className="relative z-10 w-9 h-9 rounded-xl bg-white shadow-sm border border-red-100 text-red-500 hover:bg-red-50 transition-all flex items-center justify-center shrink-0 active:scale-90"
+                        title="停止探索"
+                      >
+                        <StopCircle className="w-5 h-5" />
+                      </button>
+                  </div>
+                  <div className="flex flex-col space-y-2.5 pl-2 border-l-2 border-slate-100 mb-2">
+                    {searchSteps.map((step, i) => (
+                      <motion.div 
+                        key={i}
+                        initial={{ opacity: 0, x: -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        className="flex items-start gap-2 group"
+                      >
+                        <div className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${step.status === 'success' ? 'bg-emerald-500' : step.status === 'error' ? 'bg-red-500' : 'bg-indigo-500 animate-pulse'}`} />
+                        <span className={`text-[10px] font-bold tracking-tight break-words leading-relaxed ${step.status === 'pending' ? 'text-indigo-600' : 'text-slate-400 font-medium'}`}>
+                          {step.msg}
+                          {step.status === 'success' && <span className="ml-1 opacity-50">✓</span>}
+                        </span>
+                      </motion.div>
+                    ))}
+                  </div>
+                </div>
+              )}
+  
+              {error && (
+                <div className="flex flex-col items-center justify-center py-6 text-center animate-in fade-in zoom-in duration-300">
+                  <div className={`w-12 h-12 ${error.includes("中止") ? "bg-slate-100 text-slate-400" : "bg-red-50 text-red-500"} rounded-2xl flex items-center justify-center mb-3 shadow-sm`}>
+                      {error.includes("中止") ? <Search className="w-6 h-6" /> : <AlertCircle className="w-6 h-6" />}
+                  </div>
+                  <h4 className="text-slate-800 font-bold text-sm mb-1">{error.includes("中止") ? "会话已终止" : "检索异常"}</h4>
+                  <p className="text-[10px] text-slate-400 px-4 leading-relaxed mb-4">{error}</p>
+                  <button 
+                    onClick={clearResults}
+                    className="px-4 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg text-[10px] font-bold hover:bg-slate-50 transition-colors"
+                  >
+                    重置
+                  </button>
+                </div>
+              )}
+  
+              {showResults && path && (
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.98 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="flex flex-col space-y-4"
+                >
+                  <div className="flex items-center justify-between px-1">
+                    <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400">检索发现</h3>
+                    <button 
+                      onClick={clearResults}
+                      className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors border border-transparent hover:border-slate-200"
+                      title="重置"
+                    >
+                      <X className="w-3.5 h-3.5 text-slate-400" />
+                    </button>
+                  </div>
+                  
+                  {/* Path Summary Header */}
+                  <div className="p-4 bg-gradient-to-br from-indigo-50 to-white/50 border border-indigo-100/50 rounded-2xl shadow-sm">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Zap className="w-3.5 h-3.5 text-indigo-600" />
+                      <span className="text-[9px] font-black text-slate-800 uppercase tracking-widest">时空关系探索报告</span>
+                    </div>
+                    <p className="text-[11px] text-slate-600 leading-relaxed font-bold">
+                      成功建立 <span className="text-indigo-600">{path[0].name}</span> 
+                      与 <span className="text-indigo-600">{path[path.length-1].name}</span> 之间的历史连接。
+                      链条共包含 <span className="text-indigo-600">{path.length}</span> 个节点，
                       跨越了深厚的历史脉络。
                     </p>
                   </div>
-
-                  <div className="relative">
-                    <div className="absolute top-[30px] bottom-[30px] left-[29px] w-[2px] bg-indigo-100/80 z-0"></div>
-                    {path.map((step, i) => (
-                      <div key={i} className="flex flex-col relative z-10">
-                        {i > 0 && (
-                          <div className="flex py-3 pl-[56px] pr-2 w-full">
-                            <div className="w-full bg-indigo-50/80 px-4 py-2.5 rounded-xl text-[11px] font-medium text-indigo-600 border border-indigo-100/50 shadow-sm leading-relaxed text-center relative">
-                              {step.type || "历史渊源"}
+  
+                  {/* Stylized Results List */}
+                  <div className="relative pt-2">
+                    <div className="absolute top-[20px] bottom-[20px] left-[26px] w-[2px] bg-slate-100 z-0"></div>
+                    
+                    {path.map((item, idx) => (
+                      <div key={idx} className="relative z-10">
+                        {idx > 0 && (
+                          <div className="py-3 pl-12 pr-2">
+                            <div className="bg-indigo-50/60 p-2.5 rounded-xl border border-indigo-100/30 text-[10px] font-bold text-indigo-500 text-center leading-tight shadow-sm">
+                              {item.type || "历史渊源"}
                             </div>
                           </div>
                         )}
                         
                         <motion.div 
-                          whileHover={{ scale: 1.02 }}
-                          className="w-full p-3 bg-white/95 border border-slate-200/80 rounded-2xl shadow-sm flex items-center justify-between group cursor-pointer hover:border-indigo-400 hover:shadow-indigo-100/50 transition-all relative"
+                          whileHover={{ x: 3 }}
+                          onClick={() => {
+                            // Find person in storage or just select by name logic could go here
+                            onSelectPerson(0); // Placeholder
+                          }}
+                          className="flex items-center gap-3 bg-white p-3 rounded-2xl border border-slate-200 shadow-sm hover:border-indigo-400 hover:shadow-lg hover:shadow-indigo-500/10 transition-all group cursor-pointer"
                         >
-                          <div className="flex items-center gap-3">
-                            <div className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all shrink-0 ${newArrivals.includes(step.name) ? 'bg-emerald-600 text-white shadow-emerald-200' : 'bg-slate-50 text-indigo-500 group-hover:bg-indigo-600 group-hover:text-white shadow-sm ring-1 ring-slate-200/50'}`}>
-                              <User className="w-4 h-4" />
-                            </div>
-                            <div className="min-w-0 pr-2">
-                              <span className="font-black text-slate-800 text-[12px] whitespace-nowrap block truncate">{step.name}</span>
-                              <p className="text-[9px] text-slate-400 font-medium truncate">{newArrivals.includes(step.name) ? "AI 馆藏同步完成" : "历史跨度关联人物"}</p>
-                            </div>
+                          <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 border border-slate-100 ${newArrivals.includes(item.name) ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-slate-50 text-indigo-600'}`}>
+                             <User className="w-5 h-5" />
                           </div>
-                          {newArrivals.includes(step.name) && (
-                            <div className="flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-md font-black text-[8px] uppercase tracking-tighter shrink-0">
-                              <Sparkles className="w-2 h-2" />
-                              <span>新收录</span>
-                            </div>
-                          )}
+                          <div className="min-w-0 flex-1">
+                             <div className="flex items-center justify-between gap-2 overflow-hidden">
+                               <span className="text-[13px] font-black text-slate-800 break-words">{item.name}</span>
+                               {newArrivals.includes(item.name) && (
+                                 <span className="text-[8px] font-black bg-emerald-500 text-white px-1.5 py-0.5 rounded shadow-sm shrink-0">NEW</span>
+                               )}
+                             </div>
+                             <div className="text-[10px] text-slate-400 font-medium whitespace-normal">历史跨度关联人物</div>
+                          </div>
                         </motion.div>
                       </div>
                     ))}
                   </div>
-                </div>
-              </motion.div>
-            )}
+                </motion.div>
+              )}
+            </div>
           </div>
 
-          {/* Area 2: Detailed Interaction Process Logs (Admin Only) */}
+          {/* Right Column (on Desktop) / Bottom Column (on Mobile): Interaction Process Logs */}
           {showLogs && (isLoading || showResults || error) && (
-            <div className="hidden lg:flex lg:col-span-12 xl:col-span-7 flex-col bg-slate-50 rounded-3xl overflow-hidden border border-slate-200 shadow-xl h-[400px] lg:h-full min-h-[400px]">
-               <div className="px-4 py-3 bg-white border-b border-slate-100 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest font-mono">Deep Intelligence Interaction Log</span>
+            <div className="flex-1 flex flex-col min-w-0 bg-white overflow-hidden">
+               <div className="px-5 py-4 bg-slate-50/50 border-b border-slate-100 flex items-center justify-between shrink-0">
+                  <div className="flex items-center gap-3">
+                    <div className="w-2.5 h-2.5 bg-indigo-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(79,70,229,0.4)]"></div>
+                    <span className="text-[10px] font-black text-slate-700 uppercase tracking-[0.2em] font-mono">Trace Log</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <button 
                       onClick={() => {
                         const content = detailedLogs
-                          .filter(log => error ? true : (log.type === 'info' || log.type === 'error'))
-                          .map(log => `[${log.timestamp}] ${log.type.toUpperCase()}: ${log.msg}${log.data ? '\n' + JSON.stringify(log.data, null, 2) : ''}`)
-                          .join('\n\n');
+                          .map(log => `[${log.timestamp}] [${log.type.toUpperCase()}] ${log.msg}${log.data ? '\n' + JSON.stringify(log.data, null, 2) : ''}`)
+                          .join('\n' + '-'.repeat(30) + '\n');
                         navigator.clipboard.writeText(content);
-                        alert("日志已复制到剪贴板");
                       }}
-                      className="text-[9px] font-bold text-indigo-600 hover:text-indigo-700 bg-indigo-50 px-2 py-1 rounded-md transition-colors"
+                      className="text-[9px] font-black text-slate-500 hover:text-indigo-600 px-2 py-1 rounded-lg transition-all flex items-center gap-1.5 uppercase tracking-wider border border-slate-100 hover:border-indigo-100 hover:bg-indigo-50/30"
                     >
-                      复制全部
+                      <Save className="w-2.5 h-2.5" />
+                      复制日志
                     </button>
-                    <div className="flex gap-1.5 ml-2">
-                      <div className="w-2 h-2 rounded-full bg-slate-200"></div>
-                      <div className="w-2 h-2 rounded-full bg-slate-200"></div>
-                      <div className="w-2 h-2 rounded-full bg-slate-200"></div>
-                    </div>
                   </div>
                </div>
-               <div ref={logsScrollRef} className="flex-1 overflow-y-auto p-4 custom-scrollbar font-mono text-[10px] space-y-2 select-text">
+               
+               <div ref={logsScrollRef} className="flex-1 overflow-y-auto p-5 custom-scrollbar font-mono text-[11px] space-y-3 select-text bg-white">
                   {detailedLogs.length === 0 && (
-                    <div className="h-full flex items-center justify-center text-slate-400 italic">
-                      等待检索协议启动...
+                    <div className="h-full flex items-center justify-center text-slate-300 italic flex-col gap-2 py-20">
+                      <Loader2 className="w-6 h-6 animate-spin opacity-20" />
+                      <span>等待追踪数据包中...</span>
                     </div>
                   )}
-                  <div className="flex flex-col gap-1">
-                    {detailedLogs.filter(log => error ? true : (log.type === 'info' || log.type === 'error')).map((log, i) => (
-                      <div key={i} className="py-1 border-b border-slate-100 last:border-0">
-                        <div className={`flex items-center gap-2 mb-0.5 ${
-                          log.type === 'error' ? 'text-red-600' :
-                          log.type === 'ai-req' ? 'text-indigo-600' :
-                          log.type === 'ai-res' ? 'text-emerald-600' :
-                          'text-slate-400'
-                        }`}>
-                          <span className="font-bold whitespace-nowrap">[{log.timestamp}]</span>
-                          <span className="font-black uppercase tracking-tighter text-[8px] px-1 bg-slate-100 rounded">{log.type}</span>
-                          <span className="font-bold text-slate-700">{log.msg}</span>
+                  <div className="flex flex-col gap-2">
+                    {detailedLogs.map((log, i) => (
+                      <div key={i} className="animate-in fade-in slide-in-from-left-1 duration-200">
+                        <div className="flex items-baseline gap-2.5">
+                          <span className="font-bold text-slate-300 tabular-nums shrink-0 whitespace-nowrap">[{log.timestamp}]</span>
+                          <span className={`font-black uppercase tracking-tighter text-[8px] px-1 py-0 rounded shrink-0 ${
+                            log.type === 'error' ? 'text-red-500' :
+                            log.type === 'ai-req' || log.type === 'ai-res' ? 'text-amber-500' :
+                            log.type === 'api' ? 'text-indigo-500' : 
+                            'text-slate-400'
+                          }`}>
+                            {log.type === 'api' ? 'SERVER' : log.type.replace('-', ' ')}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <span className={`font-bold ${log.type === 'error' ? 'text-red-600' : 'text-slate-700'}`}>{log.msg}</span>
+                            {log.data && (
+                              <div className="mt-1 text-slate-400 font-medium break-all leading-relaxed opacity-80 pl-2 border-l border-slate-100">
+                                {JSON.stringify(log.data)}
+                              </div>
+                            )}
+                          </div>
                         </div>
-                        {log.data && (
-                          <pre className="mt-1 p-2 bg-slate-200/30 rounded border border-slate-200/50 text-[9px] overflow-x-auto whitespace-pre-wrap break-all max-h-[300px] text-slate-500">
-                            {JSON.stringify(log.data, null, 2)}
-                          </pre>
-                        )}
                       </div>
                     ))}
                   </div>
-                  <div id="logs-end"></div>
                </div>
             </div>
           )}
@@ -730,13 +737,20 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   );
 
   if (isInline) {
+    const isShowingData = isLoading || showResults || error;
+    const finalWidth = isShowingData && showLogs 
+      ? 'w-full lg:w-[1000px] xl:w-[1100px]' 
+      : isShowingData 
+        ? 'w-full sm:w-[440px]' 
+        : 'w-full sm:w-[380px]';
+
     return (
-      <div className={`flex flex-col transition-all duration-300 ${isCollapsed && isInline ? 'w-[160px] sm:w-[200px]' : (isInline ? 'w-full' : 'w-full')}`}>
+      <div className={`flex flex-col h-full max-w-full transition-all duration-300 ${isCollapsed ? 'w-auto' : finalWidth}`}>
         {!hideHeader && (
           <div className="px-3 py-2 bg-slate-50/50 border-b border-slate-100 flex items-center justify-between cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => setIsCollapsed(!isCollapsed)}>
             <div className="flex items-center gap-1.5 pr-2">
-              <Zap className="w-3 h-3 text-indigo-600 shrink-0" />
-              <span className="text-[10px] font-bold text-slate-800 whitespace-nowrap">时空关系网络探索</span>
+              <Zap className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+              <span className="text-xs font-bold text-slate-800 whitespace-nowrap">时空关系网络探索</span>
             </div>
             <button 
               className="p-1 hover:bg-white rounded-md text-slate-400 hover:text-indigo-600 transition-all border border-transparent hover:border-slate-200"

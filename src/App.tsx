@@ -267,7 +267,7 @@ export default function App() {
                   }}
                   className="w-full pl-10 pr-10 py-2.5 bg-slate-100/50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all shadow-inner group-hover:bg-slate-100/80 appearance-none text-slate-600 font-medium"
                 >
-                  <option value="" disabled hidden>连接最多的人物...</option>
+                  <option value="" disabled hidden>前10名连接最多...</option>
                   {topConnectedPeople.map(p => (
                       <option key={p.id} value={p.id}>{p.name} ({p.count} 联系)</option>
                   ))}
@@ -297,7 +297,7 @@ export default function App() {
                     .filter((p) =>
                       p.name.toLowerCase().includes(searchQuery.toLowerCase()),
                     )
-                    .slice(0, 50)
+                    .slice(0, 10)
                     .map((p) => (
                       <button
                         key={p.id}
@@ -475,16 +475,14 @@ export default function App() {
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center">
                             {archivedPerson ? (
-                              <div className="flex items-center gap-1.5 px-2 py-1 bg-indigo-50 rounded-lg text-indigo-500 font-black text-[9px] group-hover:bg-indigo-500 group-hover:text-white transition-all transform group-hover:translate-x-1">
-                                <span>查阅档案</span>
-                                <ChevronRight className="w-3 h-3" />
+                              <div className="text-indigo-400 group-hover:text-indigo-600 transition-all transform group-hover:translate-x-1">
+                                <ChevronRight className="w-5 h-5" />
                               </div>
                             ) : (
-                              <div className="flex items-center gap-1.5 px-2 py-1 bg-slate-100/50 rounded-lg text-slate-300 font-bold text-[9px] opacity-60">
-                                <span>未收录</span>
-                                <CircleDashed className="w-3 h-3" />
+                              <div className="text-slate-200">
+                                <ChevronRight className="w-5 h-5" />
                               </div>
                             )}
                           </div>
@@ -571,11 +569,11 @@ export default function App() {
         {/* Right Column: Network Graph */}
         <section className="flex-1 flex flex-col bg-white/70 backdrop-blur-2xl border border-slate-200/60 rounded-3xl shadow-xl shadow-slate-200/50 overflow-hidden relative min-h-[60vh] lg:min-h-0 shrink-0 lg:shrink">
           <div className="p-3 bg-white/40 border-b border-slate-200/50 backdrop-blur-md z-20 flex justify-between items-start px-4 sm:px-6 relative">
-            <h2 className="text-[10px] uppercase tracking-widest font-bold text-slate-400 flex items-center gap-2 mt-3">
-              <Sparkles className="w-3 h-3" /> 全景图谱
+            <h2 className="text-sm uppercase tracking-widest font-bold text-slate-400 flex items-center gap-2 mt-3">
+              <Sparkles className="w-4 h-4" /> 全景图谱
             </h2>
-            <div className="absolute right-4 sm:right-6 top-2 z-30 flex justify-end origin-top-right">
-              <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/60 shadow-xl overflow-hidden flex flex-col max-h-[85vh] sm:max-h-[calc(100vh-120px)] w-max">
+            <div className="absolute left-4 right-4 sm:left-auto sm:right-6 top-2 z-30 flex justify-end origin-top-right">
+              <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/60 shadow-xl overflow-hidden flex flex-col max-h-[85vh] sm:max-h-[calc(100vh-120px)] w-full sm:w-max max-w-full">
                 <SpacetimeExplorer
                   onClose={() => setIsSixDegreesOpen(false)}
                   onRefreshArchive={fetchArchive}
