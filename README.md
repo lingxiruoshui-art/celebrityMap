@@ -54,8 +54,8 @@ View your app in AI Studio: https://ai.studio/apps/309319c0-ccbb-434d-afc5-4fc77
     *   R2 bucket: 选择你刚才创建的 `historical-portraits`。
 
 在 **Settings -> Environment variables** 处添加：
-*   `GEMINI_API_KEY`: 你的 Google Gemini API 密钥。
 *   `ADMIN_PASSWORD`: 管理员后台密码（选填，默认 admin）。
+*   `GEMINI_API_KEY`: Google Gemini API 密钥（选填，也可以在进入后台后动态配置）。
 
 ### 4. 自动初始化
 

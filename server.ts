@@ -27,16 +27,19 @@ import { CATEGORIES, FIGURE_POOL } from "./src/figuresPool.ts";
 
 let db: DatabaseAdapter;
 let imagesBucket: any;
+let cloudflareEnv: any = {};
 
 // Initialize database and external services
 function initDb(env?: any) {
   if (env && env.DB) {
     db = new D1DatabaseAdapter(env.DB);
     imagesBucket = env.IMAGES;
+    cloudflareEnv = env || {};
   } else {
     // Default to Node.js better-sqlite3 for AI Studio
     db = new NodeDatabaseAdapter("celebrity_graph.sqlite");
     db.pragma("journal_mode = WAL");
+    cloudflareEnv = process.env;
   }
 }
 
@@ -122,6 +125,11 @@ async function incrementUsage() {
     `).run(date);
 }
 
+// ==== Admin Helpers ====
+const getAdminPassword = () => {
+    return cloudflareEnv.ADMIN_PASSWORD || process.env.ADMIN_PASSWORD || "admin";
+};
+
 // AI Helper function supporting Gemini and Aliyun
 async function callAI(prompt: string, responseFormat: "text" | "json" = "text", schema?: any): Promise<string> {
   const provider = await getConfig("active_model_provider", "gemini");
@@ -185,9 +193,9 @@ async function callAI(prompt: string, responseFormat: "text" | "json" = "text", 
     }
     return content;
   } else {
-    const apiKey = (await getConfig("gemini_api_key")) || process.env.GEMINI_API_KEY;
-    const modelId = (await getConfig("gemini_model_id")) || process.env.GEMINI_MODEL_ID || "gemini-1.5-flash";
-    if (!apiKey) throw new Error("缺少 Gemini API Key，请在设置中配置。");
+    const apiKey = (await getConfig("gemini_api_key")) || cloudflareEnv.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+    const modelId = (await getConfig("gemini_model_id")) || cloudflareEnv.GEMINI_MODEL_ID || process.env.GEMINI_MODEL_ID || "gemini-1.5-flash";
+    if (!apiKey) throw new Error("缺少 Gemini API Key，请在设置中配置或定义环境变量。");
     if (!modelId) throw new Error("缺少 Gemini 模型 ID，请在设置中配置。");
     
     const ai = new GoogleGenAI({ apiKey });
@@ -394,7 +402,7 @@ async function startServer() {
   // ==== Admin API ====
   app.post("/api/admin/verify", express.json(), (req, res) => {
     const { password } = req.body;
-    const adminPass = process.env.ADMIN_PASSWORD || "admin";
+    const adminPass = getAdminPassword();
     if (password === adminPass) {
       res.json({ success: true });
     } else {
@@ -404,7 +412,7 @@ async function startServer() {
 
   app.get("/api/admin/config", async (req, res) => {
     const pass = req.headers["x-admin-password"];
-    const adminPass = process.env.ADMIN_PASSWORD || "admin";
+    const adminPass = getAdminPassword();
     if (pass !== adminPass) return res.status(401).json({ error: "Unauthorized" });
 
     res.json({
@@ -419,7 +427,7 @@ async function startServer() {
 
   app.post("/api/admin/config", express.json(), async (req, res) => {
     const pass = req.headers["x-admin-password"];
-    const adminPass = process.env.ADMIN_PASSWORD || "admin";
+    const adminPass = getAdminPassword();
     if (pass !== adminPass) return res.status(401).json({ error: "Unauthorized" });
 
     const { active_model_provider, gemini_api_key, gemini_model_id, aliyun_api_key, aliyun_model_id, guest_explore_limit } = req.body;
@@ -435,7 +443,7 @@ async function startServer() {
 
   app.get("/api/admin/people", async (req, res) => {
     const pass = req.headers["x-admin-password"];
-    const adminPass = process.env.ADMIN_PASSWORD || "admin";
+    const adminPass = getAdminPassword();
     if (pass !== adminPass) return res.status(401).json({ error: "Unauthorized" });
     const people = await db.prepare("SELECT id, name, category, created_at FROM people ORDER BY created_at DESC").all();
     res.json(people);
@@ -443,7 +451,7 @@ async function startServer() {
 
   app.delete("/api/admin/people/:id", async (req, res) => {
     const pass = req.headers["x-admin-password"];
-    const adminPass = process.env.ADMIN_PASSWORD || "admin";
+    const adminPass = getAdminPassword();
     if (pass !== adminPass) return res.status(401).json({ error: "Unauthorized" });
     const { id } = req.params;
     await db.prepare("DELETE FROM relationships WHERE person1_id = ? OR person2_id = ?").run(id, id);
@@ -453,7 +461,7 @@ async function startServer() {
 
   app.post("/api/admin/people/batch-delete", async (req, res) => {
     const pass = req.headers["x-admin-password"];
-    const adminPass = process.env.ADMIN_PASSWORD || "admin";
+    const adminPass = getAdminPassword();
     if (pass !== adminPass) return res.status(401).json({ error: "Unauthorized" });
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: "No ids provided" });
@@ -757,7 +765,7 @@ async function startServer() {
 
     if (stream) {
         const pass = req.headers["x-admin-password"];
-        const adminPass = process.env.ADMIN_PASSWORD || "admin";
+        const adminPass = getAdminPassword();
         const isAdmin = pass === adminPass;
 
         if (!isAdmin && await getRemainingQuota() <= 0) {

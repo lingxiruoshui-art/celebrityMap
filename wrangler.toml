@@ -12,5 +12,4 @@ bucket_name = "historical-portraits"
 
 [vars]
 # Add other environment variables here
-ADMIN_PASSWORD = "admin"
 NODE_ENV = "production"

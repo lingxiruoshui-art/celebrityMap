@@ -228,7 +228,7 @@ export default function NetworkGraph({
           const g = enter.append("g").attr("class", "moving-arrow");
           g.append("polygon")
             .attr("points", "-4,-4 4,0 -4,4")
-            .attr("fill", "#ef4444");
+            .attr("fill", "#10b981");
           
           g.append("animateMotion")
             .attr("dur", "2s")
@@ -283,9 +283,9 @@ export default function NetworkGraph({
         // Highlight connected links
         const hasPath = discoveryPath && discoveryPath.length > 1;
         linkElements
-          .attr("stroke", l => (hasPath && l.inPath) ? "#ef4444" : ((l.sourcePerson.id === d.id || l.targetPerson.id === d.id) ? "#a855f7" : "#cbd5e1"))
+          .attr("stroke", l => (hasPath && l.inPath) ? "#10b981" : ((l.sourcePerson.id === d.id || l.targetPerson.id === d.id) ? "#3b82f6" : "#475569"))
           .attr("stroke-opacity", l => (l.sourcePerson.id === d.id || l.targetPerson.id === d.id) ? 1 : (hasPath && l.inPath ? 1 : 0.25))
-          .attr("stroke-width", l => (l.sourcePerson.id === d.id || l.targetPerson.id === d.id) ? 1.8 : (hasPath && l.inPath ? 2.2 : 0.7));
+          .attr("stroke-width", l => (l.sourcePerson.id === d.id || l.targetPerson.id === d.id) ? 2.5 : (hasPath && l.inPath ? 2.8 : 0.8));
       })
       .on("mouseleave", function(event, d: any) {
         isHoveringNode = false;
@@ -371,19 +371,19 @@ export default function NetworkGraph({
         .classed("is-bridge", d => !!hasPath && d.inPath)
         .classed("is-selected-rel", d => !!activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId))
         .attr("stroke", d => {
-          if (hasPath && d.inPath) return "#ef4444"; // Path gets priority
-          if (activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId)) return "#a855f7"; // Focal Person: Purple
-          return "#94a3b8"; // Darker unified base grey
+          if (hasPath && d.inPath) return "#10b981"; // Discovery path: Emerald Green (Solid/Stable)
+          if (activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId)) return "#3b82f6"; // Focal Person: Bright Blue
+          return "#475569"; // Unified base grey: Darker Slate for visibility
         })
         .attr("stroke-opacity", d => {
            if (activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId)) return 1;
            if (hasPath && d.inPath) return 1;
-           return (activeId || hasPath ? 0.3 : 0.55);
+           return (activeId || hasPath ? 0.2 : 0.6);
         })
         .attr("stroke-width", d => {
-          if (activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId)) return 1.8;
-          if (hasPath && d.inPath) return 2.2;
-          return 0.7;
+          if (activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId)) return 2.0;
+          if (hasPath && d.inPath) return 2.8;
+          return 0.8;
         });
 
       if (!nodesSelectionRef.current) return;
