@@ -97,6 +97,12 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
       .then(res => res.json())
       .then(data => setMetadata(data))
       .catch(err => console.error("Failed to fetch metadata", err));
+
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
   }, []);
 
   const handleStop = () => {
@@ -167,8 +173,12 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     try {
       addStep("正在初始化跨时空检索协议...");
       
-      const provider = metadata?.activeProvider || "gemini";
-      const modelId = provider === "gemini" ? metadata?.geminiModelId : metadata?.aliyunModelId;
+      const metaRes = await fetch("/api/metadata", { signal });
+      const currentMeta = await metaRes.json();
+      setMetadata(currentMeta);
+      
+      const provider = currentMeta.activeProvider || "gemini";
+      const modelId = provider === "gemini" ? currentMeta.geminiModelId : currentMeta.aliyunModelId;
 
       if (!modelId) {
         throw new Error(`请先在后台配置 ${provider === 'gemini' ? 'Gemini' : 'Aliyun'} 模型 ID`);
@@ -192,7 +202,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
         return data.text;
       };
 
-      const existingArray = metadata?.existingNames ? metadata.existingNames.split("、") : [];
+      const existingArray = currentMeta?.existingNames ? currentMeta.existingNames.split("、") : [];
       const findNormalizedInDB = (name: string) => {
         const trimmed = name.trim();
         return existingArray.find(ex => ex.toLowerCase() === trimmed.toLowerCase()) || null;
@@ -205,14 +215,36 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
           return { accepted: true, normalizedName: localMatch, reason: "馆藏库内已存身份" };
         }
         
-        const text = await callAIProxy(VALIDATION_PROMPT(name, metadata?.existingNames || ""), "json", VALIDATION_SCHEMA);
-        return JSON.parse(text || "{}");
+        const text = await callAIProxy(VALIDATION_PROMPT(name, currentMeta?.existingNames || ""), "json", VALIDATION_SCHEMA);
+        let parsed: { accepted?: boolean; normalizedName?: string; reason?: string } = {};
+        try {
+          let rawParsed = JSON.parse(text || "{}");
+          if (Array.isArray(rawParsed) && rawParsed.length > 0) {
+            parsed = rawParsed[0];
+          } else {
+            parsed = rawParsed;
+          }
+        } catch (e) {
+          console.error("Failed to parse validation JSON:", text);
+          return { accepted: false, reason: "AI 响应解析失败" };
+        }
+        
+        if (parsed.accepted === undefined) {
+           console.error("Missing standard keys in AI response:", parsed);
+           if ((parsed as any).result && (parsed as any).result.accepted !== undefined) {
+              parsed = (parsed as any).result;
+           } else {
+              return { accepted: false, reason: "系统未能识别该人物，可能非历史人物" };
+           }
+        }
+        
+        return parsed;
       };
 
       const [srcValid, tgtValid] = await Promise.all([validate(source), validate(target)]);
       
-      if (!srcValid.accepted) throw new Error(`起点人物无效: ${srcValid.reason}`);
-      if (!tgtValid.accepted) throw new Error(`终点人物无效: ${tgtValid.reason}`);
+      if (!srcValid.accepted) throw new Error(`起点人物无效: ${srcValid.reason || '原因未知'}`);
+      if (!tgtValid.accepted) throw new Error(`终点人物无效: ${tgtValid.reason || '原因未知'}`);
       
       const normalizedSource = srcValid.normalizedName || source;
       const normalizedTarget = tgtValid.normalizedName || target;
@@ -238,16 +270,26 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
       updateLastStep('success', "现有馆藏中无直接路径，启动 AI 逻辑推理...");
 
       addStep("AI 正在编织历史脉络...");
-      const bridgeText = await callAIProxy(PATH_PROMPT(normalizedSource, normalizedTarget, metadata?.existingNames || ""), "json", PATH_SCHEMA);
-      let bridgeData = { chain: [] };
+      const bridgeText = await callAIProxy(PATH_PROMPT(normalizedSource, normalizedTarget, currentMeta?.existingNames || ""), "json", PATH_SCHEMA);
+      let bridgeData: any = { chain: [] };
       try {
-        bridgeData = JSON.parse(bridgeText || "{}");
+        let rawBridge = JSON.parse(bridgeText || "{}");
+        if (Array.isArray(rawBridge) && rawBridge.length > 0) {
+          bridgeData = rawBridge[0];
+        } else {
+          bridgeData = rawBridge;
+        }
       } catch (e) {
         console.error("AI 响应解析失败:", bridgeText);
         throw new Error("AI 返回了无法解析的关系数据，请稍后重试。");
       }
       
-      const chain = bridgeData.chain || [];
+      let chain = bridgeData.chain;
+      if (!chain && bridgeData.result && bridgeData.result.chain) {
+          chain = bridgeData.result.chain;
+      }
+      chain = chain || [];
+
       if (chain.length < 2) {
         console.warn("AI 未能产出有效路径:", bridgeData);
         throw new Error("AI 未能建立有效联系，请尝试更换人物或重新搜索。");
@@ -274,7 +316,21 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
         if (checkData.isNew || !checkData.isFull) {
             updateLastStep('pending', `正在为新发现的人物 ${step.name} 撰写传记...`);
             const archiveText = await callAIProxy(ARCHIVE_PROMPT(step.name, metadata?.categories || [], metadata?.existingNames || ""), "json", ARCHIVE_SCHEMA);
-            const personData = JSON.parse(archiveText || "{}");
+            let personData: any = {};
+            try {
+              let rawPerson = JSON.parse(archiveText || "{}");
+              if (Array.isArray(rawPerson) && rawPerson.length > 0) {
+                personData = rawPerson[0];
+              } else {
+                personData = rawPerson;
+              }
+            } catch (e) {
+              console.error("AI 撰写传记解析失败:", archiveText);
+              throw new Error("AI 生成的人物传记无法解析，探索被中断。");
+            }
+            if (!personData.biography && personData.result && personData.result.biography) {
+              personData = personData.result;
+            }
             
             // Send back to server to update with full data
             await fetch("/api/save-archive", {

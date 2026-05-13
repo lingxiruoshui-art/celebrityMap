@@ -23,6 +23,7 @@ export default function NetworkGraph({
   const nodesSelectionRef = useRef<any>(null);
   const onSelectRef = useRef(onSelectPerson);
   const scaleRef = useRef(1);
+  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [selectedRelationship, setSelectedRelationship] = useState<{
     rel: Relationship;
     source: Person;
@@ -36,15 +37,26 @@ export default function NetworkGraph({
   }, [onSelectPerson]);
 
   useEffect(() => {
+    if (!containerRef.current) return;
+    const resizeObserver = new ResizeObserver(entries => {
+      if (entries.length === 0) return;
+      const { width, height } = entries[0].contentRect;
+      setDimensions({ width, height });
+    });
+    resizeObserver.observe(containerRef.current);
+    return () => resizeObserver.disconnect();
+  }, []);
+
+  useEffect(() => {
     // Close relationship modal when selection changes
     setSelectedRelationship(null);
   }, [people, relationships, selectedPersonId]);
 
   useEffect(() => {
-    if (!svgRef.current || !containerRef.current) return;
+    if (!svgRef.current || !containerRef.current || dimensions.width === 0) return;
 
-    const width = containerRef.current.clientWidth;
-    const height = containerRef.current.clientHeight || 500;
+    const width = dimensions.width;
+    const height = dimensions.height || 500;
 
     d3.select(svgRef.current).selectAll("*").remove();
 
@@ -112,6 +124,7 @@ export default function NetworkGraph({
     // Layers
     const mapLayer = svg.append("g").attr("class", "map-layer");
     const linksLayer = svg.append("g").attr("class", "links-layer");
+    const arrowsLayer = svg.append("g").attr("class", "arrows-layer");
     const linksHitLayer = svg.append("g").attr("class", "links-hit-layer");
     const nodesLayer = svg.append("g").attr("class", "nodes-layer");
 
@@ -175,34 +188,59 @@ export default function NetworkGraph({
       const targetPerson = processedPeople.find(p => p.id === r.person2_id);
       
       let inPath = false;
+      let pathDirection = 1;
       if (discoveryPath && sourcePerson && targetPerson) {
         const sIdx = discoveryPath.findIndex((p: any) => p.name === sourcePerson.name);
         const tIdx = discoveryPath.findIndex((p: any) => p.name === targetPerson.name);
         if (sIdx !== -1 && tIdx !== -1 && Math.abs(sIdx - tIdx) === 1) {
           inPath = true;
+          pathDirection = sIdx < tIdx ? 1 : -1;
         }
       }
 
       const isNewestLink = sourcePerson?.isNewest || targetPerson?.isNewest;
+      const id = `link-${sourcePerson?.id}-${targetPerson?.id}`;
 
-      return { sourcePerson, targetPerson, inPath, isNewestLink, relationship: r };
+      return { id, sourcePerson, targetPerson, inPath, pathDirection, isNewestLink, relationship: r };
     }).filter(l => l.sourcePerson && l.targetPerson);
 
     const linkElements = linksLayer.selectAll("path")
       .data(links)
       .join("path")
+      .attr("id", d => d.id)
       .attr("class", d => `relationship-path ${d.isNewestLink ? 'is-new-arrival' : ''}`)
       .attr("fill", "none")
       .attr("stroke", d => {
-        if (d.inPath) return "#818cf8";
-        return "#cbd5e1";
+        if (d.inPath) return "#ef4444";
+        return "#94a3b8";
       })
-      .attr("stroke-opacity", d => d.inPath ? 1 : 0.4)
+      .attr("stroke-opacity", d => d.inPath ? 1 : 0.55)
       .attr("stroke-width", d => {
         if (d.inPath) return 1.75;
         return 0.6;
       })
       .style("pointer-events", "none");
+
+    const movingArrows = arrowsLayer.selectAll("g.moving-arrow")
+      .data(links.filter(l => l.inPath), (d: any) => d.id)
+      .join(
+        enter => {
+          const g = enter.append("g").attr("class", "moving-arrow");
+          g.append("polygon")
+            .attr("points", "-4,-4 4,0 -4,4")
+            .attr("fill", "#ef4444");
+          
+          g.append("animateMotion")
+            .attr("dur", "2s")
+            .attr("repeatCount", "indefinite")
+            .attr("rotate", "auto")
+            .append("mpath")
+              .attr("href", d => `#${d.id}`);
+          return g;
+        },
+        update => update,
+        exit => exit.remove()
+      );
 
     const hitElements = linksHitLayer.selectAll("path")
       .data(links)
@@ -245,7 +283,7 @@ export default function NetworkGraph({
         // Highlight connected links
         const hasPath = discoveryPath && discoveryPath.length > 1;
         linkElements
-          .attr("stroke", l => (l.sourcePerson.id === d.id || l.targetPerson.id === d.id) ? "#a855f7" : (hasPath && l.inPath ? "#6366f1" : "#cbd5e1"))
+          .attr("stroke", l => (hasPath && l.inPath) ? "#ef4444" : ((l.sourcePerson.id === d.id || l.targetPerson.id === d.id) ? "#a855f7" : "#cbd5e1"))
           .attr("stroke-opacity", l => (l.sourcePerson.id === d.id || l.targetPerson.id === d.id) ? 1 : (hasPath && l.inPath ? 1 : 0.25))
           .attr("stroke-width", l => (l.sourcePerson.id === d.id || l.targetPerson.id === d.id) ? 1.8 : (hasPath && l.inPath ? 2.2 : 0.7));
       })
@@ -294,12 +332,16 @@ export default function NetworkGraph({
       mapLayer.selectAll(".globe-graticule").attr("d", path(graticule) as any);
 
       const pathGen = (d: any) => {
+        let coords = [
+          [d.sourcePerson.displayLng, d.sourcePerson.displayLat], 
+          [d.targetPerson.displayLng, d.targetPerson.displayLat]
+        ];
+        if (d.inPath && d.pathDirection === -1) {
+          coords = coords.reverse();
+        }
         return path({
           type: "LineString",
-          coordinates: [
-            [d.sourcePerson.displayLng, d.sourcePerson.displayLat], 
-            [d.targetPerson.displayLng, d.targetPerson.displayLat]
-          ]
+          coordinates: coords
         }) as any;
       };
 
@@ -329,14 +371,14 @@ export default function NetworkGraph({
         .classed("is-bridge", d => !!hasPath && d.inPath)
         .classed("is-selected-rel", d => !!activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId))
         .attr("stroke", d => {
-          if (activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId)) return "#a855f7"; // Focal Person: Purple (Priority)
-          if (hasPath && d.inPath) return "#6366f1"; // Focal Path: Indigo
-          return "#cbd5e1"; // Unified base grey
+          if (hasPath && d.inPath) return "#ef4444"; // Path gets priority
+          if (activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId)) return "#a855f7"; // Focal Person: Purple
+          return "#94a3b8"; // Darker unified base grey
         })
         .attr("stroke-opacity", d => {
            if (activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId)) return 1;
            if (hasPath && d.inPath) return 1;
-           return (activeId || hasPath ? 0.25 : 0.45);
+           return (activeId || hasPath ? 0.3 : 0.55);
         })
         .attr("stroke-width", d => {
           if (activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId)) return 1.8;
@@ -516,7 +558,7 @@ export default function NetworkGraph({
     return () => {
       rotationTimer.stop();
     };
-  }, [people, relationships, discoveryPath, selectedPersonId]);
+  }, [people, relationships, discoveryPath, selectedPersonId, dimensions]);
 
   return (
     <div ref={containerRef} className="w-full h-full cursor-grab active:cursor-grabbing relative overflow-hidden">

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import {
   Loader2,
   Sparkles,
@@ -39,6 +39,17 @@ export default function App() {
   const [discoveryPath, setDiscoveryPath] = useState<
     { name: string; type?: string }[] | null
   >(null);
+  const [pendingSelectName, setPendingSelectName] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (pendingSelectName && data.people.length > 0) {
+      const person = data.people.find(p => p.name === pendingSelectName);
+      if (person) {
+        setSelectedPersonId(person.id);
+        setPendingSelectName(null);
+      }
+    }
+  }, [pendingSelectName, data.people]);
   const [connectionPage, setConnectionPage] = useState(1);
   const [isAuthorized, setIsAuthorized] = useState(
     !!localStorage.getItem("admin_password"),
@@ -135,6 +146,19 @@ export default function App() {
     return merged;
   })();
 
+  const topConnectedPeople = useMemo(() => {
+    const counts = new Map<number, number>();
+    data.relationships.forEach(r => {
+      counts.set(r.person1_id, (counts.get(r.person1_id) || 0) + 1);
+      counts.set(r.person2_id, (counts.get(r.person2_id) || 0) + 1);
+    });
+    
+    return data.people
+      .map(p => ({ id: p.id, name: p.name, count: counts.get(p.id) || 0 }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+  }, [data.people, data.relationships]);
+
   const pageSize = 5;
   const totalPages = Math.ceil(connections.length / pageSize);
   const paginatedConnections = connections.slice(
@@ -178,6 +202,9 @@ export default function App() {
             </div>
           </div>
           <div className="flex items-center gap-6 text-sm">
+            <div className="hidden sm:flex text-sm px-4 py-1.5 rounded-xl border border-slate-200 text-indigo-600 font-medium bg-white/80 shadow-sm whitespace-nowrap items-center justify-center">
+              共收录：{data.people.length} 位
+            </div>
             {remainingQuota !== null && !isAuthorized && (
               <div 
                 className="group relative flex items-center gap-2 px-3 py-1.5 bg-indigo-50 border border-indigo-100 rounded-xl transition-colors"
@@ -214,8 +241,8 @@ export default function App() {
         {/* Left Column: List & Details */}
         <aside className="w-[450px] xl:w-[500px] border border-slate-200/60 bg-white/70 backdrop-blur-2xl flex flex-col overflow-hidden rounded-3xl shadow-xl shadow-slate-200/50">
           <div className="p-6 pb-0">
-            <div className="flex items-center gap-2 mb-4">
-              <div className="relative flex-1 group">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="relative flex-1 min-w-0 group">
                 <input
                   type="text"
                   value={searchQuery}
@@ -225,8 +252,28 @@ export default function App() {
                 />
                 <Sparkles className="w-4 h-4 absolute left-3.5 top-3 text-slate-400 pointer-events-none group-focus-within:text-indigo-500 transition-colors" />
               </div>
-              <div className="hidden sm:flex text-sm px-4 py-1.5 rounded-xl border border-slate-200 text-indigo-600 font-medium bg-white shadow-sm whitespace-nowrap self-stretch items-center justify-center">
-                共收录：{data.people.length} 位
+              <div className="relative flex-1 min-w-0 group">
+                <select
+                  value=""
+                  onChange={(e) => {
+                     const id = parseInt(e.target.value);
+                     if (!isNaN(id)) {
+                        setSelectedPersonId(id);
+                        setDiscoveryPath(null);
+                        setSearchQuery("");
+                     }
+                  }}
+                  className="w-full pl-10 pr-10 py-2.5 bg-slate-100/50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all shadow-inner group-hover:bg-slate-100/80 appearance-none text-slate-600 font-medium"
+                >
+                  <option value="" disabled hidden>连接最多的人物...</option>
+                  {topConnectedPeople.map(p => (
+                      <option key={p.id} value={p.id}>{p.name} ({p.count} 联系)</option>
+                  ))}
+                </select>
+                <Network className="w-4 h-4 absolute left-3.5 top-3 text-slate-400 pointer-events-none group-focus-within:text-indigo-500 transition-colors" />
+                <div className="absolute right-3 top-3 pointer-events-none text-slate-400 group-hover:text-indigo-500 transition-colors">
+                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                </div>
               </div>
             </div>
           </div>
@@ -546,6 +593,9 @@ export default function App() {
                       onSelectPerson={(id) => setSelectedPersonId(id)}
                       onPathFound={(path) => {
                         setDiscoveryPath(path);
+                        if (path && path.length > 0) {
+                          setPendingSelectName(path[path.length - 1].name);
+                        }
                       }}
                       isInline={true}
                       remainingQuota={remainingQuota}
