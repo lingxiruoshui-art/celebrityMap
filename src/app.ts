@@ -467,6 +467,51 @@ app.post("/pathfind", async (c) => {
   return c.json({ path: null });
 });
 
+app.post("/archiver/chat", async (c) => {
+  const db = await getDb(c);
+  const { person1, person2 } = await c.req.json();
+  if (!person1 || !person2) return c.json({ error: "Missing person1 or person2" }, 400);
+
+  const prompt = `你是剧作家。请为历史上的这两位人物编写一段跨时空的两人对话。
+人物1：${person1}
+人物2：${person2}
+要求：
+1. 一共2轮对话（也就是每人说2句话，共4句话）。
+2. 每句话的字数要极度简练（字数不要太多，每句时长不能超过2秒的阅读时间该有多长就多长，大概不超过15-20字），总字数控制在8秒阅读长度内。
+3. 对话风格：幽默、哲思、有趣、接地气，且必须符合两人的历史身份、核心思想与标志性气质。
+4. 格式：严格返回一个JSON数组，内部是对象：
+[
+  { "speaker": "${person1}", "text": "..." },
+  { "speaker": "${person2}", "text": "..." },
+  { "speaker": "${person1}", "text": "..." },
+  { "speaker": "${person2}", "text": "..." }
+]
+不包含任何其他Markdown内容或多余文字。
+`;
+
+  try {
+    const chatContent = await callAI(c, db, prompt, "json", {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          speaker: { type: "STRING" },
+          text: { type: "STRING" }
+        },
+        required: ["speaker", "text"]
+      }
+    });
+    const startIndex = chatContent.indexOf('[');
+    const endIndex = chatContent.lastIndexOf(']') + 1;
+    const jsonStr = chatContent.slice(startIndex, endIndex);
+    const messages = JSON.parse(jsonStr);
+    return c.json({ messages });
+  } catch (error: any) {
+    console.error("Chat generation error:", error);
+    return c.json({ error: "Failed to generate dialogue", details: error?.message || String(error) }, 500);
+  }
+});
+
 app.get("/archiver/random-pair", async (c) => {
   const db = await getDb(c);
   const count = await db.prepare("SELECT COUNT(*) as count FROM people").get() as { count: number };

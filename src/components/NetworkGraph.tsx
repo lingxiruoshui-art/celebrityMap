@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as d3 from "d3";
 import { Person, Relationship } from "../types";
-import { User, Quote, X } from "lucide-react";
+import { User, Quote, X, MessageCircle, Loader2 } from "lucide-react";
 
 interface GraphProps {
   people: Person[];
@@ -32,9 +32,57 @@ export default function NetworkGraph({
     y: number;
   } | null>(null);
 
+  const [chatState, setChatState] = useState<{
+    isLoading: boolean;
+    messages: { speaker: string, text: string }[];
+    currentIndex: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (chatState && !chatState.isLoading && chatState.currentIndex >= 0 && chatState.currentIndex < chatState.messages.length - 1) {
+      const timer = setTimeout(() => {
+        setChatState(prev => prev ? { ...prev, currentIndex: prev.currentIndex + 1 } : null);
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [chatState]);
+
+  useEffect(() => {
+    setChatState(null);
+  }, [selectedRelationship]);
+
   useEffect(() => {
     onSelectRef.current = onSelectPerson;
   }, [onSelectPerson]);
+
+  const handleStartChat = async () => {
+    if (!selectedRelationship) return;
+    setChatState({ isLoading: true, messages: [], currentIndex: -1 });
+    
+    try {
+      const res = await fetch("/api/archiver/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          person1: selectedRelationship.source.name,
+          person2: selectedRelationship.target.name
+        })
+      });
+      const data = await res.json();
+      if (data.messages && data.messages.length > 0) {
+        setChatState({
+          isLoading: false,
+          messages: data.messages,
+          currentIndex: 0
+        });
+      } else {
+        setChatState(null);
+      }
+    } catch(e) {
+      console.error(e);
+      setChatState(null);
+    }
+  };
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -608,6 +656,17 @@ export default function NetworkGraph({
           /* Pulse only opacity, keep width/color consistent with base status */
           animation: newest-pulse 2s ease-in-out infinite;
         }
+
+        .nice-scrollbar::-webkit-scrollbar {
+          width: 4px;
+        }
+        .nice-scrollbar::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .nice-scrollbar::-webkit-scrollbar-thumb {
+          background: #cbd5e1;
+          border-radius: 4px;
+        }
       `}</style>
       <svg ref={svgRef} />
       
@@ -677,6 +736,41 @@ export default function NetworkGraph({
                   <span className="text-[10px] font-bold text-slate-700 text-center leading-tight">{selectedRelationship.target.name}</span>
                 </div>
               </div>
+
+              {!chatState ? (
+                <button
+                  onClick={handleStartChat}
+                  className="mt-2 w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-600 transition-colors text-[11px] font-medium border border-indigo-100/50"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" />
+                  开启跨时空对话
+                </button>
+              ) : (
+                <div className="mt-2 p-3 bg-slate-50/50 rounded-xl border border-slate-100 text-xs text-slate-700 max-h-[240px] overflow-y-auto nice-scrollbar">
+                  {chatState.isLoading ? (
+                    <div className="flex items-center justify-center gap-2 py-4 text-slate-400">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span className="text-[11px]">正在连线时空...</span>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      {chatState.messages.slice(0, chatState.currentIndex + 1).map((msg, idx) => {
+                        const isSource = msg.speaker === selectedRelationship.source.name;
+                        return (
+                          <div key={idx} className={`flex items-start gap-2 ${isSource ? '' : 'flex-row-reverse'} animate-in slide-in-from-bottom-2 fade-in duration-300`}>
+                            <div className="w-6 h-6 shrink-0 rounded-md overflow-hidden bg-slate-100 border border-slate-200">
+                              <img src={isSource ? selectedRelationship.source.image_url : selectedRelationship.target.image_url} alt={msg.speaker} className="w-full h-full object-cover" />
+                            </div>
+                            <div className={`p-2 rounded-xl text-[11px] leading-relaxed max-w-[85%] shadow-sm ${isSource ? 'bg-indigo-50 border-indigo-100 text-indigo-900 rounded-tl-none' : 'bg-white border-slate-100 text-slate-800 rounded-tr-none'} border`}>
+                              {msg.text}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
           {/* Arrow */}
