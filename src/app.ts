@@ -153,7 +153,8 @@ async function callAI(c: any, db: DatabaseAdapter, prompt: string, responseForma
         messages: [
           { role: "system", content: systemContent },
           { role: "user", content: prompt }
-        ]
+        ],
+        ...(responseFormat === "json" ? { response_format: { type: "json_object" } } : {})
       })
     });
     
@@ -165,8 +166,17 @@ async function callAI(c: any, db: DatabaseAdapter, prompt: string, responseForma
        const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/i);
        if (jsonMatch) content = jsonMatch[1].trim();
        else {
-         const start = content.indexOf('{');
-         const end = content.lastIndexOf('}');
+         const firstBrace = content.indexOf('{');
+         const firstBracket = content.indexOf('[');
+         let start = -1, end = -1;
+         if (firstBrace !== -1 && firstBracket !== -1) {
+             start = Math.min(firstBrace, firstBracket);
+             end = start === firstBrace ? content.lastIndexOf('}') : content.lastIndexOf(']');
+         } else if (firstBrace !== -1) {
+             start = firstBrace; end = content.lastIndexOf('}');
+         } else if (firstBracket !== -1) {
+             start = firstBracket; end = content.lastIndexOf(']');
+         }
          if (start !== -1 && end !== -1) content = content.substring(start, end + 1);
        }
     }
@@ -192,8 +202,17 @@ async function callAI(c: any, db: DatabaseAdapter, prompt: string, responseForma
        const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/i);
        if (jsonMatch) content = jsonMatch[1].trim();
        else {
-         const start = content.indexOf('{');
-         const end = content.lastIndexOf('}');
+         const firstBrace = content.indexOf('{');
+         const firstBracket = content.indexOf('[');
+         let start = -1, end = -1;
+         if (firstBrace !== -1 && firstBracket !== -1) {
+             start = Math.min(firstBrace, firstBracket);
+             end = start === firstBrace ? content.lastIndexOf('}') : content.lastIndexOf(']');
+         } else if (firstBrace !== -1) {
+             start = firstBrace; end = content.lastIndexOf('}');
+         } else if (firstBracket !== -1) {
+             start = firstBracket; end = content.lastIndexOf(']');
+         }
          if (start !== -1 && end !== -1) content = content.substring(start, end + 1);
        }
     }
@@ -479,32 +498,48 @@ app.post("/archiver/chat", async (c) => {
 1. 一共2轮对话（也就是每人说2句话，共4句话）。
 2. 每句话的字数要极度简练（字数不要太多，每句时长不能超过2秒的阅读时间该有多长就多长，大概不超过15-20字），总字数控制在8秒阅读长度内。
 3. 对话风格：幽默、哲思、有趣、接地气，且必须符合两人的历史身份、核心思想与标志性气质。
-4. 格式：严格返回一个JSON数组，内部是对象：
-[
-  { "speaker": "${person1}", "text": "..." },
-  { "speaker": "${person2}", "text": "..." },
-  { "speaker": "${person1}", "text": "..." },
-  { "speaker": "${person2}", "text": "..." }
-]
+4. 格式：严格返回一个JSON对象，包含messages数组，如下：
+{
+  "messages": [
+    { "speaker": "${person1}", "text": "..." },
+    { "speaker": "${person2}", "text": "..." },
+    { "speaker": "${person1}", "text": "..." },
+    { "speaker": "${person2}", "text": "..." }
+  ]
+}
 不包含任何其他Markdown内容或多余文字。
 `;
 
   try {
     const chatContent = await callAI(c, db, prompt, "json", {
-      type: "ARRAY",
-      items: {
-        type: "OBJECT",
-        properties: {
-          speaker: { type: "STRING" },
-          text: { type: "STRING" }
-        },
-        required: ["speaker", "text"]
-      }
+      type: "OBJECT",
+      properties: {
+        messages: {
+          type: "ARRAY",
+          items: {
+            type: "OBJECT",
+            properties: {
+              speaker: { type: "STRING" },
+              text: { type: "STRING" }
+            },
+            required: ["speaker", "text"]
+          }
+        }
+      },
+      required: ["messages"]
     });
-    const startIndex = chatContent.indexOf('[');
-    const endIndex = chatContent.lastIndexOf(']') + 1;
-    const jsonStr = chatContent.slice(startIndex, endIndex);
-    const messages = JSON.parse(jsonStr);
+    
+    let messages = [];
+    try {
+       const parsed = JSON.parse(chatContent);
+       messages = parsed.messages || [];
+    } catch(err) {
+       // fallback parsing
+       const startIndex = chatContent.indexOf('[');
+       const endIndex = chatContent.lastIndexOf(']') + 1;
+       const jsonStr = chatContent.slice(startIndex, endIndex);
+       messages = JSON.parse(jsonStr);
+    }
     return c.json({ messages });
   } catch (error: any) {
     console.error("Chat generation error:", error);
@@ -629,19 +664,22 @@ app.post("/archive-figure", async (c) => {
               let personId: number;
               
               if (existing) {
-                  personId = existing.id;
                   await send({ type: 'info', msg: `${targetName} 已存在，正在更新资料...` });
-              } else {
-                  const stmt = db.prepare(`
-                      INSERT INTO people (name, category, keyword, lifespan, birthplace, biography, achievements, image_url, raw_relationships, latitude, longitude)
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
-                  `);
-                  const inserted = await stmt.get(
-                      targetName, data.category || "其他", data.keyword || "", data.lifespan || "", data.birthplace || "", data.biography || "",
-                      JSON.stringify(data.achievements || []), portraitUrl, JSON.stringify(data.relationships || []), data.latitude || 0, data.longitude || 0
-                  ) as { id: number };
-                  personId = inserted.id;
               }
+              
+              const stmt = db.prepare(`
+                  INSERT INTO people (name, category, keyword, lifespan, birthplace, biography, achievements, image_url, raw_relationships, latitude, longitude)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  ON CONFLICT(name) DO UPDATE SET 
+                    category=excluded.category, keyword=excluded.keyword, lifespan=excluded.lifespan, birthplace=excluded.birthplace, biography=excluded.biography, 
+                    achievements=excluded.achievements, image_url=excluded.image_url, raw_relationships=excluded.raw_relationships, latitude=excluded.latitude, longitude=excluded.longitude
+                  RETURNING id
+              `);
+              const inserted = await stmt.get(
+                  targetName, data.category || "其他", data.keyword || "", data.lifespan || "", data.birthplace || "", data.biography || "",
+                  JSON.stringify(data.achievements || []), portraitUrl, JSON.stringify(data.relationships || []), data.latitude || 0, data.longitude || 0
+              ) as { id: number };
+              personId = inserted.id;
 
               if (data.relationships && Array.isArray(data.relationships)) {
                   let connCount = 0;

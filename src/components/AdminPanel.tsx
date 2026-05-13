@@ -106,7 +106,7 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
   const [autoFetchLogs, setAutoFetchLogs] = useState<{type:string, msg:string}[]>([]);
   const logsContainerRef = useRef<HTMLDivElement>(null);
 
-  // Notification state
+  const [regeneratingName, setRegeneratingName] = useState<string | null>(null);
   const [notification, setNotification] = useState<{ type: 'success' | 'error' | 'info', msg: string } | null>(null);
 
   const showNotification = (type: 'success' | 'error' | 'info', msg: string) => {
@@ -218,6 +218,50 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
   useEffect(() => {
     setCurrentPage(1);
   }, [searchQuery, sortField, sortOrder]);
+
+  const regeneratePerson = async (name: string) => {
+    setRegeneratingName(name);
+    let errorMsg = '';
+    try {
+      const res = await fetch("/api/archive-figure", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...adminHeaders },
+        body: JSON.stringify({ personName: name, stream: true })
+      });
+      
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("No response");
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.type === 'error') {
+                 errorMsg = data.msg;
+              }
+            } catch(e) {}
+          }
+        }
+      }
+      if (errorMsg) throw new Error(errorMsg);
+      showNotification('success', `人物 [${name}] 已重新生成`);
+      fetchArchive();
+    } catch(e: any) {
+      showNotification('error', e.message || '重新生成失败');
+    } finally {
+      setRegeneratingName(null);
+    }
+  };
 
   const deletePerson = async (id: number) => {
     setConfirmData({
@@ -494,7 +538,27 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-hidden flex flex-col min-w-0 bg-white">
+        <div className="flex-1 overflow-hidden flex flex-col min-w-0 bg-white relative">
+          <AnimatePresence>
+            {notification && (
+              <motion.div
+                initial={{ opacity: 0, x: 20, y: -20 }}
+                animate={{ opacity: 1, x: 0, y: 0 }}
+                exit={{ opacity: 0, x: 20 }}
+                className={`absolute top-4 right-4 z-[60] px-4 py-2 rounded-xl shadow-xl font-bold text-xs flex items-center gap-2 border backdrop-blur-md ${
+                  notification.type === 'success' 
+                  ? 'bg-emerald-500/90 text-white border-emerald-400' 
+                  : notification.type === 'error'
+                  ? 'bg-red-500/90 text-white border-red-400'
+                  : 'bg-indigo-500/90 text-white border-indigo-400'
+                }`}
+              >
+                {notification.type === 'success' ? <Sparkles className="w-3.5 h-3.5" /> : <Info className="w-3.5 h-3.5" />}
+                {notification.msg}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           <div className="p-6 h-20 border-b border-slate-100 flex items-center justify-between bg-white shrink-0">
             <div className="flex items-center gap-4">
               <h3 className="font-bold text-xl text-slate-800">
@@ -549,81 +613,82 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
                 </div>
               </div>
 
-              <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
-                {/* Header */}
-                <div className="flex items-stretch px-4 border-b border-slate-200 text-xs font-bold text-slate-500 tracking-wider bg-slate-50 relative select-none">
-                  <div className="flex items-center gap-3 w-16 shrink-0 py-3">
-                    <input 
-                      type="checkbox" 
-                      className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                      checked={paginatedPeople.length > 0 && selectedIds.size === paginatedPeople.length}
-                      onChange={toggleSelectAll}
-                    />
-                  </div>
-                  <div className="w-10 shrink-0 mr-4 py-3 flex items-center justify-center">头像</div>
-                  <div className="flex-1 cursor-pointer hover:text-indigo-600 flex items-center gap-1 py-3" onClick={() => toggleSort("name")}>
-                    名字 {sortField === 'name' ? (sortOrder === 'asc' ? '↑' : '↓') : ''}
-                  </div>
-                  <div className="flex items-center shrink-0 relative" style={{ width: colWidths.category }}>
-                    <div className="absolute left-0 top-0 bottom-0 w-3 cursor-col-resize hover:bg-indigo-300/30 z-10 -ml-[1.5px] flex items-center justify-center group" onMouseDown={(e) => startResize(e, 'category')}>
-                      <div className="h-4 w-[1px] bg-slate-300 group-hover:bg-indigo-500 transition-colors"></div>
-                    </div>
-                    <div className="w-full cursor-pointer hover:text-indigo-600 flex items-center gap-1 px-4 py-3" onClick={() => toggleSort("category")}>
-                      分类 {sortField === 'category' ? (sortOrder === 'asc' ? '↑' : '↓') : ''}
-                    </div>
-                  </div>
-                  <div className="flex items-center shrink-0 relative" style={{ width: colWidths.views }}>
-                    <div className="absolute left-0 top-0 bottom-0 w-3 cursor-col-resize hover:bg-indigo-300/30 z-10 -ml-[1.5px] flex items-center justify-center group" onMouseDown={(e) => startResize(e, 'views')}>
-                      <div className="h-4 w-[1px] bg-slate-300 group-hover:bg-indigo-500 transition-colors"></div>
-                    </div>
-                    <div className="w-full cursor-pointer hover:text-indigo-600 flex items-center gap-1 px-4 py-3" onClick={() => toggleSort("views")}>
-                      访问量 {sortField === 'views' ? (sortOrder === 'asc' ? '↑' : '↓') : ''}
-                    </div>
-                  </div>
-                  <div className="flex items-center shrink-0 relative" style={{ width: colWidths.createdAt }}>
-                    <div className="absolute left-0 top-0 bottom-0 w-3 cursor-col-resize hover:bg-indigo-300/30 z-10 -ml-[1.5px] flex items-center justify-center group" onMouseDown={(e) => startResize(e, 'createdAt')}>
-                      <div className="h-4 w-[1px] bg-slate-300 group-hover:bg-indigo-500 transition-colors"></div>
-                    </div>
-                    <div className="w-full cursor-pointer hover:text-indigo-600 flex items-center gap-1 px-4 py-3" onClick={() => toggleSort("created_at")}>
-                      入馆时间 {sortField === 'created_at' ? (sortOrder === 'asc' ? '↑' : '↓') : ''}
-                    </div>
-                  </div>
-                  <div className="w-12 shrink-0 py-3"></div>
-                </div>
-
-                <div className="w-full">
-                  {paginatedPeople.length === 0 ? (
-                    <div className="p-12 text-center text-slate-400 italic">没有找到匹配的人物。</div>
-                  ) : paginatedPeople.map((p, index) => (
-                    <div key={p.id} className="p-3 px-4 flex items-center justify-between hover:bg-slate-50 border-b border-slate-100 last:border-b-0 transition-colors w-full group">
-                      <div className="flex items-center flex-1 w-full min-w-0">
-                        <div className="flex items-center gap-3 w-16 shrink-0 lg:pr-2">
-                          <input 
-                            type="checkbox" 
-                            checked={selectedIds.has(p.id)} 
-                            onChange={() => toggleSelect(p.id)} 
-                            className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer" 
-                          />
-                          <span className="text-sm font-bold text-slate-400 font-mono text-left">{startIndex + index + 1}.</span>
-                        </div>
-                        <div className="w-10 h-10 rounded-full bg-slate-100 text-slate-300 flex items-center justify-center overflow-hidden border border-slate-200 shrink-0 mr-4">
-                          {p.image_url ? <img src={p.image_url} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : <User className="w-5 h-5" />}
-                        </div>
-                        <div className="flex-1 font-bold text-slate-800 text-sm truncate">{p.name}</div>
-                        <div className="shrink-0 text-sm text-slate-600 truncate px-4" style={{ width: colWidths.category }}>{p.category}</div>
-                        <div className="shrink-0 text-sm font-mono text-slate-600 truncate px-4" style={{ width: colWidths.views }}>{p.views}</div>
-                        <div className="shrink-0 text-sm text-slate-600 truncate px-4" style={{ width: colWidths.createdAt }}>
+              <div className="bg-white border border-slate-200 rounded-2xl overflow-x-auto shadow-sm">
+                <table className="w-full table-auto text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-xs font-bold text-slate-500 tracking-wider bg-slate-50 select-none">
+                      <th className="px-4 py-3 w-16">
+                        <input 
+                          type="checkbox" 
+                          className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                          checked={paginatedPeople.length > 0 && selectedIds.size === paginatedPeople.length}
+                          onChange={toggleSelectAll}
+                        />
+                      </th>
+                      <th className="py-3 px-2 w-16 text-center whitespace-nowrap">头像</th>
+                      <th className="py-3 px-4 cursor-pointer hover:text-indigo-600 whitespace-nowrap" onClick={() => toggleSort("name")}>
+                        名字 {sortField === 'name' ? (sortOrder === 'asc' ? '↑' : '↓') : ''}
+                      </th>
+                      <th className="py-3 px-4 cursor-pointer hover:text-indigo-600 whitespace-nowrap" onClick={() => toggleSort("category")}>
+                        分类 {sortField === 'category' ? (sortOrder === 'asc' ? '↑' : '↓') : ''}
+                      </th>
+                      <th className="py-3 px-4 cursor-pointer hover:text-indigo-600 whitespace-nowrap" onClick={() => toggleSort("views")}>
+                        访问量 {sortField === 'views' ? (sortOrder === 'asc' ? '↑' : '↓') : ''}
+                      </th>
+                      <th className="py-3 px-4 cursor-pointer hover:text-indigo-600 whitespace-nowrap" onClick={() => toggleSort("created_at")}>
+                        入馆时间 {sortField === 'created_at' ? (sortOrder === 'asc' ? '↑' : '↓') : ''}
+                      </th>
+                      <th className="py-3 px-4 w-24 text-center whitespace-nowrap">管理</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginatedPeople.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="p-12 text-center text-slate-400 italic">没有找到匹配的人物。</td>
+                      </tr>
+                    ) : paginatedPeople.map((p, index) => (
+                      <tr key={p.id} className="hover:bg-slate-50 border-b border-slate-100 last:border-b-0 transition-colors group">
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            <input 
+                              type="checkbox" 
+                              checked={selectedIds.has(p.id)} 
+                              onChange={() => toggleSelect(p.id)} 
+                              className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer" 
+                            />
+                            <span className="text-sm font-bold text-slate-400 font-mono">{startIndex + index + 1}.</span>
+                          </div>
+                        </td>
+                        <td className="px-2 py-3">
+                          <div className="w-10 h-10 mx-auto rounded-full bg-slate-100 text-slate-300 flex items-center justify-center overflow-hidden border border-slate-200">
+                            {p.image_url ? <img src={p.image_url} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : <User className="w-5 h-5" />}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 font-bold text-slate-800 text-sm whitespace-nowrap">{p.name}</td>
+                        <td className="px-4 py-3 text-sm text-slate-600 whitespace-nowrap">{p.category}</td>
+                        <td className="px-4 py-3 text-sm font-mono text-slate-600 whitespace-nowrap">{p.views}</td>
+                        <td className="px-4 py-3 text-sm text-slate-600 whitespace-nowrap">
                           {new Date((p as any).created_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
-                        </div>
-                      </div>
-                      <div className="w-12 shrink-0 flex items-center justify-center">
-                        <button onClick={() => deletePerson(p.id)} className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-center gap-2">
+                            <button 
+                              onClick={() => regeneratePerson(p.name)} 
+                              title="重新生成简介" 
+                              disabled={regeneratingName === p.name}
+                              className={`p-2 rounded-lg transition-colors ${regeneratingName === p.name ? 'text-indigo-600 bg-indigo-50' : 'text-indigo-400 hover:text-indigo-600 hover:bg-indigo-50'}`}
+                            >
+                              <Sparkles className={`w-4 h-4 ${regeneratingName === p.name ? 'animate-spin' : ''}`} />
+                            </button>
+                            <button onClick={() => deletePerson(p.id)} title="删除" className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
               
               {totalPages > 1 && (
@@ -671,6 +736,22 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
 
           {activeTab === "archive_plus" && (
             <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in duration-500 pb-12">
+              {autoFetchLogs.length > 0 && (
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 overflow-hidden">
+                  <div className="flex items-center justify-between mb-2">
+                    <h5 className="text-[10px] font-black uppercase tracking-widest text-slate-400">采集日志</h5>
+                    <button onClick={() => setAutoFetchLogs([])} className="text-[10px] text-slate-400 hover:text-red-500 font-bold">清空</button>
+                  </div>
+                  <div className="max-h-24 overflow-y-auto space-y-1 font-mono text-[10px]" ref={logsContainerRef}>
+                    {autoFetchLogs.map((log, i) => (
+                      <div key={i} className={`flex gap-2 ${log.type === 'error' ? 'text-red-500' : log.type === 'success' ? 'text-emerald-500' : 'text-slate-500'}`}>
+                        <span className="shrink-0 opacity-50">[{new Date().toLocaleTimeString()}]</span>
+                        <span className="font-bold">{log.msg}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden p-8">
                 <div className="flex items-center gap-3 mb-8">
                   <div className="w-1.5 h-6 bg-indigo-500 rounded-full"></div>
@@ -751,8 +832,8 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
           )}
 
           {activeTab === "config" && (
-            <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500 pb-12">
-              <div className="flex flex-col gap-6">
+            <div className="max-w-5xl mx-auto space-y-8 animate-in fade-in duration-500 pb-12">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Google Gemini Card */}
                 <div className={`bg-white p-6 rounded-3xl border-2 transition-all shadow-sm flex flex-col h-full ${config.active_model_provider === 'gemini' ? 'border-indigo-500 ring-4 ring-indigo-50' : 'border-slate-100 hover:border-slate-200'}`}>
                   <div className="flex items-center justify-between mb-6">
@@ -772,7 +853,7 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
                       </div>
                     ) : (
                       <button 
-                        onClick={() => saveConfig("active_model_provider", "gemini")}
+                         onClick={() => saveConfig("active_model_provider", "gemini")}
                         disabled={savingKey !== null}
                         className="text-[10px] font-black text-slate-400 hover:text-indigo-600 uppercase tracking-widest transition-all hover:bg-slate-50 px-3 py-1 rounded-full border border-slate-100 flex items-center gap-2"
                       >
@@ -864,7 +945,7 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
                 </div>
 
                 {/* Performance & Quota Settings */}
-                <div className="bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm">
+                <div className="bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm md:col-span-1">
                   <div className="flex items-center gap-3 mb-6">
                     <div className="w-10 h-10 rounded-xl bg-slate-100 text-slate-400 flex items-center justify-center">
                       <Zap className="w-5 h-5" />
@@ -875,31 +956,29 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between px-1">
-                        <label className="text-[9px] font-black uppercase tracking-widest text-slate-400">访客每日探索限额</label>
-                        {remainingQuota !== null && (
-                          <div className="flex items-center gap-1.5 text-[10px] bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full font-bold">
-                            <Zap className="w-2.5 h-2.5" />
-                            今日剩余: {remainingQuota}
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <input 
-                          type="number"
-                          value={config.guest_explore_limit || "5"}
-                          onChange={(e) => setConfig({ ...config, guest_explore_limit: e.target.value })}
-                          onBlur={(e) => saveConfig("guest_explore_limit", e.target.value)}
-                          className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                        />
-                        <div className="text-[10px] text-slate-400 font-bold">次/天</div>
-                      </div>
-                      <div className="flex items-center gap-1 mt-1">
-                        <Info className="w-3 h-3 text-slate-300" />
-                        <p className="text-[9px] text-slate-400 italic">东八区(北京时间) 00:00 自动重置。设置为 0 将禁用访客探索功能。</p>
-                      </div>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between px-1">
+                      <label className="text-[9px] font-black uppercase tracking-widest text-slate-400">访客每日探索限额</label>
+                      {remainingQuota !== null && (
+                        <div className="flex items-center gap-1.5 text-[10px] bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full font-bold">
+                          <Zap className="w-2.5 h-2.5" />
+                          今日剩余: {remainingQuota}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <input 
+                        type="number"
+                        value={config.guest_explore_limit || "5"}
+                        onChange={(e) => setConfig({ ...config, guest_explore_limit: e.target.value })}
+                        onBlur={(e) => saveConfig("guest_explore_limit", e.target.value)}
+                        className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                      />
+                      <div className="text-[10px] text-slate-400 font-bold">次/天</div>
+                    </div>
+                    <div className="flex items-center gap-1 mt-1">
+                      <Info className="w-3 h-3 text-slate-300" />
+                      <p className="text-[9px] text-slate-400 italic">东八区(北京时间) 00:00 自动重置。</p>
                     </div>
                   </div>
                 </div>
@@ -919,25 +998,7 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
         isLoading={isLoading}
       />
 
-      <AnimatePresence>
-        {notification && (
-          <motion.div
-            initial={{ opacity: 0, y: 50, scale: 0.9 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 50, scale: 0.9 }}
-            className={`fixed bottom-8 left-1/2 -translate-x-1/2 z-[110] px-6 py-3 rounded-2xl shadow-xl font-bold text-sm flex items-center gap-3 border ${
-              notification.type === 'success' 
-              ? 'bg-emerald-500 text-white border-emerald-400 shadow-emerald-200/50' 
-              : notification.type === 'error'
-              ? 'bg-red-500 text-white border-red-400 shadow-red-200/50'
-              : 'bg-indigo-500 text-white border-indigo-400 shadow-indigo-200/50'
-            }`}
-          >
-            {notification.type === 'success' ? <Sparkles className="w-4 h-4" /> : <Info className="w-4 h-4" />}
-            {notification.msg}
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Confirm Dialog is now above */}
     </div>
   );
 }

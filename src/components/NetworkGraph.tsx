@@ -35,17 +35,8 @@ export default function NetworkGraph({
   const [chatState, setChatState] = useState<{
     isLoading: boolean;
     messages: { speaker: string, text: string }[];
-    currentIndex: number;
+    error?: string;
   } | null>(null);
-
-  useEffect(() => {
-    if (chatState && !chatState.isLoading && chatState.currentIndex >= 0 && chatState.currentIndex < chatState.messages.length - 1) {
-      const timer = setTimeout(() => {
-        setChatState(prev => prev ? { ...prev, currentIndex: prev.currentIndex + 1 } : null);
-      }, 2000);
-      return () => clearTimeout(timer);
-    }
-  }, [chatState]);
 
   useEffect(() => {
     setChatState(null);
@@ -57,7 +48,7 @@ export default function NetworkGraph({
 
   const handleStartChat = async () => {
     if (!selectedRelationship) return;
-    setChatState({ isLoading: true, messages: [], currentIndex: -1 });
+    setChatState({ isLoading: true, messages: [] });
     
     try {
       const res = await fetch("/api/archiver/chat", {
@@ -69,18 +60,36 @@ export default function NetworkGraph({
         })
       });
       const data = await res.json();
+      
+      if (!res.ok) {
+        let errorMsg = data.error || "请求失败";
+        if (data.details) {
+            try {
+                const parsed = JSON.parse(data.details);
+                if (parsed.error && parsed.error.message) {
+                    errorMsg += ": " + parsed.error.message;
+                } else {
+                    errorMsg += ": " + data.details;
+                }
+            } catch (e) {
+                errorMsg += ": " + data.details;
+            }
+        }
+        setChatState({ isLoading: false, messages: [], error: errorMsg });
+        return;
+      }
+
       if (data.messages && data.messages.length > 0) {
         setChatState({
           isLoading: false,
-          messages: data.messages,
-          currentIndex: 0
+          messages: data.messages
         });
       } else {
-        setChatState(null);
+        setChatState({ isLoading: false, messages: [], error: "未生成有效对话" });
       }
-    } catch(e) {
+    } catch(e: any) {
       console.error(e);
-      setChatState(null);
+      setChatState({ isLoading: false, messages: [], error: e.message || "网络请求异常" });
     }
   };
 
@@ -325,7 +334,7 @@ export default function NetworkGraph({
       .on("click", (event, d: any) => onSelectRef.current?.(d.id))
       .on("mouseenter", function(event, d: any) {
         isHoveringNode = true;
-        d3.select(this).select(".node-circle").transition().duration(200).attr("r", 12);
+        d3.select(this).select(".node-circle").transition().duration(200).attr("r", 10);
         d3.select(this).selectAll("text").transition().duration(200).style("opacity", 1);
         
         // Highlight connected links
@@ -341,11 +350,11 @@ export default function NetworkGraph({
       });
 
     nodeElements.append("circle")
-      .attr("r", 9)
+      .attr("r", 6)
       .attr("class", "node-circle");
 
     nodeElements.append("text")
-      .attr("dx", 14)
+      .attr("dx", 10)
       .attr("dy", 4)
       .attr("class", "node-label-bg")
       .style("font-family", "system-ui, sans-serif")
@@ -358,7 +367,7 @@ export default function NetworkGraph({
       .text((d: any) => d.name);
 
     nodeElements.append("text")
-      .attr("dx", 14)
+      .attr("dx", 10)
       .attr("dy", 4)
       .attr("class", "node-label")
       .style("font-family", "system-ui, sans-serif")
@@ -445,14 +454,14 @@ export default function NetworkGraph({
         })
         .attr("r", (d: any) => {
           const inP = hasPath && discoveryPath && discoveryPath.some(p => p.name === d.name);
-          if (inP) return 17;
-          if (d.id === activeId) return 15;
+          if (inP) return 8;
+          if (d.id === activeId) return 8;
           const isNeighbor = !hasPath && activeId && links.some(l => 
             (l.sourcePerson.id === activeId && l.targetPerson.id === d.id) || 
             (l.targetPerson.id === activeId && l.sourcePerson.id === d.id)
           );
-          if (isNeighbor) return 11;
-          return 9;
+          if (isNeighbor) return 7;
+          return 6;
         })
         .attr("stroke", (d: any) => {
           const inP = hasPath && discoveryPath && discoveryPath.some(p => p.name === d.name);
@@ -752,12 +761,22 @@ export default function NetworkGraph({
                       <Loader2 className="w-4 h-4 animate-spin" />
                       <span className="text-[11px]">正在连线时空...</span>
                     </div>
+                  ) : chatState.error ? (
+                    <div className="flex flex-col items-center justify-center gap-2 py-3 text-red-500">
+                      <span className="text-[11px] text-center px-2">{chatState.error}</span>
+                      <button 
+                        onClick={() => setChatState(null)} 
+                        className="text-[10px] underline hover:text-red-600"
+                      >
+                        返回
+                      </button>
+                    </div>
                   ) : (
                     <div className="flex flex-col gap-2">
-                      {chatState.messages.slice(0, chatState.currentIndex + 1).map((msg, idx) => {
+                      {chatState.messages.map((msg, idx) => {
                         const isSource = msg.speaker === selectedRelationship.source.name;
                         return (
-                          <div key={idx} className={`flex items-start gap-2 ${isSource ? '' : 'flex-row-reverse'} animate-in slide-in-from-bottom-2 fade-in duration-300`}>
+                          <div key={idx} className={`flex items-start gap-2 ${isSource ? '' : 'flex-row-reverse'} animate-in slide-in-from-bottom-2 fade-in duration-300`} style={{ animationDelay: `${idx * 150}ms`, animationFillMode: 'both' }}>
                             <div className="w-6 h-6 shrink-0 rounded-md overflow-hidden bg-slate-100 border border-slate-200">
                               <img src={isSource ? selectedRelationship.source.image_url : selectedRelationship.target.image_url} alt={msg.speaker} className="w-full h-full object-cover" />
                             </div>

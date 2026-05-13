@@ -60,7 +60,7 @@ export const ARCHIVE_SCHEMA: Schema = {
   required: ["keyword", "lifespan", "birthplace", "biography", "achievements", "category", "latitude", "longitude", "relationships"]
 };
 
-export const PATH_PROMPT = (source: string, target: string, existingNames: string) => `你是一位极其博学的人文历史百科专家。请基于“六度分隔”理论，找出 "${source}" 和 "${target}" 之间【最短】且【最合理】的历史联系路径。
+export const PATH_PROMPT = (source: string, target: string, existingNames: string) => `你是一位极其博学的人文历史百科专家。找出 "${source}" 和 "${target}" 之间【最短】且【最合理】的历史联系路径。
 
 请严格返回以下格式的 JSON 对象：
 {
@@ -73,9 +73,10 @@ export const PATH_PROMPT = (source: string, target: string, existingNames: strin
 }
 
 要求：
-1. 【极简主义】：设法通过最少的人物节点建立联系。整体包含起止点最好在3到5人之间。
-2. 避重就轻：优先使用以下馆藏中已有的人物：[${existingNames.slice(0, 500)}]。
-3. relationshipToPrevious 的描述必须在 20 到 30 个汉字之间，描述与其前一个人的真实历史交集（师生/政敌/亲属等）。
+1. 【极简主义】：必须采用最短路径。中间的人物（不包含起止点）最少可以是0个，最多不能超过5个。
+2. 【直接沟通优先】：如果这两个人能够直接认识、交流或有直接历史交集（例如老子和孔子、李白和杜甫等），必须直接相连，中间**绝不能**经过其他任何人。
+3. 避重就轻：优先使用以下馆藏中已有的人物：[${existingNames.slice(0, 500)}]。
+4. relationshipToPrevious 的描述必须在 20 到 30 个汉字之间，描述与其前一个人的真实历史交集（师生/政敌/亲属等）。
 `;
 
 export const PATH_SCHEMA: Schema = {
