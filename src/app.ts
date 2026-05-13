@@ -264,7 +264,8 @@ async function getPortraitUrl(c: any, name: string): Promise<string | null> {
     const imagesBucket = c.env?.IMAGES;
     if (imagesBucket && finalUrl) {
         try {
-            const imageRes = await fetch(finalUrl);
+            const imageRes = await fetch(finalUrl, { headers: { "User-Agent": "HistoricalArchiveApp/1.0" } });
+            if (!imageRes.ok) throw new Error(`HTTP error ${imageRes.status}`);
             const contentType = imageRes.headers.get("content-type") || "image/jpeg";
             const buffer = await imageRes.arrayBuffer();
             const key = `portraits/${encodeURIComponent(name.toLowerCase())}.jpg`;
@@ -366,6 +367,79 @@ app.post("/admin/people/batch-delete", async (c) => {
   return c.json({ success: true });
 });
 
+app.post("/admin/repair-images", async (c) => {
+  if (c.req.header("x-admin-password") !== getAdminPassword(c)) return c.json({ error: "Unauthorized" }, 401);
+  const db = await getDb(c);
+  
+  c.executionCtx.waitUntil((async () => {
+    const people = await db.prepare("SELECT * FROM people").all() as any[];
+    const headers = { "User-Agent": "HistoricalArchiveApp/1.0" };
+    const imagesBucket = c.env?.IMAGES;
+    if (!imagesBucket) return;
+    
+    for (const p of people) {
+        if (!p.image_url) continue;
+        console.log("Repairing image for:", p.name);
+        try {
+            // Re-fetch from Wikidata to get the true image URL
+            let finalUrl = "";
+            const searchWikidata = async (lang: string) => {
+              const res = await fetch(`https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(p.name)}&language=${lang}&format=json`, { headers });
+              const queryData = await res.json();
+              if (queryData.search && queryData.search.length > 0) {
+                const entity = queryData.search[0];
+                const entityRes = await fetch(`https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${entity.id}&props=claims&format=json`, { headers });
+                const entityData = await entityRes.json();
+                const claims = entityData.entities[entity.id].claims;
+                if (claims && claims.P18 && claims.P18.length > 0) {
+                  const imageName = claims.P18[0].mainsnak.datavalue.value;
+                  const md5Res = await fetch(`https://en.wikipedia.org/w/api.php?action=query&titles=File:${encodeURIComponent(imageName)}&prop=imageinfo&iiprop=url&format=json`, { headers });
+                  const md5Data = await md5Res.json();
+                  const pages = md5Data.query.pages;
+                  const pageId = Object.keys(pages)[0];
+                  if (pageId !== "-1" && pages[pageId].imageinfo) {
+                    return pages[pageId].imageinfo[0].url;
+                  }
+                }
+              }
+              return "";
+            };
+            
+            finalUrl = await searchWikidata("zh") || await searchWikidata("en");
+            
+            if (!finalUrl) {
+                const wikiRes = await fetch(`https://zh.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(p.name)}&prop=pageimages&format=json&pithumbsize=500`, { headers });
+                const wikiData = await wikiRes.json();
+                const pages = wikiData.query.pages;
+                const pageId = Object.keys(pages)[0];
+                if (pageId !== "-1" && pages[pageId].thumbnail) {
+                    finalUrl = pages[pageId].thumbnail.source;
+                }
+            }
+            
+            if (finalUrl) {
+                const imageRes = await fetch(finalUrl, { headers });
+                if (imageRes.ok) {
+                    const contentType = imageRes.headers.get("content-type") || "image/jpeg";
+                    const buffer = await imageRes.arrayBuffer();
+                    const key = `portraits/${encodeURIComponent(p.name.toLowerCase())}.jpg`;
+                    await imagesBucket.put(key, buffer, { httpMetadata: { contentType } });
+                    const newUrl = `/api/portraits/${encodeURIComponent(p.name.toLowerCase())}.jpg`;
+                    await db.prepare("UPDATE people SET image_url = ? WHERE id = ?").run(newUrl, p.id);
+                    console.log("Repaired image for:", p.name, "size:", buffer.byteLength);
+                } else {
+                    console.error("Failed to fetch final url for:", p.name);
+                }
+            }
+        } catch (e) {
+            console.error("Repair error for", p.name, e);
+        }
+    }
+  })());
+
+  return c.json({ success: true, message: "Repairing images in background" });
+});
+
 app.get("/archive", async (c) => {
   const db = await getDb(c);
   const people = await db.prepare("SELECT * FROM people ORDER BY created_at DESC").all() as any[];
@@ -377,7 +451,7 @@ app.get("/archive", async (c) => {
       for (const p of people) {
           if (p.image_url && p.image_url.startsWith("http") && !p.image_url.includes("/api/portraits/")) {
               try {
-                  const imageRes = await fetch(p.image_url);
+                  const imageRes = await fetch(p.image_url, { headers: { "User-Agent": "HistoricalArchiveApp/1.0" } });
                   if (imageRes.ok) {
                       const contentType = imageRes.headers.get("content-type") || "image/jpeg";
                       const buffer = await imageRes.arrayBuffer();

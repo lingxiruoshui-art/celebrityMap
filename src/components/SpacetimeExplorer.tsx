@@ -48,8 +48,9 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   const [target, setTarget] = useState(() => initialTarget || localStorage.getItem("last_explorer_target") || "");
 
   useImperativeHandle(ref, () => ({
-    start: () => {
-      handleSearch();
+    start: (overrideSource?: string, overrideTarget?: string) => {
+      console.log("SpacetimeExplorer start called with:", source, target, "overrides:", overrideSource, overrideTarget);
+      handleSearch(overrideSource, overrideTarget);
     },
     clear: () => {
       clearResults();
@@ -134,10 +135,18 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     }
   };
 
-  const handleSearch = async () => {
-    if (!source.trim() || !target.trim()) return;
+  const handleSearch = async (overrideSource?: string, overrideTarget?: string) => {
+    const finalSource = overrideSource || source;
+    const finalTarget = overrideTarget || target;
+    
+    console.log("handleSearch executing with:", finalSource, finalTarget);
 
-    if (!isAdmin && remainingQuota !== null && remainingQuota <= 0) {
+    if (!finalSource.trim() || !finalTarget.trim()) {
+       console.log("handleSearch aborted: empty source or target");
+       return;
+    }
+
+    if (!isAdmin && remainingQuota !== null && remainingQuota !== undefined && remainingQuota <= 0) {
       setError("今日探索次数已达上限，请明天再试或联系管理员。");
       return;
     }
@@ -469,7 +478,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
               </div>
 
               <button 
-                onClick={handleSearch}
+                onClick={() => handleSearch()}
                 disabled={isLoading || !source.trim() || !target.trim()}
                 className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-[12px] font-bold rounded-xl transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-2 active:scale-[0.98] shrink-0"
               >
@@ -538,7 +547,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                <p className="text-[11px] text-slate-500 leading-relaxed px-4 mb-6 font-medium">{error}</p>
                <div className="flex gap-3">
                  <button 
-                   onClick={handleSearch}
+                   onClick={() => handleSearch()}
                    className={`${error.includes("中止") ? "bg-indigo-600 text-white hover:bg-indigo-700" : "bg-slate-900 text-white hover:bg-black"} px-6 py-2.5 text-[11px] font-black rounded-xl transition-all shadow-lg active:scale-95 uppercase tracking-widest`}
                  >
                    {error.includes("中止") ? "继续探索" : "重新尝试"}

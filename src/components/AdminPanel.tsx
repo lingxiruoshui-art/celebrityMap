@@ -805,7 +805,7 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
                     随机更换
                   </button>
                   <button 
-                    onClick={() => explorerRef.current?.start()}
+                    onClick={() => explorerRef.current?.start(fetchSource, fetchTarget)}
                     className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-indigo-100 active:scale-[0.98] flex items-center justify-center gap-2"
                   >
                     <Sparkles className="w-3.5 h-3.5" />
@@ -982,6 +982,48 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
                     </div>
                   </div>
                 </div>
+
+                {/* Maintenance Card */}
+                <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex flex-col h-full md:col-span-2">
+                  <div className="flex items-center gap-3 mb-6">
+                    <div className="w-10 h-10 rounded-xl bg-orange-50 text-orange-500 flex items-center justify-center">
+                      <Database className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-slate-800">系统维护</h4>
+                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">修复与重置任务</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-col sm:flex-row items-center gap-4 border border-orange-100 bg-orange-50/30 p-4 rounded-2xl">
+                     <div className="flex-1">
+                        <h5 className="text-sm font-bold text-slate-800 mb-1">修复损坏的立绘 / 照片转存</h5>
+                        <p className="text-xs text-slate-500">如果发现人物列表中的图片加载失败或显示为空白（通常是因为防盗链或上传截断），请点击此按钮让服务器尝试重新拉取并存入 Cloudflare R2。</p>
+                     </div>
+                     <button 
+                       onClick={async () => {
+                         try {
+                           showNotification('info', '已触发修复，请在稍后观察效果...');
+                           const res = await fetch("/api/admin/repair-images", {
+                                method: "POST",
+                                headers: { "x-admin-password": adminPassword }
+                           });
+                           const data = await res.json();
+                           if (data.success) {
+                             showNotification('success', '修复任务在后台运行中，刷新页面查看效果。');
+                           } else {
+                             showNotification('error', data.error || '触发修复失败');
+                           }
+                         } catch(e) {
+                             showNotification('error', '触发修复失败，网络错误');
+                         }
+                       }}
+                       className="px-4 py-2.5 shrink-0 bg-white border border-orange-200 text-orange-600 hover:bg-orange-50 font-bold text-xs rounded-xl shadow-sm transition-all"
+                     >
+                       开始修复
+                     </button>
+                  </div>
+                </div>
+
               </div>
             </div>
           )}
