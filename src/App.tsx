@@ -239,9 +239,9 @@ export default function App() {
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col lg:flex-row overflow-hidden max-w-[1800px] w-full mx-auto relative z-10 p-3 lg:p-6 pt-2 lg:pt-0 gap-3 lg:gap-6">
+      <main className="flex-1 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden max-w-[1800px] w-full mx-auto relative z-10 p-3 lg:p-6 pt-2 lg:pt-0 gap-3 lg:gap-6">
         {/* Left Column: List & Details */}
-        <aside className="w-full lg:w-[450px] xl:w-[500px] h-[45%] lg:h-auto border border-slate-200/60 bg-white/70 backdrop-blur-2xl flex flex-col overflow-hidden rounded-2xl lg:rounded-3xl shadow-xl shadow-slate-200/50 flex-shrink-0">
+        <aside className="w-full lg:w-[450px] xl:w-[500px] h-auto lg:h-auto border border-slate-200/60 bg-white/70 backdrop-blur-2xl flex flex-col overflow-visible lg:overflow-hidden rounded-2xl lg:rounded-3xl shadow-xl shadow-slate-200/50 flex-shrink-0">
           <div className="p-4 lg:p-6 pb-0">
             <div className="flex items-center gap-3 mb-4">
               <div className="relative flex-1 min-w-0 group">
@@ -280,7 +280,7 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex-1 p-4 lg:p-6 pt-0 overflow-y-auto">
+          <div className="flex-1 p-4 lg:p-6 pt-0 overflow-visible lg:overflow-y-auto">
             {error && (
               <div className="bg-red-50 text-red-600 p-3 lg:p-4 rounded-xl border border-red-100 text-sm mb-4 lg:mb-6 flex items-start gap-2 shadow-sm">
                 <span className="font-bold">!</span> {error}
@@ -292,7 +292,7 @@ export default function App() {
                 <h2 className="text-xs uppercase tracking-widest text-slate-400 font-bold mb-4">
                   搜索结果
                 </h2>
-                <div className="flex flex-col gap-1.5 overflow-y-auto pr-2 pb-2">
+                <div className="flex flex-col gap-1.5 overflow-visible lg:overflow-y-auto pr-2 pb-2">
                   {data.people
                     .filter((p) =>
                       p.name.toLowerCase().includes(searchQuery.toLowerCase()),
@@ -569,46 +569,33 @@ export default function App() {
         </aside>
 
         {/* Right Column: Network Graph */}
-        <section className="flex-1 flex flex-col bg-white/70 backdrop-blur-2xl border border-slate-200/60 rounded-3xl shadow-xl shadow-slate-200/50 overflow-hidden relative">
-          <div className="p-3 bg-white/40 border-b border-slate-200/50 backdrop-blur-md z-10 flex justify-between items-center px-6">
-            <h2 className="text-[10px] uppercase tracking-widest font-bold text-slate-400 flex items-center gap-2">
+        <section className="flex-1 flex flex-col bg-white/70 backdrop-blur-2xl border border-slate-200/60 rounded-3xl shadow-xl shadow-slate-200/50 overflow-hidden relative min-h-[60vh] lg:min-h-0 shrink-0 lg:shrink">
+          <div className="p-3 bg-white/40 border-b border-slate-200/50 backdrop-blur-md z-20 flex justify-between items-start px-4 sm:px-6 relative">
+            <h2 className="text-[10px] uppercase tracking-widest font-bold text-slate-400 flex items-center gap-2 mt-3">
               <Sparkles className="w-3 h-3" /> 全景图谱
             </h2>
+            <div className="absolute right-4 sm:right-6 top-2 z-30 flex justify-end origin-top-right">
+              <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/60 shadow-xl overflow-hidden flex flex-col max-h-[85vh] sm:max-h-[calc(100vh-120px)] w-max">
+                <SpacetimeExplorer
+                  onClose={() => setIsSixDegreesOpen(false)}
+                  onRefreshArchive={fetchArchive}
+                  onSelectPerson={(id) => setSelectedPersonId(id)}
+                  onPathFound={(path) => {
+                    setDiscoveryPath(path);
+                    if (path && path.length > 0) {
+                      setPendingSelectName(path[path.length - 1].name);
+                    }
+                  }}
+                  isInline={true}
+                  remainingQuota={remainingQuota}
+                  onQuotaUpdate={setRemainingQuota}
+                  isAdmin={isAuthorized}
+                />
+              </div>
+            </div>
           </div>
 
           <div className="flex-1 relative min-h-0 overflow-hidden bg-white">
-            {/* Six Degrees Inline Panel */}
-            <AnimatePresence>
-              {isSixDegreesOpen && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.95 }}
-                  drag
-                  dragMomentum={false}
-                  className="absolute top-2 w-[calc(100%-1rem)] right-2 sm:right-4 sm:top-4 z-20 flex flex-col pointer-events-none sm:w-[320px] max-w-full max-h-[calc(100%-1rem)]"
-                >
-                  <div className="bg-white/90 backdrop-blur-md rounded-2xl border border-slate-200/60 shadow-xl pointer-events-auto overflow-hidden flex flex-col max-h-full">
-                    <SpacetimeExplorer
-                      onClose={() => setIsSixDegreesOpen(false)}
-                      onRefreshArchive={fetchArchive}
-                      onSelectPerson={(id) => setSelectedPersonId(id)}
-                      onPathFound={(path) => {
-                        setDiscoveryPath(path);
-                        if (path && path.length > 0) {
-                          setPendingSelectName(path[path.length - 1].name);
-                        }
-                      }}
-                      isInline={true}
-                      remainingQuota={remainingQuota}
-                      onQuotaUpdate={setRemainingQuota}
-                      isAdmin={isAuthorized}
-                    />
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
             <div
               className="absolute inset-0 z-0 opacity-[0.03] pointer-events-none"
               style={{

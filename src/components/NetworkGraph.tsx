@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { motion, useDragControls } from "motion/react";
 import * as d3 from "d3";
 import { Person, Relationship } from "../types";
 import { User, Quote, X, MessageCircle, Loader2 } from "lucide-react";
@@ -37,6 +38,8 @@ export default function NetworkGraph({
     messages: { speaker: string, text: string }[];
     error?: string;
   } | null>(null);
+
+  const controls = useDragControls();
 
   useEffect(() => {
     setChatState(null);
@@ -680,41 +683,51 @@ export default function NetworkGraph({
       <svg ref={svgRef} />
       
       {selectedRelationship && (
-        <div 
-          className="absolute z-[100] pointer-events-none"
+        <motion.div 
+          className="absolute z-[100]"
+          drag
+          dragListener={false}
+          dragControls={controls}
+          dragMomentum={false}
           style={{ 
             left: Math.max(
-              Math.min(400, dimensions.width) / 2 + 8,
-              Math.min(dimensions.width - Math.min(400, dimensions.width) / 2 - 8, selectedRelationship.x)
+              16,
+              Math.min(dimensions.width - Math.min(320, dimensions.width - 32) - 16, selectedRelationship.x - Math.min(320, dimensions.width - 32) / 2)
             ),
-            top: selectedRelationship.y,
-            transform: selectedRelationship.y < 350 
-              ? 'translate(-50%, 0) translateY(20px)' 
-              : 'translate(-50%, -100%) translateY(-20px)'
+            top: Math.max(
+              16,
+              Math.min(dimensions.height - 200, selectedRelationship.y < 350 ? selectedRelationship.y + 20 : selectedRelationship.y - Math.min(300, dimensions.height / 2))
+            ),
           }}
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
         >
-          <div className={`bg-white/95 backdrop-blur-md p-4 rounded-2xl shadow-2xl border border-indigo-100 w-[calc(100vw-1rem)] sm:w-[400px] max-w-[400px] pointer-events-auto animate-in fade-in zoom-in duration-300 ${selectedRelationship.y < 350 ? 'slide-in-from-top-2' : 'slide-in-from-bottom-2'}`}>
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-1.5 px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded-full text-[9px] font-black uppercase tracking-wider border border-indigo-100">
+          <div className="bg-white/95 backdrop-blur-md p-3.5 sm:p-4 rounded-2xl shadow-2xl border border-indigo-100/80 w-[calc(100vw-2rem)] sm:w-[320px] max-w-[320px] pointer-events-auto flex flex-col max-h-[80vh]">
+            <div 
+              className="flex items-center justify-between mb-3 cursor-grab active:cursor-grabbing touch-none px-1"
+              onPointerDown={(e) => controls.start(e)}
+            >
+              <div className="flex items-center gap-1.5 px-2 py-0.5 bg-indigo-50/80 text-indigo-600 rounded-full text-[9px] font-black uppercase tracking-wider border border-indigo-100/50">
                 <Quote className="w-2.5 h-2.5" />
                 <span>时空关系网络</span>
               </div>
               <button 
                 onClick={() => setSelectedRelationship(null)}
-                className="p-1 hover:bg-slate-100 rounded-full transition-colors text-slate-400"
+                className="p-1 hover:bg-slate-100 rounded-full transition-colors text-slate-400 self-start"
+                onPointerDown={(e) => e.stopPropagation()}
               >
                 <X className="w-3.5 h-3.5" />
               </button>
             </div>
             
-            <div className="flex flex-col gap-3">
-              <div className="flex items-start justify-between gap-3">
+            <div className="flex flex-col gap-3 overflow-y-auto nice-scrollbar pr-1 -mr-1">
+              <div className="flex items-start justify-between gap-3 shrink-0">
                 <div className="flex flex-col items-center gap-1 w-14 shrink-0">
                   <div className="w-8 h-8 rounded-lg bg-slate-50 overflow-hidden flex items-center justify-center text-slate-400 border border-slate-100 transition-all hover:bg-white hover:border-indigo-200 shadow-sm">
                     {selectedRelationship.source.image_url ? (
                       <img 
                         src={selectedRelationship.source.image_url} 
-                        className="w-full h-full object-cover" 
+                        className="w-full h-full object-cover pointer-events-none" 
                         alt={selectedRelationship.source.name}
                         referrerPolicy="no-referrer"
                       />
@@ -726,10 +739,10 @@ export default function NetworkGraph({
                 </div>
                 
                 <div className="flex-1 flex flex-col items-center pt-3">
-                  <div className="w-full h-px bg-slate-200 relative mb-2">
-                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-indigo-400" />
+                  <div className="w-full h-[2px] bg-indigo-100 relative mb-2">
+                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-indigo-500" />
                   </div>
-                  <div className="text-[11px] font-bold text-indigo-600 text-center leading-relaxed break-words px-1">
+                  <div className="text-[10px] font-bold text-indigo-600 text-center leading-relaxed break-words px-1">
                     {selectedRelationship.rel.relationship_type}
                   </div>
                 </div>
@@ -739,7 +752,7 @@ export default function NetworkGraph({
                     {selectedRelationship.target.image_url ? (
                       <img 
                         src={selectedRelationship.target.image_url} 
-                        className="w-full h-full object-cover" 
+                        className="w-full h-full object-cover pointer-events-none" 
                         alt={selectedRelationship.target.name}
                         referrerPolicy="no-referrer"
                       />
@@ -760,7 +773,7 @@ export default function NetworkGraph({
                   开启跨时空对话
                 </button>
               ) : (
-                <div className="mt-2 p-3 bg-slate-50/50 rounded-xl border border-slate-100 text-xs text-slate-700 max-h-[240px] overflow-y-auto nice-scrollbar">
+                <div className="mt-2 p-3 bg-slate-50/50 rounded-xl border border-slate-100 text-xs text-slate-700 max-h-[160px] sm:max-h-[240px] overflow-y-auto nice-scrollbar">
                   {chatState.isLoading ? (
                     <div className="flex items-center justify-center gap-2 py-4 text-slate-400">
                       <Loader2 className="w-4 h-4 animate-spin" />
@@ -799,7 +812,7 @@ export default function NetworkGraph({
           </div>
           {/* Arrow */}
           <div className="w-4 h-4 bg-white border-r border-b border-indigo-100 absolute left-1/2 -translate-x-1/2 -bottom-2 rotate-45 shadow-[4px_4px_8px_rgba(0,0,0,0.02)]" />
-        </div>
+        </motion.div>
       )}
     </div>
   );
