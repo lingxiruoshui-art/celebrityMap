@@ -1,5 +1,7 @@
 name = "historical-time-archive"
 pages_build_output_dir = "dist"
+compatibility_date = "2024-03-20"
+compatibility_flags = ["nodejs_compat"]
 
 [[d1_databases]]
 binding = "DB"
@@ -9,9 +11,6 @@ database_id = "b805d7ec-6522-446a-a9be-0553983c088d"
 [[r2_buckets]]
 binding = "IMAGES"
 bucket_name = "historical-portraits"
-
-compatibility_date = "2024-03-20"
-compatibility_flags = ["nodejs_compat"]
 
 [vars]
 # Add other environment variables here
