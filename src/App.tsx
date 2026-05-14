@@ -174,7 +174,7 @@ export default function App() {
   };
 
   return (
-    <div className="h-screen bg-slate-50 text-slate-800 font-sans flex flex-col overflow-hidden relative">
+    <div className="h-[100dvh] bg-slate-50 text-slate-800 font-sans flex flex-col overflow-hidden relative">
       {/* Background Image Setup */}
       <div
         className="absolute inset-0 z-0 opacity-[0.15] pointer-events-none"
@@ -188,18 +188,18 @@ export default function App() {
       <div className="absolute inset-0 z-0 bg-gradient-to-br from-slate-50/80 via-slate-100/90 to-white/80 pointer-events-none" />
 
       {/* Header: Navigation & System Status */}
-      <header className="h-14 sm:h-16 shrink-0 border-b border-slate-200/50 bg-white/60 backdrop-blur-xl z-10 shadow-sm transition-all duration-500">
+      <header className="h-9 sm:h-11 shrink-0 border-b border-slate-200/50 bg-white/60 backdrop-blur-xl z-10 shadow-sm transition-all duration-500">
         <div className="max-w-[1800px] w-full mx-auto h-full px-3 sm:px-6 flex items-center justify-between">
           <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-shrink-0">
             <div className="scale-75 sm:scale-100 origin-left flex shrink-0">
               <AnimatedLogo />
             </div>
-            <div className="min-w-0">
-              <h1 className="text-[17px] sm:text-xl font-bold tracking-tight text-slate-800 capitalize drop-shadow-sm leading-none sm:leading-tight whitespace-nowrap">
-                名人图谱
+            <div className="flex flex-col w-[76px] sm:w-[92px]">
+              <h1 className="text-[17px] sm:text-xl font-bold text-slate-800 drop-shadow-sm leading-none sm:leading-tight flex justify-between">
+                <span>名</span><span>人</span><span>图</span><span>谱</span>
               </h1>
-              <p className="text-slate-400 font-bold text-[8px] sm:text-[10px] uppercase tracking-[0.1em] sm:tracking-[0.2em] mt-0.5 sm:mt-1 whitespace-nowrap overflow-hidden text-ellipsis">
-                关系知识探索平台
+              <p className="text-slate-400 font-bold text-[8.5px] sm:text-[10.5px] uppercase mt-0.5 sm:mt-1 flex justify-between">
+                <span>时</span><span>空</span><span>关</span><span>系</span><span>探</span><span>索</span><span>平</span><span>台</span>
               </p>
             </div>
           </div>
@@ -289,8 +289,8 @@ export default function App() {
 
             {searchQuery ? (
               <div className="flex flex-col min-h-0">
-                <h2 className="text-xs uppercase tracking-widest text-slate-400 font-bold mb-4">
-                  搜索结果
+                <h2 className="text-xs uppercase tracking-widest text-slate-400 font-bold mb-4 flex items-center gap-2">
+                  <Search className="w-4 h-4 text-slate-400" /> 搜索结果
                 </h2>
                 <div className="flex flex-col gap-1.5 overflow-visible lg:overflow-y-auto pr-2 pb-2">
                   {data.people
@@ -567,13 +567,13 @@ export default function App() {
         </aside>
 
         {/* Right Column: Network Graph */}
-        <section className="flex-1 flex flex-col bg-white/70 backdrop-blur-2xl border border-slate-200/60 rounded-3xl shadow-xl shadow-slate-200/50 overflow-hidden relative min-h-[60vh] lg:min-h-0 shrink-0 lg:shrink">
-          <div className="p-3 bg-white/40 border-b border-slate-200/50 backdrop-blur-md z-20 flex justify-between items-start px-4 sm:px-6 relative">
+        <section className="flex-1 flex flex-col bg-white/70 backdrop-blur-2xl border border-slate-200/60 rounded-3xl shadow-xl shadow-slate-200/50 relative min-h-[60vh] lg:min-h-0 shrink-0 lg:shrink">
+          <div className="p-3 bg-white/40 border-b border-slate-200/50 backdrop-blur-md z-20 flex justify-between items-start px-4 sm:px-6 relative rounded-t-3xl">
             <h2 className="text-sm uppercase tracking-widest font-bold text-slate-400 flex items-center gap-2 mt-3">
               <Sparkles className="w-4 h-4" /> 全景图谱
             </h2>
             <div className="absolute left-4 right-4 sm:left-auto sm:right-6 top-2 z-30 flex justify-end origin-top-right">
-              <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/60 shadow-xl overflow-hidden flex flex-col max-h-[85vh] sm:max-h-[calc(100vh-120px)] w-full sm:w-max max-w-full">
+              <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/60 shadow-xl overflow-hidden flex flex-col max-h-[85dvh] sm:max-h-[calc(100dvh-120px)] w-full sm:w-max max-w-full">
                 <SpacetimeExplorer
                   onClose={() => setIsSixDegreesOpen(false)}
                   onRefreshArchive={fetchArchive}
@@ -593,7 +593,7 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex-1 relative min-h-0 overflow-hidden bg-white">
+          <div className="flex-1 relative min-h-0 overflow-y-auto overflow-x-hidden custom-scrollbar bg-white rounded-b-3xl">
             <div
               className="absolute inset-0 z-0 opacity-[0.03] pointer-events-none"
               style={{
@@ -618,23 +618,18 @@ export default function App() {
       </main>
 
       {/* Footer */}
-      <footer className="shrink-0 border-t border-slate-100 py-3 px-6 bg-white/60 backdrop-blur-md relative z-10">
-        <div className="max-w-3xl mx-auto flex flex-col items-center text-center gap-1.5">
-          <div className="flex items-center gap-2 -mt-2 -mb-1">
-            <div className="opacity-40 grayscale scale-[0.6] origin-center flex shrink-0">
+      <footer className="shrink-0 border-t border-slate-100 py-1.5 px-6 bg-white/60 backdrop-blur-md relative z-10">
+        <div className="max-w-3xl mx-auto flex flex-col items-center justify-center text-center gap-0.5">
+          <div className="flex items-center gap-1.5">
+            <div className="opacity-40 grayscale scale-75 origin-center flex shrink-0">
               <AnimatedLogo />
             </div>
-            <h4 className="text-sm font-black uppercase tracking-[0.25em] text-slate-800">
-              名人图谱
-            </h4>
+            <p className="text-[11px] font-serif text-slate-700 italic font-medium">
+              “世间万物，皆有联系。” —— 莱昂纳多·达·芬奇
+            </p>
           </div>
-
-          <p className="text-[11px] font-serif text-slate-700 italic font-medium">
-            “世间万物，皆有联系。” —— 莱昂纳多·达·芬奇
-          </p>
-
-          <div className="flex items-center gap-3 text-[8px] font-bold uppercase tracking-[0.2em] text-slate-300">
-            <span>© 2024 名人图谱</span>
+          <div className="flex items-center gap-3 text-[8px] font-bold uppercase tracking-[0.2em] text-slate-300 mt-0.5">
+            <span>© 2024 时空关系探索平台</span>
             <span className="opacity-40">•</span>
             <span className="text-slate-400 opacity-80">
               AI 驱动的历史长河与关系脉络还原

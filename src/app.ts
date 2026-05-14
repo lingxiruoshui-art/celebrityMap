@@ -3,6 +3,8 @@ import { streamSSE } from "hono/streaming";
 import { GoogleGenAI } from "@google/genai";
 import { D1DatabaseAdapter, DatabaseAdapter } from "./db.ts";
 import { CATEGORIES, FIGURE_POOL } from "./figuresPool.ts";
+import { ARCHIVE_PROMPT, ARCHIVE_SCHEMA, PATH_PROMPT, PATH_SCHEMA, VALIDATION_PROMPT, VALIDATION_SCHEMA } from "./services/geminiService.ts";
+import { runExplorationTask } from "./exploreTask.ts";
 
 export const app = new Hono<{ 
   Bindings: { 
@@ -11,6 +13,7 @@ export const app = new Hono<{
     GEMINI_API_KEY?: string;
     GEMINI_MODEL_ID?: string;
     ADMIN_PASSWORD?: string;
+    EXPLORE_KV?: any;
   },
   Variables: { dbAdapter: DatabaseAdapter } 
 }>().basePath('/api');
@@ -91,13 +94,13 @@ async function getDb(c: any): Promise<DatabaseAdapter> {
   return db;
 }
 
-const getConfig = async (db: DatabaseAdapter, key: string, defaultValue: string = "") => {
+export const getConfig = async (db: DatabaseAdapter, key: string, defaultValue: string = "") => {
   const row = await db.prepare("SELECT value FROM config WHERE key = ?").get(key) as any;
   if (!row || row.value === null || row.value === undefined) return defaultValue;
   return String(row.value);
 };
 
-const setConfig = async (db: DatabaseAdapter, key: string, value: string) => {
+export const setConfig = async (db: DatabaseAdapter, key: string, value: string) => {
   await db.prepare("INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
 };
 
@@ -129,7 +132,7 @@ const getAdminPassword = (c: any) => {
     return (c.env && c.env.ADMIN_PASSWORD) || (typeof process !== "undefined" && process.env.ADMIN_PASSWORD) || "admin";
 };
 
-async function callAI(c: any, db: DatabaseAdapter, prompt: string, responseFormat: "text" | "json" = "text", schema?: any): Promise<string> {
+export async function callAI(c: any, db: DatabaseAdapter, prompt: string, responseFormat: "text" | "json" = "text", schema?: any): Promise<string> {
   const provider = await getConfig(db, "active_model_provider", "gemini");
   
   if (provider === "aliyun") {
@@ -224,7 +227,7 @@ async function getPortraitUrl(c: any, name: string): Promise<string | null> {
   return localPath;
 }
 
-async function addRelationship(db: DatabaseAdapter, p1: number, p2: number, type: string) {
+export async function addRelationship(db: DatabaseAdapter, p1: number, p2: number, type: string) {
   const min = Math.min(p1, p2);
   const max = Math.max(p1, p2);
   try {
@@ -554,8 +557,9 @@ app.post("/archiver/chat", async (c) => {
       return c.json({ error: "Missing person1 or person2" }, 400);
     }
 
-    const prompt = `请发挥你的想象力，设计一段2-3轮的简短对话。对话双方是历史/现实人物：【${person1}】和【${person2}】。
-对话风格要求稍微幽默、有趣一些，可以有跨时空、跨领域的趣味性碰撞。结合他们各自著名的成就、思想、或名言等元素。
+    const prompt = `请发挥你的想象力，设计一段2-4轮的简短对话。对话双方是历史/现实人物：【${person1}】和【${person2}】。
+要求：每一句的阅读时长控制在2秒内（字数极简精炼），确保全部对话总阅读时长在8秒左右。
+人物应保留其经典气质与语言特征，形象鲜明可辨。对白风格幽默哲思、有趣接地气，化学反应鲜明，超级爆笑，超级讽刺，或者超级感人，让观众易于被吸引或代入。
 
 请严格返回以下JSON格式：
 {
@@ -830,4 +834,88 @@ app.post("/ai/proxy", async (c) => {
   } catch (e: any) {
       return c.json({ error: e.message }, 500);
   }
+});
+
+app.get("/explore/status", async (c) => {
+  const db = await getDb(c);
+  let statusStr = "null";
+  if (c.env && c.env.EXPLORE_KV) {
+      statusStr = await c.env.EXPLORE_KV.get("explore_state") || "null";
+  } else {
+      statusStr = await getConfig(db, "explore_state", "null");
+  }
+  if (statusStr === "null") return c.json(null);
+  const data = JSON.parse(statusStr);
+  
+  // if not admin, strip logs and steps except last step or error? No, frontend needs steps for UI. 
+  // Wait, user instructions say: "如果是前台用户先开启，前台可以正常看到探索进度，后台用户除了可以看到探索进度，还可以看到DEBUG信息（DEBUG信息仅在后台显示"
+  if (c.req.header("x-admin-password") !== getAdminPassword(c)) {
+      data.logs = []; // do not return logs to frontend users
+  }
+  return c.json(data);
+});
+
+app.post("/explore/start", async (c) => {
+  const db = await getDb(c);
+  const { source, target, isAdmin } = await c.req.json();
+  let currentStr = "null";
+  if (c.env && c.env.EXPLORE_KV) {
+      currentStr = await c.env.EXPLORE_KV.get("explore_state") || "null";
+  } else {
+      currentStr = await getConfig(db, "explore_state", "null");
+  }
+  if (currentStr !== "null") {
+      const current = JSON.parse(currentStr);
+      if (current.status === 'running') return c.json({ error: "探索正在进行中" }, 400);
+  }
+  
+  if (!isAdmin && await getRemainingQuota(db) <= 0) {
+      return c.json({ error: "今日探索次数已达上限" }, 403);
+  }
+
+  // Set initial state synchronously so immediately following reads see it
+  const initialState = {
+      status: 'running', source, target, logs: [], steps: [], path: null, error: null, newArrivals: []
+  };
+  const stateStr = JSON.stringify(initialState);
+  if (c.env && c.env.EXPLORE_KV) {
+      await c.env.EXPLORE_KV.put("explore_state", stateStr);
+  } else {
+      await setConfig(db, "explore_state", stateStr);
+  }
+
+  const task = runExplorationTask(db, source, target, callAI, getConfig, setConfig, addRelationship, ARCHIVE_PROMPT, ARCHIVE_SCHEMA, PATH_PROMPT, PATH_SCHEMA, VALIDATION_PROMPT, VALIDATION_SCHEMA, c, !!isAdmin);
+  
+  if (c.executionCtx && c.executionCtx.waitUntil) {
+      c.executionCtx.waitUntil(task);
+  } else {
+      task.catch(console.error);
+  }
+  
+  return c.json({ success: true, status: 'running' });
+});
+
+app.post("/explore/stop", async (c) => {
+  const db = await getDb(c);
+  // Optional: We can just signal abort via state
+  let statusStr = "null";
+  if (c.env && c.env.EXPLORE_KV) {
+      statusStr = await c.env.EXPLORE_KV.get("explore_state") || "null";
+  } else {
+      statusStr = await getConfig(db, "explore_state", "null");
+  }
+  if (statusStr !== "null") {
+      const state = JSON.parse(statusStr);
+      if (state.status === 'running') {
+         state.status = 'error';
+         state.error = '探索已中止';
+         const stateStr = JSON.stringify(state);
+         if (c.env && c.env.EXPLORE_KV) {
+             await c.env.EXPLORE_KV.put("explore_state", stateStr);
+         } else {
+             await setConfig(db, "explore_state", stateStr);
+         }
+      }
+  }
+  return c.json({ success: true });
 });

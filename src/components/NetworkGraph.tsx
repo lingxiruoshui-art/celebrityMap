@@ -620,8 +620,12 @@ export default function NetworkGraph({
     };
   }, [people, relationships, discoveryPath, selectedPersonId, dimensions]);
 
+  const dialogWidth = Math.min(320, dimensions.width - 32);
+  const initialLeft = selectedRelationship ? Math.max(16, Math.min(dimensions.width - dialogWidth - 16, selectedRelationship.x - dialogWidth / 2)) : 0;
+  const initialTop = selectedRelationship ? Math.max(16, Math.min(dimensions.height - 200, selectedRelationship.y < 350 ? selectedRelationship.y + 20 : selectedRelationship.y - Math.min(300, dimensions.height / 2))) : 0;
+
   return (
-    <div ref={containerRef} className="w-full h-full cursor-grab active:cursor-grabbing relative overflow-hidden">
+    <div ref={containerRef} className="w-full h-full cursor-grab active:cursor-grabbing relative overflow-visible">
       <style>{`
         @keyframes colorful-glow {
           0% { stroke: #818cf8; }
@@ -689,20 +693,20 @@ export default function NetworkGraph({
           dragListener={false}
           dragControls={controls}
           dragMomentum={false}
+          dragConstraints={{
+            left: -initialLeft + 16,
+            right: dimensions.width - initialLeft - dialogWidth - 16,
+            top: -initialTop,     // Stops exactly at the top boundary
+            // bottom is unbound to allow scrolling page when long
+          }}
           style={{ 
-            left: Math.max(
-              16,
-              Math.min(dimensions.width - Math.min(320, dimensions.width - 32) - 16, selectedRelationship.x - Math.min(320, dimensions.width - 32) / 2)
-            ),
-            top: Math.max(
-              16,
-              Math.min(dimensions.height - 200, selectedRelationship.y < 350 ? selectedRelationship.y + 20 : selectedRelationship.y - Math.min(300, dimensions.height / 2))
-            ),
+            left: initialLeft,
+            top: initialTop,
           }}
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
         >
-          <div className="bg-white/95 backdrop-blur-md p-3.5 sm:p-4 rounded-2xl shadow-2xl border border-indigo-100/80 w-[calc(100vw-2rem)] sm:w-[320px] max-w-[320px] pointer-events-auto flex flex-col max-h-[80vh]">
+          <div className="bg-white/95 backdrop-blur-md p-3.5 sm:p-4 rounded-2xl shadow-2xl border border-indigo-100/80 w-[calc(100vw-2rem)] sm:w-[320px] max-w-[320px] pointer-events-auto flex flex-col">
             <div 
               className="flex items-center justify-between mb-3 cursor-grab active:cursor-grabbing touch-none px-1"
               onPointerDown={(e) => controls.start(e)}
@@ -773,7 +777,7 @@ export default function NetworkGraph({
                   开启跨时空对话
                 </button>
               ) : (
-                <div className="mt-2 p-3 bg-slate-50/50 rounded-xl border border-slate-100 text-xs text-slate-700 max-h-[160px] sm:max-h-[240px] overflow-y-auto custom-scrollbar">
+                <div className="mt-2 p-3 bg-slate-50/50 rounded-xl border border-slate-100 text-xs text-slate-700">
                   {chatState.isLoading ? (
                     <div className="flex items-center justify-center gap-2 py-4 text-slate-400">
                       <Loader2 className="w-4 h-4 animate-spin" />
@@ -794,7 +798,7 @@ export default function NetworkGraph({
                       {chatState.messages.map((msg, idx) => {
                         const isSource = msg.speaker === selectedRelationship.source.name;
                         return (
-                          <div key={idx} className={`flex items-start gap-2 ${isSource ? '' : 'flex-row-reverse'} animate-in slide-in-from-bottom-2 fade-in duration-300`} style={{ animationDelay: `${idx * 150}ms`, animationFillMode: 'both' }}>
+                          <div key={idx} className={`flex items-start gap-2 ${isSource ? '' : 'flex-row-reverse'} animate-in slide-in-from-bottom-2 fade-in duration-500`} style={{ animationDelay: `${idx * 2000}ms`, animationFillMode: 'both' }}>
                             <div className="w-6 h-6 shrink-0 rounded-md overflow-hidden bg-slate-100 border border-slate-200">
                               <img src={isSource ? selectedRelationship.source.image_url : selectedRelationship.target.image_url} alt={msg.speaker} className="w-full h-full object-cover" />
                             </div>

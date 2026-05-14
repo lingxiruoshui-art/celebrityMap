@@ -749,6 +749,8 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
                   <SpacetimeExplorer 
                     ref={explorerRef}
                     isInline={true}
+                    isPane={true}
+                    showLogs={true}
                     initialSource={fetchSource}
                     initialTarget={fetchTarget}
                     autoStart={false}
@@ -758,7 +760,6 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
                     onRefreshArchive={fetchArchive}
                     onSelectPerson={() => {}}
                     isAdmin={true}
-                    showLogs={true}
                   />
                 </div>
               </div>

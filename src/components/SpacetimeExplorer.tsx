@@ -14,6 +14,7 @@ interface SpacetimeExplorerProps {
   onSelectPerson: (id: number) => void;
   onPathFound?: (path: Step[] | null) => void;
   isInline?: boolean;
+  isPane?: boolean;
   initialSource?: string;
   initialTarget?: string;
   autoStart?: boolean;
@@ -36,6 +37,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   onSelectPerson, 
   onPathFound, 
   isInline,
+  isPane = false,
   initialSource = "",
   initialTarget = "",
   autoStart = false,
@@ -96,7 +98,71 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const logsScrollRef = useRef<HTMLDivElement>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const pollStatusRef = useRef(false);
+
+  useEffect(() => {
+    let timer: any;
+    const checkStatus = async () => {
+       try {
+           const headers: any = {};
+           if (isAdmin) headers["x-admin-password"] = localStorage.getItem("admin_password") || "";
+           const res = await fetch("/api/explore/status", { headers });
+           const data = await res.json();
+           if (data && (pollStatusRef.current || data.status === 'running')) {
+               if (data.status === 'running') {
+                   // Only overwrite inputs while it is actually running
+                   setSource(prev => data.source);
+                   setTarget(prev => data.target);
+               }
+               if (data.logs) setDetailedLogs(data.logs);
+               if (data.steps) setSearchSteps(data.steps);
+               
+               if (data.status === 'error') {
+                   setError(data.error);
+                   setIsLoading(false);
+                   pollStatusRef.current = false;
+               } else if (data.status === 'success') {
+                   if (!showResults) { // Only update if not already shown
+                     setPath(data.path || []);
+                     setNewArrivals(data.newArrivals ? data.newArrivals : []);
+                     setShowResults(true);
+                     setIsLoading(false);
+                     if (onPathFound) onPathFound(data.path || []);
+                     if (data.newArrivals && data.newArrivals.length > 0) onRefreshArchive();
+                   }
+                   pollStatusRef.current = false;
+               } else if (data.status === 'running') {
+                   setIsLoading(true);
+                   setError(null);
+                   setShowResults(false);
+                   setIsCollapsed(false);
+                   pollStatusRef.current = true;
+               }
+           } else if (data && data.status && isAdmin) {
+               // Load last cached result on mount if idle, but only do it once when component mounts (Admins only)
+               if (!pollStatusRef.current && !showResults && data.status === 'success' && data.path && !path) {
+                   setSource(data.source || "");
+                   setTarget(data.target || "");
+                   setDetailedLogs(data.logs || []);
+                   setSearchSteps(data.steps || []);
+                   setPath(data.path);
+                   setNewArrivals(data.newArrivals || []);
+                   setShowResults(true);
+               } else if (!pollStatusRef.current && !showResults && data.status === 'error' && !path) {
+                   setSource(data.source || "");
+                   setTarget(data.target || "");
+                   setDetailedLogs(data.logs || []);
+                   setSearchSteps(data.steps || []);
+                   setError(data.error);
+               }
+           }
+       } catch (e) {}
+       
+       timer = setTimeout(checkStatus, pollStatusRef.current ? 1000 : 5000); 
+    };
+    checkStatus();
+    return () => clearTimeout(timer);
+  }, [showResults]);
 
   useEffect(() => {
     if (logsScrollRef.current) {
@@ -110,23 +176,15 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
       .then(res => res.json())
       .then(data => setMetadata(data))
       .catch(err => console.error("Failed to fetch metadata", err));
-
-    return () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
-    };
   }, []);
 
-  const handleStop = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
+  const handleStop = async () => {
+    const headers: any = {};
+    if (isAdmin) headers["x-admin-password"] = localStorage.getItem("admin_password") || "";
+    await fetch("/api/explore/stop", { method: "POST", headers });
+    pollStatusRef.current = false;
     setIsLoading(false);
-    if (!path) {
-      setError("搜索已由用户中断。");
-    }
+    if (!path) setError("搜索已由用户中断。");
   };
 
   const [isPickingRandom, setIsPickingRandom] = useState(false);
@@ -191,268 +249,21 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     setNewArrivals([]);
     setSearchSteps([]);
     
-    abortControllerRef.current = new AbortController();
-    const signal = abortControllerRef.current.signal;
-
-    const addLog = (msg: string, type: 'ui' | 'api' | 'ai-req' | 'ai-res' | 'error' = 'ui', data?: any) => {
-      const log = { timestamp: new Date().toLocaleTimeString(), msg, data, type };
-      setDetailedLogs(prev => [...prev, log]);
-    };
-
-    const addStep = (msg: string) => {
-      setSearchSteps(prev => [...prev, { msg, status: 'pending' }]);
-      // No duplicate addLog here, searchSteps are visible separately
-      setTimeout(() => {
-        if (scrollRef.current) {
-          scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-        }
-      }, 50);
-    };
+    setDetailedLogs([]);
+    pollStatusRef.current = true;
     
-    const updateLastStep = (status: 'success' | 'error' | 'pending', msg?: string) => {
-      setSearchSteps(prev => {
-        if (prev.length === 0) return prev;
-        const last = prev[prev.length - 1];
-        if (status === 'error') {
-           addLog(`步骤失败: ${msg || last.msg}`, 'error');
-        }
-        return [...prev.slice(0, -1), { msg: msg || last.msg, status }];
-      });
-    };
-
     try {
-      setDetailedLogs([]);
-      addLog("启动时空探索协议会话", "api", { source: finalSource, target: finalTarget, timestamp: new Date().toISOString() });
-      addStep("正在初始化跨时空检索协议...");
-      
-      addLog("请求馆藏核心元数据", "api", { endpoint: "/api/metadata" });
-      const metaRes = await fetch("/api/metadata", { signal });
-      const currentMeta = await metaRes.json();
-      addLog("元数据同步成功", "api", currentMeta);
-      setMetadata(currentMeta);
-      
-      const provider = currentMeta.activeProvider || "gemini";
-      const modelId = provider === "gemini" ? currentMeta.geminiModelId : currentMeta.aliyunModelId;
-
-      if (!modelId) {
-        throw new Error(`请先在后台配置 ${provider === 'gemini' ? 'Gemini' : 'Aliyun'} 模型 ID`);
-      }
-      updateLastStep('success');
-
-      addStep(`正在识别人物身份: ${finalSource} 与 ${finalTarget}...`);
-      
-      const callAIProxy = async (prompt: string, responseFormat: 'text' | 'json' = 'json', schema?: any) => {
-        addLog(`AI 代理请求发送`, 'ai-req', { prompt, responseFormat, schema });
-        const res = await fetch("/api/ai/proxy", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt, responseFormat, schema }),
-            signal
-        });
-        if (!res.ok) {
-            const err = await res.json();
-            addLog("AI 服务响应失败", 'error', err);
-            throw new Error(err.error || "AI 服务异常");
-        }
-        const data = await res.json();
-        addLog("AI 响应解码成功", 'ai-res', { rawText: data.text });
-        return data.text;
-      };
-      const existingArray = currentMeta?.existingNames ? currentMeta.existingNames.split("、") : [];
-      const findNormalizedInDB = (name: string) => {
-        const trimmed = name.trim();
-        return existingArray.find(ex => ex.toLowerCase() === trimmed.toLowerCase()) || null;
-      };
-
-      const validate = async (name: string) => {
-        // Optimization: If name already in DB, skip AI validation
-        const localMatch = findNormalizedInDB(name);
-        if (localMatch) {
-          return { accepted: true, normalizedName: localMatch, reason: "馆藏库内已存身份" };
-        }
-        
-        const text = await callAIProxy(VALIDATION_PROMPT(name, currentMeta?.existingNames || ""), "json", VALIDATION_SCHEMA);
-        let parsed: { accepted?: boolean; normalizedName?: string; reason?: string } = {};
-        try {
-          let rawParsed = JSON.parse(text || "{}");
-          if (Array.isArray(rawParsed) && rawParsed.length > 0) {
-            parsed = rawParsed[0];
-          } else {
-            parsed = rawParsed;
-          }
-        } catch (e) {
-          console.error("Failed to parse validation JSON:", text);
-          return { accepted: false, reason: "AI 响应解析失败" };
-        }
-        
-        if (parsed.accepted === undefined) {
-           console.error("Missing standard keys in AI response:", parsed);
-           if ((parsed as any).result && (parsed as any).result.accepted !== undefined) {
-              parsed = (parsed as any).result;
-           } else {
-              return { accepted: false, reason: "系统未能识别该人物，可能非历史人物" };
-           }
-        }
-        
-        return parsed;
-      };
-
-      const [srcValid, tgtValid] = await Promise.all([validate(finalSource), validate(finalTarget)]);
-      
-      if (!srcValid.accepted) throw new Error(`起点人物无效: ${srcValid.reason || '原因未知'}`);
-      if (!tgtValid.accepted) throw new Error(`终点人物无效: ${tgtValid.reason || '原因未知'}`);
-      
-      const normalizedSource = srcValid.normalizedName || finalSource;
-      const normalizedTarget = tgtValid.normalizedName || finalTarget;
-      updateLastStep('success', `识别成功: ${normalizedSource} 与 ${normalizedTarget}`);
-
-      addStep("正在扫描馆藏路径...");
-      const pathRes = await fetch("/api/pathfind", {
+      const res = await fetch("/api/explore/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sourceName: normalizedSource, targetName: normalizedTarget }),
-        signal
+        body: JSON.stringify({ source: finalSource, target: finalTarget, isAdmin })
       });
-      const pathData = await pathRes.json();
-      
-      if (pathData.path) {
-        updateLastStep('success', "在现有馆藏中找到直接路径！");
-        setPath(pathData.path);
-        setShowResults(true);
-        if (onPathFound) onPathFound(pathData.path);
-        setIsLoading(false);
-        return;
-      }
-      updateLastStep('success', "现有馆藏中无直接路径，启动 AI 逻辑推理...");
-
-      addStep("AI 正在编织历史脉络...");
-      const bridgeText = await callAIProxy(PATH_PROMPT(normalizedSource, normalizedTarget, currentMeta?.existingNames || ""), "json", PATH_SCHEMA);
-      let bridgeData: any = { chain: [] };
-      try {
-        let rawBridge = JSON.parse(bridgeText || "{}");
-        if (Array.isArray(rawBridge) && rawBridge.length > 0) {
-          bridgeData = rawBridge[0];
-        } else {
-          bridgeData = rawBridge;
-        }
-      } catch (e) {
-        console.error("AI 响应解析失败:", bridgeText);
-        throw new Error("AI 返回了无法解析的关系数据，请稍后重试。");
-      }
-      
-      let chain = bridgeData.chain;
-      if (!chain && bridgeData.result && bridgeData.result.chain) {
-          chain = bridgeData.result.chain;
-      }
-      chain = chain || [];
-
-      if (chain.length < 2) {
-        console.warn("AI 未能产出有效路径:", bridgeData);
-        throw new Error("AI 未能建立有效联系，请尝试更换人物或重新搜索。");
-      }
-      updateLastStep('success');
-
-      const arrivals: string[] = [];
-      const finalPath: Step[] = [];
-
-      for (let i = 0; i < chain.length; i++) {
-        if (signal.aborted) throw new Error("AbortError");
-        const step = chain[i];
-        if (!step.name) continue; // Skip malformed steps
-        addStep(`正在处理节点: ${step.name}...`);
-        
-        // Check if exists and archive if not on server
-        const checkRes = await fetch("/api/save-archive", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: step.name })
-        });
-        let checkData = await checkRes.json();
-
-        if (checkData.isNew || !checkData.isFull) {
-            updateLastStep('pending', `正在为新发现的人物 ${step.name} 撰写传记...`);
-            const archiveText = await callAIProxy(ARCHIVE_PROMPT(step.name, metadata?.categories || [], metadata?.existingNames || ""), "json", ARCHIVE_SCHEMA);
-            let personData: any = {};
-            try {
-              let rawPerson = JSON.parse(archiveText || "{}");
-              if (Array.isArray(rawPerson) && rawPerson.length > 0) {
-                personData = rawPerson[0];
-              } else {
-                personData = rawPerson;
-              }
-            } catch (e) {
-              console.error("AI 撰写传记解析失败:", archiveText);
-              throw new Error("AI 生成的人物传记无法解析，探索被中断。");
-            }
-            if (!personData.biography && personData.result && personData.result.biography) {
-              personData = personData.result;
-            }
-            
-            // Send back to server to update with full data
-            await fetch("/api/save-archive", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ name: step.name, data: personData })
-            });
-            arrivals.push(step.name);
-            onRefreshArchive();
-        }
-
-        // Save the edge between this person and the previous one IF it's not the first node
-        if (i > 0) {
-            await fetch("/api/save-relationship", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    sourceName: chain[i-1].name,
-                    targetName: step.name,
-                    relationshipType: step.relationshipToPrevious
-                })
-            });
-            // Update relationships globally
-            onRefreshArchive();
-        }
-
-        const currentStep = { name: step.name, type: step.relationshipToPrevious };
-        finalPath.push(currentStep);
-        
-        // Progressively update local path for UI feedback in sidebar
-        setPath([...finalPath]);
-        
-        updateLastStep('success');
-      }
-
-      setPath(finalPath);
-      setNewArrivals(arrivals);
-      setShowResults(true);
-      if (onPathFound) onPathFound(finalPath);
-      
-      // Update usage on server if not in DB originally (AI was involved)
-      if (!pathData.path && !isAdmin) {
-        try {
-          const usageRes = await fetch("/api/usage/record", { method: "POST" });
-          if (usageRes.ok) {
-            const usageData = await usageRes.json();
-            if (onQuotaUpdate) onQuotaUpdate(usageData.remaining);
-          }
-        } catch(e) {
-          console.error("Failed to record usage", e);
-        }
-      }
-
-      if (arrivals.length > 0) onRefreshArchive();
-
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
     } catch (err: any) {
-      if (err.name === 'AbortError' || err.message === 'AbortError') {
-        addStep("探索已按用户指令中止。");
-        updateLastStep('error');
-      } else {
-        console.error(err);
-        setError(err.message || "探索过程中发生未知错误。");
-      }
-    } finally {
+      setError(err.message || "探索过程中发生未知错误。");
       setIsLoading(false);
-      abortControllerRef.current = null;
+      pollStatusRef.current = false;
     }
   };
 
@@ -477,37 +288,39 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
       {!isCollapsed && (
         <div className={`flex-1 flex flex-col lg:flex-row items-stretch overflow-hidden min-h-0 bg-white`}>
           {/* Main Controls & Results Column (Responsive Width - Now on Left) */}
-          <div className={`${showLogs ? "w-full lg:w-[360px] xl:w-[420px] lg:border-r border-slate-100 bg-slate-50/20 shadow-[-10px_0_20px_-10px_rgba(0,0,0,0.05)_inset]" : "w-full max-w-[440px] mx-auto"} flex flex-col flex-1 lg:flex-none lg:shrink-0 overflow-hidden min-h-[40%] lg:min-h-0 max-h-full`}>
+          <div className={`${showLogs ? "w-full lg:w-[480px] xl:w-[560px] lg:border-r border-slate-100 bg-slate-50/20 shadow-[-10px_0_20px_-10px_rgba(0,0,0,0.05)_inset]" : "w-full max-w-[440px] mx-auto"} flex flex-col flex-1 lg:flex-none lg:shrink-0 overflow-hidden min-h-0 max-h-full`}>
               <div className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5 sm:px-6 sm:pb-6 space-y-4">
                 {!showResults && !error && !hideInputs && (
                   <div className="space-y-3 pt-0 pb-6 border-b border-slate-100 mb-2">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1 font-mono">起点人物</label>
-                      <div className="relative group">
-                        <input 
-                          type="text"
-                          value={source}
-                          onChange={(e) => setSource(e.target.value)}
-                          placeholder="苏格拉底"
-                          disabled={isLoading}
-                          className="w-full pl-9 pr-3 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-[13px] focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 focus:bg-white outline-none transition-all font-bold placeholder:text-slate-300 shadow-sm disabled:opacity-50"
-                        />
-                        <User className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1 font-mono">起点人物</label>
+                        <div className="relative group">
+                          <input 
+                            type="text"
+                            value={source}
+                            onChange={(e) => setSource(e.target.value)}
+                            placeholder="苏格拉底"
+                            disabled={isLoading}
+                            className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-[12px] focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 focus:bg-white outline-none transition-all font-bold placeholder:text-slate-300 shadow-sm disabled:opacity-50"
+                          />
+                          <User className="absolute left-3 top-2 w-3.5 h-3.5 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
+                        </div>
                       </div>
-                    </div>
-                    
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1 font-mono">终点人物 (拟收录)</label>
-                      <div className="relative group">
-                        <input 
-                          type="text"
-                          value={target}
-                          onChange={(e) => setTarget(e.target.value)}
-                          placeholder="成吉思汗"
-                          disabled={isLoading}
-                          className="w-full pl-9 pr-3 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-[13px] focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 focus:bg-white outline-none transition-all font-bold placeholder:text-slate-300 shadow-sm disabled:opacity-50"
-                        />
-                        <User className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
+                      
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1 font-mono">终点人物</label>
+                        <div className="relative group">
+                          <input 
+                            type="text"
+                            value={target}
+                            onChange={(e) => setTarget(e.target.value)}
+                            placeholder="成吉思汗"
+                            disabled={isLoading}
+                            className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-[12px] focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 focus:bg-white outline-none transition-all font-bold placeholder:text-slate-300 shadow-sm disabled:opacity-50"
+                          />
+                          <User className="absolute left-3 top-2 w-3.5 h-3.5 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
+                        </div>
                       </div>
                     </div>
 
@@ -516,18 +329,18 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                         <button 
                           onClick={handlePickRandomPair}
                           disabled={isPickingRandom || isLoading}
-                          className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 disabled:opacity-50 rounded-xl font-bold text-[13px] transition-all flex items-center justify-center gap-1.5 active:scale-[0.98]"
+                          className="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 disabled:opacity-50 rounded-xl font-bold text-[12px] transition-all flex items-center justify-center gap-1.5 active:scale-[0.98]"
                         >
-                          <RefreshCw className={`w-4 h-4 ${isPickingRandom ? 'animate-spin' : ''}`} />
+                          <RefreshCw className={`w-3.5 h-3.5 ${isPickingRandom ? 'animate-spin' : ''}`} />
                           <span>随机更换</span>
                         </button>
                       )}
                       <button 
                         onClick={() => handleSearch()}
                         disabled={isLoading || !source.trim() || !target.trim()}
-                        className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-[13px] font-bold rounded-xl transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-1.5 active:scale-[0.98] group"
+                        className="flex-1 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-[12px] font-bold rounded-xl transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-1.5 active:scale-[0.98] group"
                       >
-                        {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4 group-hover:animate-pulse" />}
+                        {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 group-hover:animate-pulse" />}
                         <span>{isLoading ? "正在编织..." : "开启探索"}</span>
                       </button>
                     </div>
@@ -536,7 +349,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   
               {isLoading && (
                 <div className="flex flex-col animate-in fade-in duration-500">
-                  <div className="flex items-center gap-3 p-4 bg-indigo-50/50 rounded-2xl border border-indigo-100 border-dashed mb-4 relative overflow-hidden shrink-0">
+                  <div className="flex items-center gap-3 p-2.5 bg-indigo-50/50 rounded-xl border border-indigo-100 border-dashed mb-4 relative overflow-hidden shrink-0">
                       <motion.div 
                         className="absolute inset-0 bg-indigo-100/30"
                         animate={{ opacity: [0.2, 0.4, 0.2] }}
@@ -544,7 +357,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                       />
                       <Loader2 className="w-5 h-5 text-indigo-600 animate-spin relative z-10 shrink-0" />
                       <div className="flex-1 relative z-10 min-w-0">
-                        <div className="text-[11px] font-black text-indigo-600 tracking-tight mb-1 truncate">AI 正在编织历史脉络...</div>
+                        <div className="text-[10px] font-black text-indigo-600 tracking-tight mb-0.5 truncate">AI 正在编织历史脉络...</div>
                         <div className="h-1.5 w-full bg-indigo-100/50 rounded-full overflow-hidden">
                           <motion.div 
                              className="h-full bg-indigo-500"
@@ -557,11 +370,9 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                       
                       <button 
                         onClick={handleStop}
-                        className="relative z-10 w-9 h-9 rounded-xl bg-white shadow-sm border border-red-100 text-red-500 hover:bg-red-50 transition-all flex items-center justify-center shrink-0 active:scale-90"
+                        className="relative z-10 w-5 h-5 bg-red-500 hover:bg-red-600 rounded-[4px] transition-all shrink-0 active:scale-90"
                         title="停止探索"
-                      >
-                        <StopCircle className="w-5 h-5" />
-                      </button>
+                      />
                   </div>
                   <div className="flex flex-col space-y-2.5 pl-2 border-l-2 border-slate-100 mb-2">
                     {searchSteps.map((step, i) => (
@@ -649,10 +460,10 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                             // Find person in storage or just select by name logic could go here
                             onSelectPerson(0); // Placeholder
                           }}
-                          className="flex items-center gap-3 bg-white p-3 rounded-2xl border border-slate-200 shadow-sm hover:border-indigo-400 hover:shadow-lg hover:shadow-indigo-500/10 transition-all group cursor-pointer"
+                          className="flex items-center gap-2.5 bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-sm hover:border-indigo-400 hover:shadow-lg hover:shadow-indigo-500/10 transition-all group cursor-pointer"
                         >
-                          <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 border border-slate-100 ${newArrivals.includes(item.name) ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-slate-50 text-indigo-600'}`}>
-                             <User className="w-5 h-5" />
+                          <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 border border-slate-100 ${newArrivals.includes(item.name) ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-slate-50 text-indigo-600'}`}>
+                             <User className="w-4 h-4" />
                           </div>
                           <div className="min-w-0 flex-1">
                              <div className="flex items-center justify-between gap-2 overflow-hidden">
@@ -661,7 +472,6 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                                  <span className="text-[8px] font-black bg-emerald-500 text-white px-1.5 py-0.5 rounded shadow-sm shrink-0">NEW</span>
                                )}
                              </div>
-                             <div className="text-[10px] text-slate-400 font-medium whitespace-normal">历史跨度关联人物</div>
                           </div>
                         </motion.div>
                       </div>
@@ -738,11 +548,13 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
 
   if (isInline) {
     const isShowingData = isLoading || showResults || error;
-    const finalWidth = isShowingData && showLogs 
-      ? 'w-full lg:w-[1000px] xl:w-[1100px]' 
-      : isShowingData 
-        ? 'w-full sm:w-[440px]' 
-        : 'w-full sm:w-[380px]';
+    const finalWidth = isPane 
+      ? 'w-full' 
+      : isShowingData && showLogs 
+        ? 'w-full lg:w-[1200px] xl:w-[1300px]' 
+        : isShowingData 
+          ? 'w-full sm:w-[440px]' 
+          : 'w-full sm:w-[380px]';
 
     return (
       <div className={`flex flex-col min-h-0 overflow-hidden h-full max-w-full transition-all duration-300 ${isCollapsed ? 'w-auto' : finalWidth}`}>

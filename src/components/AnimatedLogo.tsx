@@ -11,7 +11,7 @@ export default function AnimatedLogo() {
         // but for now simple spring transitions on tap are good.
       }}
     >
-      <svg viewBox="0 0 100 100" className="w-12 h-12 md:w-14 md:h-14">
+      <svg viewBox="0 0 100 100" className="w-8 h-8 md:w-9 md:h-9">
         {/* Glow Filter */}
         <defs>
           <filter id="logo-glow" x="-20%" y="-20%" width="140%" height="140%">

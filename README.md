@@ -30,6 +30,10 @@ View your app in AI Studio: https://ai.studio/apps/309319c0-ccbb-434d-afc5-4fc77
     *   进入 `R2` -> `Create bucket`。
     *   名称建议填：`historical-portraits`。
 
+3.  **创建 KV 命名空间** (用于跨端同步时空探索状态)：
+    *   进入 `Workers & Pages` -> `KV` -> `Create a namespace`。
+    *   名称建议填：`explore_state_kv`。
+
 ### 2. 在 Cloudflare Pages 中进行 Git 关联
 
 1.  将代码推送到你的 GitHub 仓库。
@@ -52,6 +56,10 @@ View your app in AI Studio: https://ai.studio/apps/309319c0-ccbb-434d-afc5-4fc77
 2.  **R2 bucket bindings**：
     *   Variable name: `IMAGES`
     *   R2 bucket: 选择你刚才创建的 `historical-portraits`。
+
+3.  **KV namespace bindings**：
+    *   Variable name: `EXPLORE_KV`
+    *   KV namespace: 选择您刚才创建的 `explore_state_kv`。
 
 在 **Settings -> Environment variables** 处添加：
 *   `ADMIN_PASSWORD`: 管理员后台密码（选填，默认 admin）。
