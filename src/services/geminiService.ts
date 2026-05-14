@@ -61,12 +61,14 @@ export const ARCHIVE_SCHEMA: Schema = {
   required: ["keyword", "lifespan", "birthplace", "biography", "achievements", "category", "latitude", "longitude", "relationships"]
 };
 
-export const PATH_PROMPT = (source: string, target: string, sampleNames?: string) => `找出 "${source}" 和 "${target}" 之间的最短历史联系路径。要求：
-1. 最短路径：中间人物0-5个。若两人有直接历史交集，则必须直接相连(0个中间人)。
-2. 优先通过世界知名历史人物${sampleNames ? `(如: ${sampleNames})` : ""}联系。
-3. 使用公认的标准中文全名。
-4. relationshipToPrevious：20字以内极简概括两人真实历史交集。
-请极速思考并直接返回合法的 JSON 对象。`;
+export const PATH_PROMPT = (source: string, target: string, sampleNames?: string) => `找出 "${source}" 和 "${target}" 之间的最短历史&时空联系路径。
+要求：
+- 最短路径：中间桥接人物0-5个。若两人有直接历史交集，则必须直接相连(0个中间人)。
+- 优先度：优先通过世界知名历史人物(${sampleNames || "无"})联系。
+- 命名规范：使用公认的标准中文全名。
+- relationshipToPrevious：20字以内极简概括两人真实历史交集。
+
+必须直接返回合法的 JSON 对象，不要有多余的提示说明，要求极速响应。`;
 
 export const PATH_SCHEMA: Schema = {
   type: Type.OBJECT,

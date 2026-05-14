@@ -3,6 +3,7 @@ import { DatabaseAdapter } from "./db.ts";
 export interface ExploreState {
   status: "idle" | "running" | "success" | "error";
   lastHeartbeat?: number;
+  pulse?: number;
   source: string;
   target: string;
   logs: { timestamp: string; msg: string; type: string; data?: any }[];
@@ -34,6 +35,7 @@ export async function runExplorationTask(
     status: "running",
     source,
     target,
+    pulse: 0,
     logs: [],
     steps: [],
     path: null,
@@ -43,6 +45,7 @@ export async function runExplorationTask(
 
   const saveState = async (reason?: string) => {
     state.lastHeartbeat = Date.now();
+    state.pulse = (state.pulse || 0) + 1;
     if (onPulse) {
       await onPulse(reason || "heartbeat");
     }

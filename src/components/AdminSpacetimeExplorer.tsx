@@ -670,7 +670,17 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                         animate={{ opacity: [0.2, 0.4, 0.2] }}
                         transition={{ duration: 2, repeat: Infinity }}
                       />
-                      <Loader2 className="w-5 h-5 text-indigo-600 animate-spin relative z-10 shrink-0" />
+                      <div className="relative z-10 shrink-0">
+                        <Loader2 className="w-5 h-5 text-indigo-600 animate-spin" />
+                        {detailedLogs.length > 0 && (
+                          <motion.div 
+                            key={detailedLogs.length}
+                            initial={{ scale: 1.5, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            className="absolute -top-1 -right-1 w-2 h-2 bg-emerald-500 rounded-full border-2 border-white shadow-[0_0_5px_rgba(16,185,129,0.5)]"
+                          />
+                        )}
+                      </div>
                       <div className="flex-1 relative z-10 min-w-0">
                         <div className="text-[10px] font-black text-indigo-600 tracking-tight mb-0.5 truncate">{isAdmin ? "AI 正在编织历史脉络..." : "正在检索本地架构..."}</div>
                         <div className="h-1.5 w-full bg-indigo-100/50 rounded-full overflow-hidden">

@@ -113,12 +113,12 @@ const getAdminPassword = (c: any) => {
 export async function callAI(c: any, db: DatabaseAdapter, prompt: string, responseFormat: "text" | "json" = "text", schema?: any, onStreamPulse?: () => Promise<void>): Promise<string> {
   const provider = await getConfig(db, "active_model_provider", "gemini");
   
-  // Set up an interval to send heartbeats to the frontend every 15 seconds to prevent Cloudflare from dropping the connection
+  // Set up an interval to send heartbeats to the frontend every 8 seconds to prevent Cloudflare from dropping the connection
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   if (onStreamPulse) {
       heartbeatTimer = setInterval(() => {
           onStreamPulse().catch(console.error);
-      }, 15000);
+      }, 8000);
   }
 
   const cleanup = () => {
@@ -881,7 +881,7 @@ app.get("/explore/status", async (c) => {
       const diff = data.lastHeartbeat ? (Date.now() - data.lastHeartbeat) : Infinity;
       if (diff > 300000) { // 300 seconds
           data.status = 'error';
-          data.error = '探索任务可能已意外中断或超时。系统检测到心跳丢失，请尝试重置后重新开始。';
+          data.error = '探索任务可能已意外中断或超时。系统检测到心跳丢失，这通常是因为 Cloudflare Workers 的 30s 限制或网络波动。请尝试重置后重新开始。';
           const newState = JSON.stringify(data);
           if (c.env && c.env.EXPLORE_KV) {
               await c.env.EXPLORE_KV.put("explore_state", newState);
