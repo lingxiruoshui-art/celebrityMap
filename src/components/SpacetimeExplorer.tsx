@@ -46,15 +46,25 @@ const PendingTimerMessage = ({ msg, startTime }: { msg: string, startTime?: numb
     }, 1000);
     return () => clearInterval(interval);
   }, [startTime]);
+
+  const getStatusTip = () => {
+    if (seconds < 10) return "时空扰动稳定中...";
+    if (seconds < 25) return "AI 专家正在翻阅历史长河，寻找跨维度的交点...";
+    if (seconds < 45) return "正在进行逻辑考古以建立链条，这通常需要一些深度思考...";
+    if (seconds < 70) return "思维火花碰撞中！AI 正在试图绕过时间悖论，请稍候...";
+    if (seconds < 100) return "档案数据博大精深，编织链路时 AI 正在为您精选最关键路径...";
+    return "跨时空链路极度复杂，正在进行最后的档案拼合，即将揭晓...";
+  };
   
   return (
     <span className="flex flex-col">
-      <span>
+      <span className="flex items-center gap-2">
         {msg}
-        <span className="opacity-70 ml-1 font-mono">({seconds}s)</span>
+        <span className="opacity-70 ml-1 font-mono text-indigo-400">({seconds}s)</span>
       </span>
-      {seconds > 10 && <span className="mt-1 opacity-70 font-normal">AI 正在深度考古，请稍候...</span>}
-      {seconds > 60 && <span className="mt-1 opacity-70 font-normal">时空连接建立中，即将揭晓。</span>}
+      <span className="mt-1 text-[10px] opacity-60 font-normal italic animate-pulse text-indigo-500/70">
+        {getStatusTip()}
+      </span>
     </span>
   );
 };

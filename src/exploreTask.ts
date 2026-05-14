@@ -216,7 +216,7 @@ export async function runExplorationTask(
       "success",
       `识别成功: ${normalizedSource} 与 ${normalizedTarget}`,
     );
-    addStep("正在扫描馆藏路径...");
+    addStep("正在同步时空档案索引...");
     await saveState();
 
     // Optimize: Load metadata separately to avoid heavy joins
@@ -229,6 +229,10 @@ export async function runExplorationTask(
     }
 
     const allRels = await db.prepare("SELECT person1_id, person2_id, relationship_type as type FROM relationships").all() as any[];
+    
+    updateLastStep("success", `已同步 ${peopleData.length} 位人物与 ${allRels.length} 条时空连接`);
+    addStep("正在通过现有索引进行 BFS 路径拓扑扫描...");
+    await saveState();
     
     const adj = new Map<number, { targetId: number, type: string }[]>();
     for (const r of allRels) {
@@ -276,18 +280,22 @@ export async function runExplorationTask(
     }
 
     updateLastStep("success", "现有馆藏中无直接路径，启动 AI 逻辑推理...");
-    addStep("AI 专家正在深度检索时空档案...");
+    addStep("AI 专家正在解析时空引力场...");
     await saveState();
 
+    const bridgeStartTime = Date.now();
     const bridgeText = await callAIProxy(
       PATH_PROMPT(normalizedSource, normalizedTarget, sampleNames),
       "json",
       PATH_SCHEMA,
-      180000
+      undefined, // Default timeout or use specific
+      false
     );
-    addLog("已获取 AI 连通路径", "info", { result: bridgeText });
-    updateLastStep("success", "AI 已成功规划时空路径");
-    addStep("正在验证并激活路径上的关键节点...");
+    
+    const bridgeDuration = Math.round((Date.now() - bridgeStartTime) / 1000);
+    addLog(`已获取 AI 连通路径 (耗时: ${bridgeDuration}s)`, "info", { result: bridgeText });
+    updateLastStep("success", `AI 已打通时空链路 (耗时 ${bridgeDuration}s)`);
+    addStep("正在反向验证并加固路径节点...");
     await saveState();
     let bridgeData: any = { chain: [] };
     try {
