@@ -473,9 +473,9 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
       <div className="bg-white lg:rounded-[2rem] rounded-2xl shadow-2xl shadow-slate-900/20 w-full max-w-7xl overflow-hidden flex flex-col md:flex-row h-[90vh] md:h-[88vh]">
         {/* Sidebar */}
         <div className="w-full md:w-48 shrink-0 border-b md:border-b-0 md:border-r border-slate-100 flex flex-col bg-slate-50/50">
-          <div className="p-4 md:p-5 h-14 md:h-16 flex items-center justify-between border-b border-slate-100 bg-white shrink-0">
+          <div className="p-4 md:p-5 h-[70px] md:h-20 flex items-center justify-between border-b border-slate-100 bg-white shrink-0">
              <div className="flex items-center gap-3">
-               <ShieldCheck className="w-5 h-5 text-indigo-600" />
+               <ShieldCheck className="w-6 h-6 text-indigo-600" />
                <h2 className="font-bold text-slate-800 tracking-tight text-base md:text-lg">后台管理</h2>
              </div>
              <button onClick={onClose} className="md:hidden p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-400">
@@ -530,11 +530,11 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
             )}
           </AnimatePresence>
 
-          <div className="p-5 h-16 border-b border-slate-100 flex items-center justify-between bg-white shrink-0">
+          <div className="p-5 h-20 border-b border-slate-100 flex items-center justify-between bg-white shrink-0">
             <div className="flex items-center gap-3">
-              {activeTab === 'archive_plus' && <PlusCircle className="w-5 h-5 text-indigo-600" />}
-              {activeTab === 'archive' && <Library className="w-5 h-5 text-indigo-600" />}
-              {activeTab === 'config' && <SlidersHorizontal className="w-5 h-5 text-indigo-600" />}
+              {activeTab === 'archive_plus' && <PlusCircle className="w-6 h-6 text-indigo-600" />}
+              {activeTab === 'archive' && <Library className="w-6 h-6 text-indigo-600" />}
+              {activeTab === 'config' && <SlidersHorizontal className="w-6 h-6 text-indigo-600" />}
               <h3 className="font-bold text-lg text-slate-800 tracking-tight">
                 {activeTab === 'archive_plus' ? '时空入库' : activeTab === 'archive' ? '馆藏管理' : '系统配置'}
               </h3>
