@@ -190,10 +190,10 @@ export default function App() {
       <div className="absolute inset-0 z-0 bg-gradient-to-br from-slate-50/80 via-slate-100/90 to-white/80 pointer-events-none" />
 
       {/* Header: Navigation & System Status */}
-      <header className="h-10 sm:h-[50px] shrink-0 border-b border-slate-200/50 bg-white/60 backdrop-blur-xl z-[70] shadow-sm transition-all duration-500">
+      <header className="h-[50px] sm:h-16 shrink-0 border-b border-slate-200/50 bg-white/60 backdrop-blur-xl z-[70] shadow-sm transition-all duration-500">
         <div className="max-w-[1800px] w-full mx-auto h-full px-3 sm:px-6 flex items-center justify-between">
           <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-shrink-0">
-            <div className="scale-95 sm:scale-125 origin-left flex shrink-0">
+            <div className="scale-110 sm:scale-150 origin-left flex shrink-0">
               <AnimatedLogo />
             </div>
             <div className="flex flex-col w-[76px] sm:w-[92px]">
@@ -316,7 +316,7 @@ export default function App() {
                 <div className="flex items-start gap-6">
                   <button
                     onClick={() => setZoomedImage(selectedPerson.image_url)}
-                    className="w-32 h-44 bg-gradient-to-br from-slate-100 to-slate-200 rounded-2xl border border-slate-200/50 flex-shrink-0 relative overflow-hidden shadow-inner flex items-center justify-center group cursor-zoom-in"
+                    className="w-32 h-44 bg-gradient-to-br from-slate-100 to-slate-200 rounded-2xl border border-slate-200/50 flex-shrink-0 relative overflow-hidden shadow-inner flex items-center justify-center group cursor-default"
                   >
                     {selectedPerson.image_url ? (
                       <img

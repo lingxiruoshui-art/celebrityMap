@@ -119,76 +119,43 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
     if (!apiKey) throw new Error("缺少 Aliyun API Key");
     if (!modelId) throw new Error("缺少 Aliyun 模型 ID");
     
-    const systemContent = `你是一个历史学和百科知识专家。当被要求返回 JSON 时，请严格遵守指定的 schema，且只返回 JSON 原始内容...`;
+    const systemContent = `你是一个历史学和百科知识专家。当被要求返回 JSON 时，请严格遵守指定的 schema，且只返回 JSON 原始内容。不要包含任何 Markdown 格式。`;
 
     const startTime = Date.now();
-    const res = await fetch("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: modelId,
-        messages: [
-          { role: "system", content: systemContent },
-          { role: "user", content: prompt }
-        ],
-        ...(responseFormat === "json" ? { response_format: { type: "json_object" } } : {})
-      })
-    });
-    
-    if (!res.ok) {
-      console.error(`Aliyun API error: ${res.status} ${res.statusText}`);
-      throw new Error(`Aliyun API error`);
-    }
-    const json = await res.json() as any;
-    const duration = Date.now() - startTime;
-    console.log(`Aliyun call took ${duration}ms`);
-    let content = json.choices[0].message.content || "";
-    content = content.replace(/<think>[\s\S]*?<\/think>/ig, '').trim();
-    if (responseFormat === "json") {
-       const jsonMatch = content.match(/```json\\n([\s\S]*?)\\n```/i);
-       if (jsonMatch) content = jsonMatch[1].trim();
-       else {
-         const firstBrace = content.indexOf('{');
-         const firstBracket = content.indexOf('[');
-         let start = -1, end = -1;
-         if (firstBrace !== -1 && firstBracket !== -1) {
-             start = Math.min(firstBrace, firstBracket);
-             end = start === firstBrace ? content.lastIndexOf('}') : content.lastIndexOf(']');
-         } else if (firstBrace !== -1) {
-             start = firstBrace; end = content.lastIndexOf('}');
-         } else if (firstBracket !== -1) {
-             start = firstBracket; end = content.lastIndexOf(']');
-         }
-         if (start !== -1 && end !== -1) content = content.substring(start, end + 1);
-       }
-    }
-    return content;
-  } else {
-    const apiKey = (await getConfig(db, "gemini_api_key")) || (c.env && c.env.GEMINI_API_KEY) || (typeof process !== "undefined" && process.env.GEMINI_API_KEY);
-    const modelId = (await getConfig(db, "gemini_model_id")) || (c.env && c.env.GEMINI_MODEL_ID) || (typeof process !== "undefined" && process.env.GEMINI_MODEL_ID) || "gemini-1.5-flash";
-    if (!apiKey) throw new Error("缺少 Gemini API Key");
-    if (!modelId) throw new Error("缺少 Gemini 模型 ID");
-    
-    const ai = new GoogleGenAI({ apiKey });
-    const startTime = Date.now();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120000); // 120s timeout
+
     try {
-      const result = await ai.models.generateContent({
-        model: modelId,
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        config: responseFormat === "json" ? { 
-          responseMimeType: "application/json",
-          responseSchema: schema 
-        } : undefined
+      const res = await fetch("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          "Content-Type": "application/json"
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: modelId,
+          messages: [
+            { role: "system", content: systemContent },
+            { role: "user", content: prompt }
+          ],
+          ...(responseFormat === "json" ? { response_format: { type: "json_object" } } : {})
+        })
       });
+      
+      clearTimeout(timeoutId);
+      
+      if (!res.ok) {
+        console.error(`Aliyun API error: ${res.status} ${res.statusText}`);
+        throw new Error(`Aliyun API error`);
+      }
+      const json = await res.json() as any;
       const duration = Date.now() - startTime;
-      console.log(`Gemini call took ${duration}ms`);
-      let content = result.text || "";
+      console.log(`Aliyun call took ${duration}ms`);
+      let content = json.choices[0].message.content || "";
       content = content.replace(/<think>[\s\S]*?<\/think>/ig, '').trim();
       if (responseFormat === "json") {
-         const jsonMatch = content.match(/```json\\n([\s\S]*?)\\n```/i);
+         const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/i);
          if (jsonMatch) content = jsonMatch[1].trim();
          else {
            const firstBrace = content.indexOf('{');
@@ -206,9 +173,62 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
          }
       }
       return content;
-    } catch (err) {
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      if (err.name === 'AbortError') throw new Error("AI 调用超时 (120s)");
+      throw err;
+    }
+  } else {
+    const apiKey = (await getConfig(db, "gemini_api_key")) || (c.env && c.env.GEMINI_API_KEY) || (typeof process !== "undefined" && process.env.GEMINI_API_KEY);
+    const modelId = (await getConfig(db, "gemini_model_id")) || (c.env && c.env.GEMINI_MODEL_ID) || (typeof process !== "undefined" && process.env.GEMINI_MODEL_ID) || "gemini-1.5-flash";
+    if (!apiKey) throw new Error("缺少 Gemini API Key");
+    if (!modelId) throw new Error("缺少 Gemini 模型 ID");
+    
+    const ai = new GoogleGenAI({ apiKey });
+    const startTime = Date.now();
+    try {
+      const generatePromise = ai.models.generateContent({
+        model: modelId,
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        config: responseFormat === "json" ? { 
+          responseMimeType: "application/json",
+          responseSchema: schema 
+        } : undefined
+      });
+
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("Timeout")), 120000);
+      });
+
+      const result = await Promise.race([generatePromise, timeoutPromise]) as any;
+
+      const duration = Date.now() - startTime;
+      console.log(`Gemini call took ${duration}ms`);
+      let content = result.response?.text() || result.text || "";
+      content = content.replace(/<think>[\s\S]*?<\/think>/ig, '').trim();
+      if (responseFormat === "json") {
+         const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/i);
+         if (jsonMatch) content = jsonMatch[1].trim();
+         else {
+           const firstBrace = content.indexOf('{');
+           const firstBracket = content.indexOf('[');
+           let start = -1, end = -1;
+           if (firstBrace !== -1 && firstBracket !== -1) {
+               start = Math.min(firstBrace, firstBracket);
+               end = start === firstBrace ? content.lastIndexOf('}') : content.lastIndexOf(']');
+           } else if (firstBrace !== -1) {
+               start = firstBrace; end = content.lastIndexOf('}');
+           } else if (firstBracket !== -1) {
+               start = firstBracket; end = content.lastIndexOf(']');
+           }
+           if (start !== -1 && end !== -1) content = content.substring(start, end + 1);
+         }
+      }
+      return content;
+    } catch (err: any) {
       const duration = Date.now() - startTime;
       console.error(`Gemini call failed after ${duration}ms:`, err);
+      if (err.message === "Timeout") throw new Error("AI 调用超时 (120s)");
       throw err;
     }
   }
@@ -839,7 +859,7 @@ app.get("/explore/status", async (c) => {
   
   if (data && data.status === 'running') {
       const diff = data.lastHeartbeat ? (Date.now() - data.lastHeartbeat) : Infinity;
-      if (diff > 120000) { // 120 seconds
+      if (diff > 60000) { // 60 seconds
           data.status = 'error';
           data.error = '探索任务可能已意外中断或超时。系统检测到心跳丢失，请尝试重置后重新开始。';
           const newState = JSON.stringify(data);
@@ -963,7 +983,7 @@ app.post("/explore/start", async (c) => {
   }
   if (currentStr !== "null") {
       const current = JSON.parse(currentStr);
-      const isStale = current.status === 'running' && (!current.lastHeartbeat || (Date.now() - current.lastHeartbeat > 120000)); // 120 seconds, and consider missing heartbeat stale
+      const isStale = current.status === 'running' && (!current.lastHeartbeat || (Date.now() - current.lastHeartbeat > 60000)); // 60 seconds
       
       if (current.status === 'running' && !isStale) {
           return c.json({ error: "探索正在进行中，请稍候。若任务已长久挂起，请重置状态后重试。" }, 400);
@@ -993,7 +1013,15 @@ app.post("/explore/start", async (c) => {
       await setConfig(db, "explore_state", stateStr);
   }
 
-  const task = runExplorationTask(db, source, target, callAI, getConfig, setConfig, addRelationship, ARCHIVE_PROMPT, ARCHIVE_SCHEMA, PATH_PROMPT, PATH_SCHEMA, VALIDATION_PROMPT, VALIDATION_SCHEMA, c, !!isAdmin);
+  const task = runExplorationTask(
+      db, source, target, callAI, getConfig, setConfig, addRelationship, 
+      ARCHIVE_PROMPT, ARCHIVE_SCHEMA, PATH_PROMPT, PATH_SCHEMA, VALIDATION_PROMPT, VALIDATION_SCHEMA, 
+      c, !!isAdmin,
+      async (msg) => {
+          // Log pulse for debugging in background task
+          if (msg !== 'heartbeat') console.log(`[Explore Pulse] ${msg}`);
+      }
+  );
   
   // Safe check for waitUntil to prevent "no executioncontext" error on non-Worker platforms
   const hasWaitUntil = (() => {

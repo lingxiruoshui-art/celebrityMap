@@ -771,7 +771,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                             // Find person in storage or just select by name logic could go here
                             onSelectPerson(0); // Placeholder
                           }}
-                          className="flex items-center gap-2.5 bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-sm hover:border-indigo-400 hover:shadow-lg hover:shadow-indigo-500/10 transition-all group cursor-pointer"
+                          className="flex items-center gap-2.5 bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-sm hover:border-indigo-400 hover:shadow-lg hover:shadow-indigo-500/10 transition-all group"
                         >
                           <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 border border-slate-100 ${newArrivals.includes(item.name) ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-slate-50 text-indigo-600'}`}>
                              <User className="w-4 h-4" />
@@ -870,7 +870,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     return (
       <div className={`flex flex-col min-h-0 overflow-hidden h-full max-w-full transition-all duration-300 ${isCollapsed ? 'w-auto' : finalWidth}`}>
         {!hideHeader && (
-          <div className="px-3 py-2 bg-slate-50/50 border-b border-slate-100 flex items-center justify-between cursor-pointer hover:bg-slate-100 transition-colors relative h-9 group" onClick={() => setIsCollapsed(!isCollapsed)}>
+          <div className="px-3 py-2 bg-slate-50/50 border-b border-slate-100 flex items-center justify-between hover:bg-slate-100 transition-colors relative h-9 group" onClick={() => setIsCollapsed(!isCollapsed)}>
             {/* Collapsed mini progress bar */}
             {isCollapsed && isLoading && (
               <motion.div 

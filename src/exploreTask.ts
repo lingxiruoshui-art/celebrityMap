@@ -28,6 +28,7 @@ export async function runExplorationTask(
   VALIDATION_SCHEMA: any,
   c: any,
   isAdmin: boolean,
+  onPulse?: (msg: string) => Promise<void>
 ) {
   let state: ExploreState = {
     status: "running",
@@ -40,8 +41,11 @@ export async function runExplorationTask(
     newArrivals: [],
   };
 
-  const saveState = async () => {
+  const saveState = async (reason?: string) => {
     state.lastHeartbeat = Date.now();
+    if (onPulse) {
+      await onPulse(reason || "heartbeat");
+    }
     // Check if aborted or reset by user
     let currentRaw = "null";
     if (c.env && c.env.EXPLORE_KV) {
@@ -139,7 +143,7 @@ export async function runExplorationTask(
       prompt: string,
       responseFormat: "text" | "json" = "json",
       schema?: any,
-      timeoutMs?: number,
+      timeoutMs: number = 120000,
       skipImmediateSave: boolean = false
     ) => {
       addLog(`AI 代理请求发送`, "ai-req", { prompt, responseFormat, schema });
@@ -179,7 +183,7 @@ export async function runExplorationTask(
         VALIDATION_PROMPT(name, sampleNames),
         "json",
         VALIDATION_SCHEMA,
-        60000
+        120000
       );
       let parsed: any = {};
       try {
@@ -349,7 +353,7 @@ export async function runExplorationTask(
           ARCHIVE_PROMPT(name, categories, sampleNames),
           "json",
           ARCHIVE_SCHEMA,
-          90000,
+          120000,
           true // skipImmediateSave
         );
         let personData: any = {};
