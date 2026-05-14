@@ -820,7 +820,11 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
             <div className="flex-1 flex flex-col min-w-0 bg-white overflow-hidden">
                <div className="px-5 py-4 bg-slate-50/50 border-b border-slate-100 flex items-center justify-between shrink-0">
                   <div className="flex items-center gap-3">
-                    <div className="w-2.5 h-2.5 bg-indigo-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(79,70,229,0.4)]"></div>
+                    <div className={`w-2.5 h-2.5 rounded-full ${
+                      isLoading ? 'bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]' :
+                      error ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]' :
+                      'bg-indigo-500 shadow-[0_0_8px_rgba(79,70,229,0.4)]'
+                    }`}></div>
                     <span className="text-[10px] font-black text-slate-700 uppercase tracking-[0.2em] font-mono">Trace Log</span>
                   </div>
                   <div className="flex items-center gap-2">

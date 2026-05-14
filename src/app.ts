@@ -879,9 +879,9 @@ app.get("/explore/status", async (c) => {
   
   if (data && data.status === 'running') {
       const diff = data.lastHeartbeat ? (Date.now() - data.lastHeartbeat) : Infinity;
-      if (diff > 300000) { // 300 seconds
+      if (diff > 25000) { // 25 seconds
           data.status = 'error';
-          data.error = '探索任务可能已意外中断或超时。系统检测到心跳丢失，这通常是因为 Cloudflare Workers 的 30s 限制或网络波动。请尝试重置后重新开始。';
+          data.error = '探索任务被系统在后台强制回收（心跳超时 >25s）。这通常是因为大语言模型响应太慢，导致触发了 Cloudflare Workers 的 CPU 限额或生命周期被强行终止。请尝试重置并重试。';
           const newState = JSON.stringify(data);
           if (c.env && c.env.EXPLORE_KV) {
               await c.env.EXPLORE_KV.put("explore_state", newState);

@@ -5,7 +5,7 @@ async function test() {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ 
-        prompt: VALIDATION_PROMPT("周杰伦", ""), 
+        prompt: VALIDATION_PROMPT(["周杰伦"], ""), 
         responseFormat: "json",
         schema: VALIDATION_SCHEMA
     }),
