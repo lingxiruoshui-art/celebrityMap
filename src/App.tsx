@@ -76,9 +76,17 @@ export default function App() {
       if (!res.ok) {
         const errorText = await res.text();
         console.error("Archive fetch error:", errorText);
-        setError("无法获取馆藏数据，请检查网络或刷新页面。");
+        setError(`无法获取馆藏数据: ${res.status} ${res.statusText}`);
         return;
       }
+      
+      const contentType = res.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+          const text = await res.text();
+          console.error("Expected JSON but got:", text.slice(0, 200));
+          throw new Error("服务器返回了非 JSON 格式的响应，可能是由于路由配置错误或服务器异常。");
+      }
+
       const json = await res.json();
       setData(json);
       if (json.people.length > 0 && selectedPersonId === null) {
@@ -87,8 +95,13 @@ export default function App() {
 
       // Also refresh quota
       const metaRes = await fetch("/api/metadata");
-      const metaJson = await metaRes.json();
-      setRemainingQuota(metaJson.remainingQuota);
+      if (metaRes.ok) {
+          const metaContentType = metaRes.headers.get("content-type");
+          if (metaContentType && metaContentType.includes("application/json")) {
+              const metaJson = await metaRes.json();
+              setRemainingQuota(metaJson.remainingQuota);
+          }
+      }
     } catch (err) {
       console.error(err);
       setError("网络连接错误，无法访问服务器。");
@@ -188,7 +201,7 @@ export default function App() {
       <div className="absolute inset-0 z-0 bg-gradient-to-br from-slate-50/80 via-slate-100/90 to-white/80 pointer-events-none" />
 
       {/* Header: Navigation & System Status */}
-      <header className="h-9 sm:h-11 shrink-0 border-b border-slate-200/50 bg-white/60 backdrop-blur-xl z-[70] shadow-sm transition-all duration-500">
+      <header className="h-8 sm:h-10 shrink-0 border-b border-slate-200/50 bg-white/60 backdrop-blur-xl z-[70] shadow-sm transition-all duration-500">
         <div className="max-w-[1800px] w-full mx-auto h-full px-3 sm:px-6 flex items-center justify-between">
           <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-shrink-0">
             <div className="scale-75 sm:scale-100 origin-left flex shrink-0">
@@ -207,18 +220,6 @@ export default function App() {
             <div className="hidden lg:flex text-sm px-4 py-1.5 rounded-xl border border-slate-200 text-indigo-600 font-medium bg-white/80 shadow-sm whitespace-nowrap items-center justify-center">
               共收录：{data.people.length} 位
             </div>
-            {remainingQuota !== null && (
-              <div 
-                className="group relative flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1 sm:py-1.5 bg-indigo-50 border border-indigo-100 rounded-lg sm:rounded-xl transition-colors"
-                title="所有访客共用的每日探索额度，北京时间0点自动重置"
-              >
-                <Zap className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-indigo-500 animate-pulse" />
-                <span className="text-[10px] sm:text-xs font-bold text-slate-600 flex items-center gap-1">
-                  <span className="hidden sm:group-hover:inline transition-all duration-300 whitespace-nowrap">今天剩余探索次数</span>
-                  <span className="text-indigo-600 font-black">{remainingQuota}</span>
-                </span>
-              </div>
-            )}
             <button
               onClick={() => setIsAdminOpen(true)}
               className="p-1.5 sm:p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors border border-transparent hover:border-indigo-100"
@@ -241,7 +242,7 @@ export default function App() {
 
       <main className="flex-1 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden max-w-[1800px] w-full mx-auto relative z-10 p-3 lg:p-6 pt-2 lg:pt-0 gap-3 lg:gap-6">
         {/* Left Column: List & Details */}
-        <aside className="w-full lg:w-[450px] xl:w-[500px] h-auto lg:h-auto border border-slate-200/60 bg-white/70 backdrop-blur-2xl flex flex-col overflow-visible lg:overflow-hidden rounded-2xl lg:rounded-3xl shadow-xl shadow-slate-200/50 flex-shrink-0">
+        <aside className="w-full lg:w-[450px] xl:w-[500px] h-auto lg:h-auto border border-slate-200/60 bg-white/70 backdrop-blur-2xl flex flex-col overflow-visible lg:overflow-hidden rounded-lg shadow-xl shadow-slate-200/50 flex-shrink-0">
           <div className="p-4 lg:p-6 pb-0">
             <div className="flex items-center gap-3 mb-4">
               <div className="relative flex-1 min-w-0 group">
@@ -569,13 +570,13 @@ export default function App() {
         </aside>
 
         {/* Right Column: Network Graph */}
-        <section className="flex-1 flex flex-col bg-white/70 backdrop-blur-2xl border border-slate-200/60 rounded-3xl shadow-xl shadow-slate-200/50 relative min-h-[60vh] lg:min-h-0 shrink-0 lg:shrink">
-          <div className="p-3 bg-white/40 border-b border-slate-200/50 backdrop-blur-md z-20 flex justify-between items-start px-4 sm:px-6 relative rounded-t-3xl">
+        <section className="flex-1 flex flex-col bg-white/70 backdrop-blur-2xl border border-slate-200/60 rounded-lg shadow-xl shadow-slate-200/50 relative min-h-[60vh] lg:min-h-0 shrink-0 lg:shrink shadow-inner">
+          <div className="p-3 bg-white/40 border-b border-slate-200/50 backdrop-blur-md z-20 flex justify-between items-start px-4 sm:px-6 relative rounded-t-lg">
             <h2 className="text-sm uppercase tracking-widest font-bold text-slate-400 flex items-center gap-2 mt-3">
               <Sparkles className="w-4 h-4" /> 全景图谱
             </h2>
             <div className="absolute left-4 right-4 sm:left-auto sm:right-6 top-2 z-30 flex justify-end origin-top-right">
-              <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/60 shadow-xl overflow-hidden flex flex-col max-h-[85dvh] sm:max-h-[calc(100dvh-120px)] w-full sm:w-max max-w-full">
+              <div className="bg-white/95 backdrop-blur-md rounded-lg border border-slate-200/60 shadow-xl overflow-hidden flex flex-col max-h-[85dvh] sm:max-h-[calc(100dvh-120px)] w-full sm:w-max max-w-full">
                 <SpacetimeExplorer
                   onClose={() => setIsSixDegreesOpen(false)}
                   onRefreshArchive={fetchArchive}
@@ -590,6 +591,7 @@ export default function App() {
                   remainingQuota={remainingQuota}
                   onQuotaUpdate={setRemainingQuota}
                   isAdmin={isAuthorized}
+                  peopleNames={data.people.map((p) => p.name)}
                 />
               </div>
             </div>

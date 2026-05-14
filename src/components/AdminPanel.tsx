@@ -2,7 +2,7 @@ import React, { useState, useEffect, FormEvent, useRef } from "react";
 import { X, RefreshCw, Trash2, Settings, Save, Sparkles, User, Search, Eye, UserPlus, ChevronLeft, ChevronRight, BookOpen, Zap, Info, Database, Library, Activity, PlusCircle, SlidersHorizontal, ShieldCheck } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Person } from "../types";
-import SpacetimeExplorer, { SpacetimeExplorerHandle } from "./SpacetimeExplorer";
+import AdminSpacetimeExplorer, { SpacetimeExplorerHandle } from "./AdminSpacetimeExplorer";
 import ConfirmDialog from "./ConfirmDialog";
 
 interface AdminPanelProps {
@@ -11,7 +11,7 @@ interface AdminPanelProps {
   remainingQuota: number | null;
 }
 
-type Tab = "archive" | "archive_plus" | "config";
+type Tab = "archive" | "archive_plus";
 type SortField = "created_at" | "views" | "name" | "category";
 type SortOrder = "asc" | "desc";
 
@@ -505,13 +505,6 @@ export default function AdminPanel({ onClose, onAuthorized, remainingQuota: init
               <Library className="w-3.5 h-3.5 shrink-0" />
               <span>馆藏管理</span>
             </button>
-            <button 
-              onClick={() => setActiveTab("config")}
-              className={`flex items-center gap-2 md:gap-2.5 px-3 py-2 md:px-3 text-xs md:text-[13px] font-bold transition-all whitespace-nowrap rounded-lg md:rounded-xl ${activeTab === 'config' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100' : 'text-slate-500 hover:bg-white hover:text-slate-800 border border-transparent hover:border-slate-200'}`}
-            >
-              <SlidersHorizontal className="w-3.5 h-3.5 shrink-0" />
-              <span>系统配置</span>
-            </button>
           </nav>
         </div>
 
@@ -543,20 +536,10 @@ export default function AdminPanel({ onClose, onAuthorized, remainingQuota: init
               {activeTab === 'archive' && <Library className="w-5 h-5 text-indigo-600" />}
               {activeTab === 'config' && <SlidersHorizontal className="w-5 h-5 text-indigo-600" />}
               <h3 className="font-bold text-lg text-slate-800 tracking-tight">
-                {activeTab === 'archive_plus' ? '时空入库' : activeTab === 'archive' ? '馆藏管理' : '系统配置'}
+                {activeTab === 'archive_plus' ? '时空入库' : '馆藏管理'}
               </h3>
             </div>
             <div className="flex items-center gap-2 sm:gap-4">
-              {activeTab === 'config' && (
-                <button
-                  onClick={saveAllConfig}
-                  disabled={savingKey !== null}
-                  title="保存所有设置"
-                  className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all disabled:opacity-50"
-                >
-                  {savingKey === 'all' ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-5 h-5" />}
-                </button>
-              )}
               <button onClick={onClose} className="hidden md:flex p-2.5 hover:bg-slate-100 rounded-full transition-colors text-slate-400 hover:text-slate-600">
                 <X className="w-5 h-5" />
               </button>
@@ -719,7 +702,7 @@ export default function AdminPanel({ onClose, onAuthorized, remainingQuota: init
             <div className="h-full flex flex-col animate-in fade-in duration-500 overflow-hidden pb-8">
               <div className="flex-1 flex flex-col bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden mt-1">
                 <div className="flex-1 min-h-0 bg-white rounded-2xl overflow-hidden">
-                  <SpacetimeExplorer 
+                  <AdminSpacetimeExplorer 
                     ref={explorerRef}
                     isInline={true}
                     isPane={true}
@@ -732,159 +715,8 @@ export default function AdminPanel({ onClose, onAuthorized, remainingQuota: init
                     onClose={() => {}}
                     onRefreshArchive={fetchArchive}
                     onSelectPerson={() => {}}
+                    peopleNames={people.map(p => p.name)}
                   />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {activeTab === "config" && (
-            <div className="max-w-5xl mx-auto space-y-4 animate-in fade-in duration-500 pb-8 uppercase tracking-tight">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Google Gemini Card */}
-                <div className={`bg-white p-4 rounded-2xl border-2 transition-all shadow-sm flex flex-col h-full ${config.active_model_provider === 'gemini' ? 'border-indigo-500 ring-4 ring-indigo-50/50' : 'border-slate-100 hover:border-slate-200'}`}>
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-2.5">
-                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${config.active_model_provider === 'gemini' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'bg-slate-100 text-slate-400'}`}>
-                        <Sparkles className="w-4.5 h-4.5" />
-                      </div>
-                      <div>
-                        <h4 className="text-[13px] font-bold text-slate-800">Google Gemini</h4>
-                        <p className="text-[9px] text-slate-400 font-black uppercase tracking-widest leading-none">多模态旗舰</p>
-                      </div>
-                    </div>
-                    {config.active_model_provider === 'gemini' ? (
-                      <div className="bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest flex items-center gap-1 border border-indigo-100">
-                        <div className="w-1 h-1 bg-indigo-600 rounded-full animate-pulse"></div>
-                        ACTIVE
-                      </div>
-                    ) : (
-                      <button 
-                         onClick={() => saveConfig("active_model_provider", "gemini")}
-                        disabled={savingKey !== null}
-                        className="text-[9px] font-black text-slate-400 hover:text-indigo-600 uppercase tracking-widest transition-all hover:bg-slate-50 px-2.5 py-0.5 rounded-full border border-slate-100 flex items-center gap-1.5"
-                      >
-                        {savingKey === 'active_model_provider' ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : null}
-                        激活
-                      </button>
-                    )}
-                  </div>
-                  
-                  <div className="space-y-3 flex-1 px-1">
-                    <div className="space-y-1">
-                      <label className="text-[9px] font-black uppercase tracking-widest text-slate-400">模型 ID</label>
-                      <input 
-                        type="text"
-                        placeholder="gemini-1.5-flash"
-                        value={config.gemini_model_id || ""}
-                        onChange={(e) => setConfig({ ...config, gemini_model_id: e.target.value })}
-                        onBlur={(e) => saveConfig("gemini_model_id", e.target.value)}
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[9px] font-black uppercase tracking-widest text-slate-400">API KEY</label>
-                      <input 
-                        type="password"
-                        placeholder="sk-..."
-                        value={config.gemini_api_key || ""}
-                        onChange={(e) => setConfig({ ...config, gemini_api_key: e.target.value })}
-                        onBlur={(e) => saveConfig("gemini_api_key", e.target.value)}
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500 outline-none transition-all placeholder:text-slate-300"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Aliyun DashScope Card */}
-                <div className={`bg-white p-4 rounded-2xl border-2 transition-all shadow-sm flex flex-col h-full ${config.active_model_provider === 'aliyun' ? 'border-orange-500 ring-4 ring-orange-50/50' : 'border-slate-100 hover:border-slate-200'}`}>
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-2.5">
-                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${config.active_model_provider === 'aliyun' ? 'bg-orange-500 text-white shadow-lg shadow-orange-100' : 'bg-slate-100 text-slate-400'}`}>
-                        <Zap className="w-4.5 h-4.5" />
-                      </div>
-                      <div>
-                        <h4 className="text-[13px] font-bold text-slate-800">阿里百炼 (QWEN)</h4>
-                        <p className="text-[9px] text-slate-400 font-black uppercase tracking-widest leading-none">通义大模型</p>
-                      </div>
-                    </div>
-                    {config.active_model_provider === 'aliyun' ? (
-                      <div className="bg-orange-50 text-orange-600 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest flex items-center gap-1 border border-orange-100">
-                        <div className="w-1 h-1 bg-orange-600 rounded-full animate-pulse"></div>
-                        ACTIVE
-                      </div>
-                    ) : (
-                      <button 
-                        onClick={() => saveConfig("active_model_provider", "aliyun")}
-                        disabled={savingKey !== null}
-                        className="text-[9px] font-black text-slate-400 hover:text-orange-500 uppercase tracking-widest transition-all hover:bg-slate-50 px-2.5 py-0.5 rounded-full border border-slate-100 flex items-center gap-1.5"
-                      >
-                        {savingKey === 'active_model_provider' ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : null}
-                        激活
-                      </button>
-                    )}
-                  </div>
-                  
-                  <div className="space-y-3 flex-1 px-1">
-                    <div className="space-y-1">
-                      <label className="text-[9px] font-black uppercase tracking-widest text-slate-400">模型 ID</label>
-                      <input 
-                        type="text"
-                        placeholder="qwen-max"
-                        value={config.aliyun_model_id || ""}
-                        onChange={(e) => setConfig({ ...config, aliyun_model_id: e.target.value })}
-                        onBlur={(e) => saveConfig("aliyun_model_id", e.target.value)}
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-orange-500 outline-none transition-all"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[9px] font-black uppercase tracking-widest text-slate-400">API KEY</label>
-                      <input 
-                        type="password"
-                        placeholder="sk-..."
-                        value={config.aliyun_api_key || ""}
-                        onChange={(e) => setConfig({ ...config, aliyun_api_key: e.target.value })}
-                        onBlur={(e) => saveConfig("aliyun_api_key", e.target.value)}
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-orange-500 outline-none transition-all placeholder:text-slate-300"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Performance & Quota Settings */}
-                <div className="bg-white p-4 rounded-2xl border-2 border-slate-100 shadow-sm md:col-span-2 lg:col-span-1">
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="w-9 h-9 rounded-xl bg-slate-100 text-slate-400 flex items-center justify-center">
-                      <Activity className="w-4.5 h-4.5" />
-                    </div>
-                    <div>
-                      <h4 className="text-[13px] font-bold text-slate-800">频率限制</h4>
-                      <p className="text-[9px] text-slate-400 font-black uppercase tracking-widest leading-none">配额管理</p>
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5 px-1">
-                    <div className="flex items-center justify-between">
-                      <label className="text-[9px] font-black uppercase tracking-widest text-slate-400">每日限额</label>
-                      {remainingQuota !== null && (
-                        <div className="flex items-center gap-1 text-[9px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded-full font-bold border border-indigo-100">
-                          <Zap className="w-2 h-2" />
-                          剩余: {remainingQuota}
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <input 
-                        type="number"
-                        value={config.guest_explore_limit || "5"}
-                        onChange={(e) => setConfig({ ...config, guest_explore_limit: e.target.value })}
-                        onBlur={(e) => saveConfig("guest_explore_limit", e.target.value)}
-                        className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                      />
-                      <div className="text-[10px] text-slate-400 font-bold uppercase whitespace-nowrap px-1">次 / 天</div>
-                    </div>
-                    <p className="text-[9px] text-slate-400 font-medium px-1">00:00 自动重置</p>
-                  </div>
                 </div>
               </div>
             </div>

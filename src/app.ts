@@ -6,7 +6,7 @@ import { CATEGORIES, FIGURE_POOL } from "./figuresPool.ts";
 import { ARCHIVE_PROMPT, ARCHIVE_SCHEMA, PATH_PROMPT, PATH_SCHEMA, VALIDATION_PROMPT, VALIDATION_SCHEMA } from "./services/geminiService.ts";
 import { runExplorationTask } from "./exploreTask.ts";
 
-export const app = new Hono<{ 
+const root = new Hono<{ 
   Bindings: { 
     DB?: any;
     IMAGES?: any;
@@ -16,11 +16,18 @@ export const app = new Hono<{
     EXPLORE_KV?: any;
   },
   Variables: { dbAdapter: DatabaseAdapter } 
-}>().basePath('/api');
+}>();
+
+export const app = root.basePath('/api');
 
 app.onError((err, c) => {
   console.error("Hono error:", err);
-  return c.json({ error: err.message || "Internal Server Error" }, 500);
+  return c.json({ error: err.message || "Internal Server Error", stack: process.env.NODE_ENV === 'development' ? err.stack : undefined }, 500);
+});
+
+app.notFound((c) => {
+  console.warn(`Hono 404: ${c.req.method} ${c.req.url}`);
+  return c.json({ error: "Not Found", path: c.req.path, method: c.req.method }, 404);
 });
 
 // Global for Node fallback
@@ -868,16 +875,26 @@ app.get("/explore/status", async (c) => {
   }
   if (statusStr === "null") return c.json(null);
   const data = JSON.parse(statusStr);
-  const explorerId = c.req.header("x-explorer-id");
   const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
-  const isInitial = c.req.query("initial") === "true";
   
-  data.isOwner = isAdmin || (data.explorerId && data.explorerId === explorerId);
+  if (data && data.status === 'running' && data.lastHeartbeat) {
+      const diff = Date.now() - data.lastHeartbeat;
+      if (diff > 180000) { // 3 minutes
+          data.status = 'error';
+          data.error = '探索任务可能已意外中断或超时，请尝试重置后重新开始。';
+          const newState = JSON.stringify(data);
+          if (c.env && c.env.EXPLORE_KV) {
+              await c.env.EXPLORE_KV.put("explore_state", newState);
+          } else {
+              await setConfig(db, "explore_state", newState);
+          }
+      }
+  }
 
-  // if not admin, and it's an initial check or not owner, do not show finished results
+  data.isOwner = isAdmin;
+
   if (!isAdmin) {
-      if (!data.isOwner) return c.json(null);
-      if (isInitial && data.status !== 'running') return c.json(null);
+      return c.json(null);
   }
 
   // if not admin, strip logs and steps except last step or error? No, frontend needs steps for UI. 
@@ -887,9 +904,99 @@ app.get("/explore/status", async (c) => {
   return c.json(data);
 });
 
+app.post("/public/explore", async (c) => {
+  const db = await getDb(c);
+  const { source, target } = await c.req.json();
+  
+  if (!source || !target) return c.json({ error: "请输入起点和终点人物" }, 400);
+
+  const matchPerson = async (name: string) => {
+      const exact = await db.prepare("SELECT id, name FROM people WHERE name = ? COLLATE NOCASE").all(name) as any[];
+      if (exact.length > 0) return exact;
+      const fuzzy = await db.prepare("SELECT id, name FROM people WHERE name LIKE ? LIMIT 10").all(`%${name}%`) as any[];
+      return fuzzy;
+  };
+
+  const srcMatches = await matchPerson(source);
+  const tgtMatches = await matchPerson(target);
+
+  if (srcMatches.length === 0) return c.json({ error: `库中未收录人物：${source}` }, 404);
+  if (tgtMatches.length === 0) return c.json({ error: `库中未收录人物：${target}` }, 404);
+
+  const isSrcAmbiguous = srcMatches.length > 1 && srcMatches.every(m => m.name.toLowerCase() !== source.toLowerCase() && m.name !== source);
+  const isTgtAmbiguous = tgtMatches.length > 1 && tgtMatches.every(m => m.name.toLowerCase() !== target.toLowerCase() && m.name !== target);
+
+  if (isSrcAmbiguous || isTgtAmbiguous) {
+      return c.json({
+          needsSelection: true,
+          sourceOptions: isSrcAmbiguous ? srcMatches.map(m => m.name) : [],
+          targetOptions: isTgtAmbiguous ? tgtMatches.map(m => m.name) : []
+      });
+  }
+
+  // Exact match or uniquely fuzzy matched
+  const startId = srcMatches[0].id;
+  const endId = tgtMatches[0].id;
+  const sourceNameResolved = srcMatches[0].name;
+  const targetNameResolved = tgtMatches[0].name;
+
+  if (startId === endId) return c.json({ error: "起点和终点不能是同一个人" }, 400);
+
+  // BFS search
+  let head = 0;
+  let q = [{ id: startId, path: [{ id: startId, name: sourceNameResolved }] as any[] }];
+  let visited = new Set([startId]);
+  let directPath = null;
+  let limit = 100000;
+  
+  const allRels = await db.prepare("SELECT person1_id, person2_id, relationship_type as type FROM relationships").all() as any[];
+  const idToNameRows = await db.prepare("SELECT id, name FROM people").all() as any[];
+  const idToName = new Map<number, string>();
+  for (const r of idToNameRows) idToName.set(r.id, r.name);
+
+  const adj = new Map<number, { targetId: number, type: string }[]>();
+  for (const r of allRels) {
+    if (!adj.has(r.person1_id)) adj.set(r.person1_id, []);
+    if (!adj.has(r.person2_id)) adj.set(r.person2_id, []);
+    adj.get(r.person1_id)!.push({ targetId: r.person2_id, type: r.type });
+    adj.get(r.person2_id)!.push({ targetId: r.person1_id, type: r.type });
+  }
+
+  while (head < q.length && limit-- > 0) {
+      const curr = q[head++];
+      if (curr.id === endId) {
+          directPath = curr.path;
+          break;
+      }
+      const neighbors = adj.get(curr.id) || [];
+      for (const n of neighbors) {
+          if (!visited.has(n.targetId)) {
+              visited.add(n.targetId);
+              q.push({
+                  id: n.targetId,
+                  path: [...curr.path, { id: n.targetId, name: idToName.get(n.targetId)!, type: n.type }]
+              });
+          }
+      }
+  }
+
+  if (directPath) {
+      const date = new Date(new Date().getTime() + 8 * 3600 * 1000).toISOString().split('T')[0];
+      await db.prepare(`INSERT INTO guest_usage (ip, date, count) VALUES ('GLOBAL_GUEST', ?, 1) ON CONFLICT(ip, date) DO UPDATE SET count = count + 1`).run(date);
+      return c.json({
+          status: 'success',
+          path: directPath,
+          sourceName: sourceNameResolved,
+          targetName: targetNameResolved
+      });
+  } else {
+      return c.json({ error: `在当前图谱中，${sourceNameResolved} 和 ${targetNameResolved} 之间尚未建立历史联系网络。` }, 404);
+  }
+});
+
 app.post("/explore/start", async (c) => {
   const db = await getDb(c);
-  const { source, target, isAdmin, explorerId } = await c.req.json();
+  const { source, target, isAdmin } = await c.req.json();
   let currentStr = "null";
   if (c.env && c.env.EXPLORE_KV) {
       currentStr = await c.env.EXPLORE_KV.get("explore_state") || "null";
@@ -898,7 +1005,15 @@ app.post("/explore/start", async (c) => {
   }
   if (currentStr !== "null") {
       const current = JSON.parse(currentStr);
-      if (current.status === 'running') return c.json({ error: "探索正在进行中" }, 400);
+      const isStale = current.status === 'running' && current.lastHeartbeat && (Date.now() - current.lastHeartbeat > 90000); // 90 seconds
+      
+      if (current.status === 'running' && !isStale) {
+          return c.json({ error: "探索正在进行中，请稍候。若任务已长久挂起，请重置状态后重试。" }, 400);
+      }
+      
+      if (isStale) {
+          console.warn("Detected stale exploration task, allowing override.");
+      }
   }
   
   if (!isAdmin && await getRemainingQuota(db) <= 0) {
@@ -907,7 +1022,7 @@ app.post("/explore/start", async (c) => {
 
   // Set initial state synchronously so immediately following reads see it
   const initialState = {
-      status: 'running', source, target, explorerId, logs: [], steps: [], path: null, error: null, newArrivals: []
+      status: 'running', source, target, logs: [], steps: [], path: null, error: null, newArrivals: []
   };
   const stateStr = JSON.stringify(initialState);
   if (c.env && c.env.EXPLORE_KV) {
@@ -916,7 +1031,7 @@ app.post("/explore/start", async (c) => {
       await setConfig(db, "explore_state", stateStr);
   }
 
-  const task = runExplorationTask(db, source, target, callAI, getConfig, setConfig, addRelationship, ARCHIVE_PROMPT, ARCHIVE_SCHEMA, PATH_PROMPT, PATH_SCHEMA, VALIDATION_PROMPT, VALIDATION_SCHEMA, c, !!isAdmin, explorerId);
+  const task = runExplorationTask(db, source, target, callAI, getConfig, setConfig, addRelationship, ARCHIVE_PROMPT, ARCHIVE_SCHEMA, PATH_PROMPT, PATH_SCHEMA, VALIDATION_PROMPT, VALIDATION_SCHEMA, c, !!isAdmin);
   
   // Safe check for waitUntil to prevent "no executioncontext" error on non-Worker platforms
   const hasWaitUntil = (() => {
@@ -928,9 +1043,9 @@ app.post("/explore/start", async (c) => {
   })();
 
   if (hasWaitUntil) {
-      c.executionCtx.waitUntil(task);
+      c.executionCtx.waitUntil(task.catch((err: any) => console.error("Background task error:", err)));
   } else {
-      task.catch(err => console.error("Background task error:", err));
+      task.catch((err: any) => console.error("Background task error:", err));
   }
   
   return c.json({ success: true, status: 'running' });
@@ -938,7 +1053,6 @@ app.post("/explore/start", async (c) => {
 
 app.post("/explore/stop", async (c) => {
   const db = await getDb(c);
-  const { explorerId } = await c.req.json();
   const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
 
   let statusStr = "null";
@@ -951,9 +1065,8 @@ app.post("/explore/stop", async (c) => {
   if (statusStr !== "null") {
       const state = JSON.parse(statusStr);
       if (state.status === 'running') {
-         // Check authorization
-         if (!isAdmin && state.explorerId !== explorerId) {
-             return c.json({ error: "您没有权限停止此探索。只有发起者或管理员可以执行此操作。" }, 403);
+         if (!isAdmin) {
+             return c.json({ error: "无权操作" }, 403);
          }
 
          state.status = 'error';
@@ -971,20 +1084,10 @@ app.post("/explore/stop", async (c) => {
 
 app.post("/explore/reset", async (c) => {
   const db = await getDb(c);
-  // Check admin or owner
-  const explorerId = c.req.header("x-explorer-id");
   const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
-  let stateStr = "null";
-  if (c.env && c.env.EXPLORE_KV) {
-      stateStr = await c.env.EXPLORE_KV.get("explore_state") || "null";
-  } else {
-      stateStr = await getConfig(db, "explore_state", "null");
-  }
-  if (stateStr !== "null") {
-      const state = JSON.parse(stateStr);
-      if (!isAdmin && state.explorerId !== explorerId) {
-          return c.json({ error: "无权操作" }, 403);
-      }
+
+  if (!isAdmin) {
+      return c.json({ error: "无权操作" }, 403);
   }
 
   if (c.env && c.env.EXPLORE_KV) {

@@ -2,9 +2,9 @@ import { DatabaseAdapter } from "./db.ts";
 
 export interface ExploreState {
   status: "idle" | "running" | "success" | "error";
+  lastHeartbeat?: number;
   source: string;
   target: string;
-  explorerId?: string;
   logs: { timestamp: string; msg: string; type: string; data?: any }[];
   steps: { msg: string; status: string; startTime?: number }[];
   path: any[] | null;
@@ -28,13 +28,11 @@ export async function runExplorationTask(
   VALIDATION_SCHEMA: any,
   c: any,
   isAdmin: boolean,
-  explorerId?: string,
 ) {
   let state: ExploreState = {
     status: "running",
     source,
     target,
-    explorerId,
     logs: [],
     steps: [],
     path: null,
@@ -43,6 +41,7 @@ export async function runExplorationTask(
   };
 
   const saveState = async () => {
+    state.lastHeartbeat = Date.now();
     // Check if aborted or reset by user
     let currentRaw = "null";
     if (c.env && c.env.EXPLORE_KV) {
@@ -115,6 +114,7 @@ export async function runExplorationTask(
     const peopleCountRow = await db.prepare("SELECT COUNT(*) as count FROM people").get() as { count: number };
     const peopleCount = peopleCountRow.count;
     
+    state.lastHeartbeat = Date.now();
     // 随机抽取少量样本作为 AI 提示词参考，避免随着数据增加导致 Prompt 过长
     const samplePeople = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 8").all() as any[];
     const sampleNames = samplePeople.map((p) => p.name).join("、");
@@ -199,10 +199,8 @@ export async function runExplorationTask(
       return parsed;
     };
 
-    const [srcValid, tgtValid] = await Promise.all([
-      validate(source),
-      validate(target),
-    ]);
+    const srcValid = await validate(source);
+    const tgtValid = await validate(target);
     if (!srcValid.accepted)
       throw new Error(`起点人物无效: ${srcValid.reason || "原因未知"}`);
     if (!tgtValid.accepted)
@@ -343,16 +341,16 @@ export async function runExplorationTask(
     }
 
     if (missingNames.length > 0) {
-      addStep(`正在同步 ${missingNames.length} 个缺失的时空锚点资料...`);
-      await saveState();
+      for (const name of missingNames) {
+        addStep(`正在获取「${name}」的历史资料...`);
+        await saveState();
 
-      await Promise.all(missingNames.map(async (name) => {
         const archiveText = await callAIProxy(
           ARCHIVE_PROMPT(name, categories, sampleNames),
           "json",
           ARCHIVE_SCHEMA,
           90000,
-          true // skipImmediateSave to avoid DB lock in parallel
+          true // skipImmediateSave
         );
         let personData: any = {};
         try {
@@ -390,16 +388,20 @@ export async function runExplorationTask(
           );
         
         // Update local maps for the next steps
-        const newId = (res as any)?.id || 0;
+        let newId = (res as any)?.id;
+        if (!newId) {
+            const getRes = await db.prepare("SELECT id FROM people WHERE name = ? COLLATE NOCASE").get(name) as any;
+            newId = getRes?.id;
+        }
         if (newId) {
             nameToId.set(name, Number(newId));
         }
         state.newArrivals.push(name);
-      }));
-      updateLastStep("success", `成功同步 ${missingNames.length} 个时空锚点`);
+        updateLastStep("success", `成功同步「${name}」`);
+        await saveState();
+      }
     }
 
-    const relationshipPromises = [];
     for (let i = 0; i < chain.length; i++) {
         const step = chain[i];
         if (!step.name) continue;
@@ -408,13 +410,11 @@ export async function runExplorationTask(
           const p1Id = nameToId.get(chain[i - 1].name);
           const p2Id = nameToId.get(step.name);
           if (p1Id && p2Id) {
-            relationshipPromises.push(addRelationship(db, p1Id, p2Id, step.relationshipToPrevious));
+            await addRelationship(db, p1Id, p2Id, step.relationshipToPrevious);
           }
         }
         finalPath.push({ name: step.name, type: step.relationshipToPrevious });
     }
-    
-    await Promise.all(relationshipPromises);
     
     state.path = finalPath;
     state.status = "success";

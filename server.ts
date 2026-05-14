@@ -93,14 +93,23 @@ async function startServer() {
 
   // Hono API Routes
   app.all("/api/*", async (req, res) => {
+    console.log(`[API Request] ${req.method} ${req.url}`);
     try {
       await apiHandler(req, res);
     } catch (e) {
-      console.error("Hono fetch error:", e);
+      console.error("[Hono Bridge Error]:", e);
       if (!res.headersSent) {
-        res.status(500).json({ error: "Internal Hono Bridge Error" });
+        res.status(500).json({ 
+          error: "Internal Hono Bridge Error", 
+          details: e instanceof Error ? e.message : String(e) 
+        });
       }
     }
+  });
+
+  // Explicitly handle /api (no trailing slash)
+  app.all("/api", (req, res) => {
+    res.status(404).json({ error: "API Root Not Found. Use /api/health or other endpoints." });
   });
 
   // Health check for Express itself
@@ -122,9 +131,10 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
+  server.setTimeout(600000);
 }
 
 startServer();
