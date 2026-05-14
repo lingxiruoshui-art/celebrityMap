@@ -518,13 +518,19 @@ app.post("/pathfind", async (c) => {
   let { sourceName, targetName } = await c.req.json();
   if (!sourceName || !targetName) return c.json({ error: "Missing names" }, 400);
 
-  const people = await db.prepare("SELECT id, name, raw_relationships FROM people").all() as any[];
-  const relationships = await db.prepare("SELECT * FROM relationships").all() as any[];
-
+  // Optimize: only load needed columns and use efficient lookups
+  const people = await db.prepare("SELECT id, name FROM people").all() as any[];
   const nameToId = new Map(people.map(p => [p.name, p.id]));
   const idToName = new Map(people.map(p => [p.id, p.name]));
 
+  const startId = nameToId.get(sourceName);
+  const endId = nameToId.get(targetName);
+
+  if (startId === undefined || endId === undefined) return c.json({ path: null });
+
+  const relationships = await db.prepare("SELECT person1_id, person2_id, relationship_type FROM relationships").all() as any[];
   const adj = new Map<number, { id: number, type: string }[]>();
+  
   relationships.forEach(r => {
     if (!adj.has(r.person1_id)) adj.set(r.person1_id, []);
     if (!adj.has(r.person2_id)) adj.set(r.person2_id, []);
@@ -532,41 +538,22 @@ app.post("/pathfind", async (c) => {
     adj.get(r.person2_id)!.push({ id: r.person1_id, type: r.relationship_type });
   });
 
-  people.forEach(p => {
-    try {
-      const raw = JSON.parse(p.raw_relationships || "[]");
-      raw.forEach((r: any) => {
-        if (!r.personName) return;
-        const targetId = nameToId.get(r.personName);
-        if (targetId !== undefined && targetId !== p.id) {
-          if (!adj.has(p.id)) adj.set(p.id, []);
-          if (!adj.get(p.id)!.some(n => n.id === targetId)) adj.get(p.id)!.push({ id: targetId, type: r.relationshipType || "历史关联" });
-          if (!adj.has(targetId)) adj.set(targetId, []);
-          if (!adj.get(targetId)!.some(n => n.id === p.id)) adj.get(targetId)!.push({ id: p.id, type: r.relationshipType || "历史关联" });
-        }
-      });
-    } catch (e) {}
-  });
+  const queue: { id: number, path: { name: string, type?: string }[] }[] = [{ id: startId, path: [{ name: sourceName }] }];
+  const visited = new Set([startId]);
+  let head = 0;
 
-  const startId = nameToId.get(sourceName);
-  const endId = nameToId.get(targetName);
+  while (head < queue.length) {
+    const { id, path } = queue[head++];
+    if (id === endId) return c.json({ path });
 
-  if (startId !== undefined && endId !== undefined) {
-    const queue: { id: number, path: { name: string, type?: string }[] }[] = [{ id: startId, path: [{ name: sourceName }] }];
-    const visited = new Set([startId]);
-
-    while (queue.length > 0) {
-      const { id, path } = queue.shift()!;
-      if (id === endId) return c.json({ path });
-
-      const neighbors = adj.get(id) || [];
-      for (const n of neighbors) {
-        if (!visited.has(n.id)) {
-          visited.add(n.id);
-          queue.push({ id: n.id, path: [...path, { name: idToName.get(n.id)!, type: n.type }] });
-        }
+    const neighbors = adj.get(id) || [];
+    for (const n of neighbors) {
+      if (!visited.has(n.id)) {
+        visited.add(n.id);
+        queue.push({ id: n.id, path: [...path, { name: idToName.get(n.id)!, type: n.type }] });
       }
     }
+    if (queue.length > 2000) break; // Safety break
   }
 
   return c.json({ path: null });

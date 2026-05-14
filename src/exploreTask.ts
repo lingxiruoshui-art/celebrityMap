@@ -81,10 +81,13 @@ export async function runExplorationTask(
       type,
       data,
     });
+    // Keep logs lean to prevent massive state objects
+    if (state.logs.length > 50) state.logs.shift();
   };
 
   const addStep = (msg: string) => {
     state.steps.push({ msg, status: "pending", startTime: Date.now() });
+    if (state.steps.length > 20) state.steps.shift();
   };
 
   const updateLastStep = (
@@ -136,10 +139,11 @@ export async function runExplorationTask(
       prompt: string,
       responseFormat: "text" | "json" = "json",
       schema?: any,
-      timeoutMs?: number
+      timeoutMs?: number,
+      skipImmediateSave: boolean = false
     ) => {
       addLog(`AI 代理请求发送`, "ai-req", { prompt, responseFormat, schema });
-      await saveState();
+      if (!skipImmediateSave) await saveState();
       try {
         let text: string;
         if (timeoutMs) {
@@ -153,7 +157,7 @@ export async function runExplorationTask(
         } else {
           text = await callAI(c, db, prompt, responseFormat, schema);
         }
-        addLog("AI 响应解码成功", "ai-res", { rawText: text });
+        addLog("AI 响应解码成功", "ai-res", { rawText: text.substring(0, 100) + "..." });
         return text;
       } catch (e: any) {
         addLog("AI 服务响应失败", "error", e.message);
@@ -215,45 +219,50 @@ export async function runExplorationTask(
     addStep("正在扫描馆藏路径...");
     await saveState();
 
-    // Implement native pathfind logic here
-    const getConnections = async (name: string) => {
-      const p = (await db
-        .prepare("SELECT id FROM people WHERE name = ?")
-        .get(name)) as any;
-      if (!p) return [];
-      const rows = (await db
-        .prepare(
-          `SELECT p.name as targetName, r.relationship_type as type FROM relationships r JOIN people p ON (r.person2_id = p.id) WHERE r.person1_id = ?`,
-        )
-        .all(p.id)) as any[];
-      const rows2 = (await db
-        .prepare(
-          `SELECT p.name as targetName, r.relationship_type as type FROM relationships r JOIN people p ON (r.person1_id = p.id) WHERE r.person2_id = ?`,
-        )
-        .all(p.id)) as any[];
-      return [...rows, ...rows2];
-    };
+    // Optimize: Load metadata separately to avoid heavy joins
+    const peopleData = await db.prepare("SELECT id, name FROM people").all() as { id: number, name: string }[];
+    const idToName = new Map<number, string>();
+    const nameToId = new Map<string, number>();
+    for (const p of peopleData) {
+      idToName.set(p.id, p.name);
+      nameToId.set(p.name, p.id);
+    }
+
+    const allRels = await db.prepare("SELECT person1_id, person2_id, relationship_type as type FROM relationships").all() as any[];
+    
+    const adj = new Map<number, { targetId: number, type: string }[]>();
+    for (const r of allRels) {
+      if (!adj.has(r.person1_id)) adj.set(r.person1_id, []);
+      if (!adj.has(r.person2_id)) adj.set(r.person2_id, []);
+      adj.get(r.person1_id)!.push({ targetId: r.person2_id, type: r.type });
+      adj.get(r.person2_id)!.push({ targetId: r.person1_id, type: r.type });
+    }
+
+    const startId = nameToId.get(normalizedSource);
+    const endId = nameToId.get(normalizedTarget);
 
     let directPath = null;
-    let q = [
-      { name: normalizedSource, path: [{ name: normalizedSource }] as any[] },
-    ];
-    let visited = new Set([normalizedSource]);
-    let limit = 1000;
-    while (q.length > 0 && limit-- > 0) {
-      let curr = q.shift()!;
-      if (curr.name === normalizedTarget) {
-        directPath = curr.path;
-        break;
-      }
-      let conns = await getConnections(curr.name);
-      for (let c of conns) {
-        if (!visited.has(c.targetName)) {
-          visited.add(c.targetName);
-          q.push({
-            name: c.targetName,
-            path: [...curr.path, { name: c.targetName, type: c.type }],
-          });
+    if (startId !== undefined && endId !== undefined) {
+      let q = [{ id: startId, path: [{ name: normalizedSource }] as any[] }];
+      let visited = new Set([startId]);
+      let limit = 1000;
+      let head = 0;
+      
+      while (head < q.length && limit-- > 0) {
+        let curr = q[head++];
+        if (curr.id === endId) {
+          directPath = curr.path;
+          break;
+        }
+        const neighbors = adj.get(curr.id) || [];
+        for (let n of neighbors) {
+          if (!visited.has(n.targetId)) {
+            visited.add(n.targetId);
+            q.push({
+              id: n.targetId,
+              path: [...curr.path, { name: idToName.get(n.targetId)!, type: n.type }],
+            });
+          }
         }
       }
     }
@@ -334,7 +343,8 @@ export async function runExplorationTask(
           ARCHIVE_PROMPT(name, categories, sampleNames),
           "json",
           ARCHIVE_SCHEMA,
-          90000
+          90000,
+          true // skipImmediateSave to avoid DB lock in parallel
         );
         let personData: any = {};
         try {
@@ -349,15 +359,16 @@ export async function runExplorationTask(
         if (!personData.biography && personData.result)
           personData = personData.result;
 
-        await db
+        const res = await db
           .prepare(
             `
                INSERT INTO people (name, category, keyword, biography, achievements, raw_relationships, lifespan, birthplace, latitude, longitude)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(name) DO UPDATE SET keyword=excluded.keyword, biography=excluded.biography
+               RETURNING id
             `,
           )
-          .run(
+          .get(
             name,
             personData.category || "未知",
             personData.keyword || "",
@@ -369,31 +380,35 @@ export async function runExplorationTask(
             personData.latitude || 0,
             personData.longitude || 0,
           );
+        
+        // Update local maps for the next steps
+        const newId = (res as any)?.id || 0;
+        if (newId) {
+            nameToId.set(name, Number(newId));
+        }
         state.newArrivals.push(name);
       }));
       updateLastStep("success", `成功同步 ${missingNames.length} 个时空锚点`);
     }
 
+    const relationshipPromises = [];
     for (let i = 0; i < chain.length; i++) {
         const step = chain[i];
         if (!step.name) continue;
 
         if (i > 0) {
-          let p1 = (await db
-            .prepare("SELECT id FROM people WHERE name = ?")
-            .get(chain[i - 1].name)) as any;
-          let p2 = (await db
-            .prepare("SELECT id FROM people WHERE name = ?")
-            .get(step.name)) as any;
-          if (p1 && p2)
-            await addRelationship(db, p1.id, p2.id, step.relationshipToPrevious);
+          const p1Id = nameToId.get(chain[i - 1].name);
+          const p2Id = nameToId.get(step.name);
+          if (p1Id && p2Id) {
+            relationshipPromises.push(addRelationship(db, p1Id, p2Id, step.relationshipToPrevious));
+          }
         }
-
         finalPath.push({ name: step.name, type: step.relationshipToPrevious });
-        state.path = [...finalPath];
-        await saveState();
     }
-
+    
+    await Promise.all(relationshipPromises);
+    
+    state.path = finalPath;
     state.status = "success";
     await saveState();
 
