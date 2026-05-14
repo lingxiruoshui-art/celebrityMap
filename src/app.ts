@@ -84,7 +84,8 @@ async function getDb(c: any): Promise<DatabaseAdapter> {
       "ALTER TABLE people ADD COLUMN longitude REAL DEFAULT 0",
       "ALTER TABLE people ADD COLUMN image_url TEXT",
       "ALTER TABLE people ADD COLUMN lifespan TEXT",
-      "ALTER TABLE people ADD COLUMN birthplace TEXT"
+      "ALTER TABLE people ADD COLUMN birthplace TEXT",
+      "CREATE INDEX IF NOT EXISTS idx_relationships_person2 ON relationships(person2_id)"
     ];
     for (const m of migrations) {
       try { await db.prepare(m).run(); } catch (e) {}
@@ -557,15 +558,17 @@ app.post("/archiver/chat", async (c) => {
       return c.json({ error: "Missing person1 or person2" }, 400);
     }
 
-    const prompt = `请发挥你的想象力，设计一段2-4轮的简短对话。对话双方是历史/现实人物：【${person1}】和【${person2}】。
-要求：每一句的阅读时长控制在2秒内（字数极简精炼），确保全部对话总阅读时长在8秒左右。
-人物应保留其经典气质与语言特征，形象鲜明可辨。对白风格幽默哲思、有趣接地气，化学反应鲜明，超级爆笑，超级讽刺，或者超级感人，让观众易于被吸引或代入。
+    const prompt = `请发挥你的想象力，设计一段2个回合共4句话的极简对话。对话双方是历史/现实人物：【${person1}】和【${person2}】。
+要求：每一句长度控制在1~20个字（极简精炼），确保表达出人物神韵。
+人物应保留其经典气质与语言特征，形象鲜明可辨。对白风格有趣且带有跨时空碰撞感，可以是幽默、哲思、讽刺或感人。
 
 请严格返回以下JSON格式：
 {
   "messages": [
-    { "speaker": "${person1}或${person2}", "text": "对话内容..." },
-    ...
+    { "speaker": "${person1}", "text": "第1句..." },
+    { "speaker": "${person2}", "text": "第2句..." },
+    { "speaker": "${person1}", "text": "第3句..." },
+    { "speaker": "${person2}", "text": "第4句..." }
   ]
 }`;
 
@@ -694,10 +697,11 @@ app.post("/archiver/pick-target", async (c) => {
 app.post("/archiver/generate-target", async (c) => {
   const db = await getDb(c);
   const { sourceName } = await c.req.json();
-  const existingNames = (await db.prepare("SELECT name FROM people").all() as any[]).map(p => p.name).join("、");
+  const samplePeople = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 20").all() as any[];
+  const sampleNames = samplePeople.map(p => p.name).join("、");
   
   try {
-      const prompt = `请从世界历史中选取一位极其著名、具有重大全球影响力且通常被视为正面的真实历史人物。要求不包含在列表中：[${existingNames.slice(0, 500)}]，关联：${sourceName || ''}`;
+      const prompt = `请从世界历史中选取一位极其著名、具有重大全球影响力且通常被视为正面的真实历史人物。要求不包含在已知列表中：[${sampleNames} ...]，且与 "${sourceName || ''}" 有潜在的历史交集或对比性。`;
       const resultText = await callAI(c, db, prompt, "text");
       const targetName = (resultText || "").trim().replace(/[「」""'']/g, "");
       return c.json({ targetName });
@@ -711,7 +715,8 @@ app.post("/archive-figure", async (c) => {
   const { personName, stream } = await c.req.json();
   let targetName = personName;
 
-  const existingNames = (await db.prepare("SELECT name FROM people").all() as any[]).map(p => p.name).join("、");
+  const samplePeople = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 20").all() as any[];
+  const sampleNames = samplePeople.map(p => p.name).join("、");
 
   if (!targetName) {
       return c.json({ error: "Missing target" }, 400);
@@ -744,7 +749,7 @@ app.post("/archive-figure", async (c) => {
                 "longitude": 经度,
                 "relationships": [{"personName": "关联人名", "relationshipType": "请用20-30字描述关联"}]
               }
-              重要：必须至少包含 1 个以下已入库人物：[${existingNames.slice(0, 500)}]`;
+              重要：请尝试建立与已知时空节点的联系（如：${sampleNames} 等）。请使用标准权威的中文译名。`;
 
               let resultText = await callAI(c, db, prompt, "json");
               let data: any = {};
@@ -838,6 +843,13 @@ app.post("/ai/proxy", async (c) => {
 
 app.get("/explore/status", async (c) => {
   const db = await getDb(c);
+  
+  // Set no-cache headers
+  c.header("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  c.header("Pragma", "no-cache");
+  c.header("Expires", "0");
+  c.header("Surrogate-Control", "no-store");
+
   let statusStr = "null";
   if (c.env && c.env.EXPLORE_KV) {
       statusStr = await c.env.EXPLORE_KV.get("explore_state") || "null";
@@ -846,10 +858,13 @@ app.get("/explore/status", async (c) => {
   }
   if (statusStr === "null") return c.json(null);
   const data = JSON.parse(statusStr);
+  const explorerId = c.req.header("x-explorer-id");
+  const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
   
+  data.isOwner = isAdmin || (data.explorerId && data.explorerId === explorerId);
+
   // if not admin, strip logs and steps except last step or error? No, frontend needs steps for UI. 
-  // Wait, user instructions say: "如果是前台用户先开启，前台可以正常看到探索进度，后台用户除了可以看到探索进度，还可以看到DEBUG信息（DEBUG信息仅在后台显示"
-  if (c.req.header("x-admin-password") !== getAdminPassword(c)) {
+  if (!isAdmin) {
       data.logs = []; // do not return logs to frontend users
   }
   return c.json(data);
@@ -857,7 +872,7 @@ app.get("/explore/status", async (c) => {
 
 app.post("/explore/start", async (c) => {
   const db = await getDb(c);
-  const { source, target, isAdmin } = await c.req.json();
+  const { source, target, isAdmin, explorerId } = await c.req.json();
   let currentStr = "null";
   if (c.env && c.env.EXPLORE_KV) {
       currentStr = await c.env.EXPLORE_KV.get("explore_state") || "null";
@@ -875,7 +890,7 @@ app.post("/explore/start", async (c) => {
 
   // Set initial state synchronously so immediately following reads see it
   const initialState = {
-      status: 'running', source, target, logs: [], steps: [], path: null, error: null, newArrivals: []
+      status: 'running', source, target, explorerId, logs: [], steps: [], path: null, error: null, newArrivals: []
   };
   const stateStr = JSON.stringify(initialState);
   if (c.env && c.env.EXPLORE_KV) {
@@ -884,12 +899,21 @@ app.post("/explore/start", async (c) => {
       await setConfig(db, "explore_state", stateStr);
   }
 
-  const task = runExplorationTask(db, source, target, callAI, getConfig, setConfig, addRelationship, ARCHIVE_PROMPT, ARCHIVE_SCHEMA, PATH_PROMPT, PATH_SCHEMA, VALIDATION_PROMPT, VALIDATION_SCHEMA, c, !!isAdmin);
+  const task = runExplorationTask(db, source, target, callAI, getConfig, setConfig, addRelationship, ARCHIVE_PROMPT, ARCHIVE_SCHEMA, PATH_PROMPT, PATH_SCHEMA, VALIDATION_PROMPT, VALIDATION_SCHEMA, c, !!isAdmin, explorerId);
   
-  if (c.executionCtx && c.executionCtx.waitUntil) {
+  // Safe check for waitUntil to prevent "no executioncontext" error on non-Worker platforms
+  const hasWaitUntil = (() => {
+      try {
+          return c.executionCtx && typeof c.executionCtx.waitUntil === 'function';
+      } catch (e) {
+          return false;
+      }
+  })();
+
+  if (hasWaitUntil) {
       c.executionCtx.waitUntil(task);
   } else {
-      task.catch(console.error);
+      task.catch(err => console.error("Background task error:", err));
   }
   
   return c.json({ success: true, status: 'running' });
@@ -897,16 +921,24 @@ app.post("/explore/start", async (c) => {
 
 app.post("/explore/stop", async (c) => {
   const db = await getDb(c);
-  // Optional: We can just signal abort via state
+  const { explorerId } = await c.req.json();
+  const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
+
   let statusStr = "null";
   if (c.env && c.env.EXPLORE_KV) {
       statusStr = await c.env.EXPLORE_KV.get("explore_state") || "null";
   } else {
       statusStr = await getConfig(db, "explore_state", "null");
   }
+  
   if (statusStr !== "null") {
       const state = JSON.parse(statusStr);
       if (state.status === 'running') {
+         // Check authorization
+         if (!isAdmin && state.explorerId !== explorerId) {
+             return c.json({ error: "您没有权限停止此探索。只有发起者或管理员可以执行此操作。" }, 403);
+         }
+
          state.status = 'error';
          state.error = '探索已中止';
          const stateStr = JSON.stringify(state);
@@ -916,6 +948,16 @@ app.post("/explore/stop", async (c) => {
              await setConfig(db, "explore_state", stateStr);
          }
       }
+  }
+  return c.json({ success: true });
+});
+
+app.post("/explore/reset", async (c) => {
+  const db = await getDb(c);
+  if (c.env && c.env.EXPLORE_KV) {
+      await c.env.EXPLORE_KV.put("explore_state", "null");
+  } else {
+      await setConfig(db, "explore_state", "null");
   }
   return c.json({ success: true });
 });

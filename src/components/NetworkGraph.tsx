@@ -794,16 +794,37 @@ export default function NetworkGraph({
                       </button>
                     </div>
                   ) : (
-                    <div className="flex flex-col gap-2">
+                    <div className="flex flex-col gap-3 py-1">
                       {chatState.messages.map((msg, idx) => {
                         const isSource = msg.speaker === selectedRelationship.source.name;
                         return (
-                          <div key={idx} className={`flex items-start gap-2 ${isSource ? '' : 'flex-row-reverse'} animate-in slide-in-from-bottom-2 fade-in duration-500`} style={{ animationDelay: `${idx * 2000}ms`, animationFillMode: 'both' }}>
-                            <div className="w-6 h-6 shrink-0 rounded-md overflow-hidden bg-slate-100 border border-slate-200">
-                              <img src={isSource ? selectedRelationship.source.image_url : selectedRelationship.target.image_url} alt={msg.speaker} className="w-full h-full object-cover" />
+                          <div 
+                            key={idx} 
+                            className={`flex items-start gap-2 w-full ${isSource ? 'flex-row' : 'flex-row-reverse'} animate-in slide-in-from-bottom-1 fade-in duration-700`} 
+                            style={{ 
+                              animationDelay: `${idx * 1200}ms`, 
+                              animationFillMode: 'both' 
+                            }}
+                          >
+                            <div className="w-5 h-5 shrink-0 rounded-md overflow-hidden bg-slate-100 border border-slate-200 mt-1 shadow-sm">
+                              <img 
+                                src={isSource ? selectedRelationship.source.image_url : selectedRelationship.target.image_url} 
+                                alt={msg.speaker} 
+                                className="w-full h-full object-cover" 
+                              />
                             </div>
-                            <div className={`p-2 rounded-xl text-[11px] leading-relaxed max-w-[85%] shadow-sm ${isSource ? 'bg-indigo-50 border-indigo-100 text-indigo-900 rounded-tl-none' : 'bg-white border-slate-100 text-slate-800 rounded-tr-none'} border`}>
+                            <div className={`group relative p-2.5 rounded-2xl text-[11px] font-medium leading-relaxed max-w-[80%] shadow-sm border ${
+                              isSource 
+                                ? 'bg-indigo-600 border-indigo-500 text-white rounded-tl-none' 
+                                : 'bg-white border-slate-100 text-slate-800 rounded-tr-none'
+                            }`}>
                               {msg.text}
+                              {/* Simple triangle arrow */}
+                              <div className={`absolute top-0 w-2 h-2 ${
+                                isSource 
+                                  ? '-left-1 bg-indigo-600' 
+                                  : '-right-1 bg-white border-t border-r border-slate-100'
+                              } rotate-45 z-[-1]`} />
                             </div>
                           </div>
                         );

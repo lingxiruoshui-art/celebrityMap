@@ -50,6 +50,15 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
 }, ref) {
   const [source, setSource] = useState(() => initialSource || localStorage.getItem("last_explorer_source") || "");
   const [target, setTarget] = useState(() => initialTarget || localStorage.getItem("last_explorer_target") || "");
+  const [explorerId] = useState(() => {
+    let id = localStorage.getItem("explorer_id");
+    if (!id) {
+       id = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+       localStorage.setItem("explorer_id", id);
+    }
+    return id;
+  });
+  const [isOwner, setIsOwner] = useState(false);
 
   useImperativeHandle(ref, () => ({
     start: (overrideSource?: string, overrideTarget?: string) => {
@@ -59,7 +68,6 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     },
     clear: () => {
       clearResults();
-      if (hideHeader) setIsCollapsed(true);
     }
   }));
 
@@ -79,6 +87,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     localStorage.setItem("last_explorer_target", target);
   }, [target]);
   const [isLoading, setIsLoading] = useState(false);
+  const [hasInitialCheckDone, setHasInitialCheckDone] = useState(false);
   const [path, setPath] = useState<Step[] | null>(null);
   const [newArrivals, setNewArrivals] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -99,70 +108,119 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   const scrollRef = useRef<HTMLDivElement>(null);
   const logsScrollRef = useRef<HTMLDivElement>(null);
   const pollStatusRef = useRef(false);
+  const hasLoadedResultRef = useRef(false);
+  const hasAutoExpandedRunningRef = useRef(false);
+  const isResettingRef = useRef(false);
 
   useEffect(() => {
     let timer: any;
+    const abortController = new AbortController();
+
     const checkStatus = async () => {
        try {
-           const headers: any = {};
+           const headers: any = { "x-explorer-id": explorerId, "Cache-Control": "no-cache" };
            if (isAdmin) headers["x-admin-password"] = localStorage.getItem("admin_password") || "";
-           const res = await fetch("/api/explore/status", { headers });
+           
+           const cacheBuster = `?t=${Date.now()}`;
+           const res = await fetch("/api/explore/status" + cacheBuster, { 
+             headers,
+             signal: abortController.signal
+           });
            const data = await res.json();
-           if (data && (pollStatusRef.current || data.status === 'running')) {
-               if (data.status === 'running') {
-                   // Only overwrite inputs while it is actually running
-                   setSource(prev => data.source);
-                   setTarget(prev => data.target);
-               }
-               if (data.logs) setDetailedLogs(data.logs);
-               if (data.steps) setSearchSteps(data.steps);
+           
+           setHasInitialCheckDone(true);
+           if (isResettingRef.current) return;
+
+           if (data) {
+               if (data.isOwner !== undefined) setIsOwner(data.isOwner);
                
-               if (data.status === 'error') {
-                   setError(data.error);
-                   setIsLoading(false);
-                   pollStatusRef.current = false;
-               } else if (data.status === 'success') {
-                   if (!showResults) { // Only update if not already shown
-                     setPath(data.path || []);
-                     setNewArrivals(data.newArrivals ? data.newArrivals : []);
-                     setShowResults(true);
-                     setIsLoading(false);
-                     if (onPathFound) onPathFound(data.path || []);
-                     if (data.newArrivals && data.newArrivals.length > 0) onRefreshArchive();
-                   }
-                   pollStatusRef.current = false;
-               } else if (data.status === 'running') {
+               if (data.status === 'running') {
+                   setSource(data.source);
+                   setTarget(data.target);
                    setIsLoading(true);
                    setError(null);
                    setShowResults(false);
-                   setIsCollapsed(false);
-                   pollStatusRef.current = true;
+                   setPath(null);
+                   setNewArrivals([]);
+                   pollStatusRef.current = true; 
+
+                   if (!hasAutoExpandedRunningRef.current) {
+                       setIsCollapsed(false);
+                       hasAutoExpandedRunningRef.current = true;
+                   }
+               } else {
+                   hasAutoExpandedRunningRef.current = false;
+                   
+                   if (data.status === 'error') {
+                       setError(data.error);
+                       setIsLoading(false);
+                       pollStatusRef.current = false;
+                   } else if (data.status === 'success') {
+                       if (!showResults && !hasLoadedResultRef.current) {
+                           setPath(data.path || []);
+                           setNewArrivals(data.newArrivals ? data.newArrivals : []);
+                           setShowResults(true);
+                           setIsLoading(false);
+                           hasLoadedResultRef.current = true;
+                           if (onPathFound) onPathFound(data.path || []);
+                           if (data.newArrivals && data.newArrivals.length > 0) onRefreshArchive();
+                       }
+                       pollStatusRef.current = false;
+                   } else {
+                       setIsLoading(false);
+                       pollStatusRef.current = false;
+                   }
                }
-           } else if (data && data.status && isAdmin) {
-               // Load last cached result on mount if idle, but only do it once when component mounts (Admins only)
-               if (!pollStatusRef.current && !showResults && data.status === 'success' && data.path && !path) {
-                   setSource(data.source || "");
-                   setTarget(data.target || "");
-                   setDetailedLogs(data.logs || []);
-                   setSearchSteps(data.steps || []);
-                   setPath(data.path);
-                   setNewArrivals(data.newArrivals || []);
-                   setShowResults(true);
-               } else if (!pollStatusRef.current && !showResults && data.status === 'error' && !path) {
-                   setSource(data.source || "");
-                   setTarget(data.target || "");
-                   setDetailedLogs(data.logs || []);
-                   setSearchSteps(data.steps || []);
-                   setError(data.error);
+
+               if (data.logs && (pollStatusRef.current || isAdmin || showResults)) setDetailedLogs(data.logs);
+               if (data.steps && (pollStatusRef.current || isAdmin || showResults)) setSearchSteps(data.steps);
+               
+               if (!pollStatusRef.current && !showResults && !hasLoadedResultRef.current && (isAdmin || data.status !== 'idle')) {
+                   if (data.status === 'success' && data.path && !path) {
+                       setSource(data.source || "");
+                       setTarget(data.target || "");
+                       setDetailedLogs(data.logs || []);
+                       setSearchSteps(data.steps || []);
+                       setPath(data.path);
+                       setNewArrivals(data.newArrivals || []);
+                       setShowResults(true);
+                       hasLoadedResultRef.current = true;
+                   } else if (data.status === 'error' && !path) {
+                       setSource(data.source || "");
+                       setTarget(data.target || "");
+                       setDetailedLogs(data.logs || []);
+                       setSearchSteps(data.steps || []);
+                       setError(data.error);
+                   }
+               }
+           } else {
+               // Data is null, meaning it was reset or never started
+               setIsOwner(false);
+               setIsLoading(false);
+               pollStatusRef.current = false;
+               if (hasLoadedResultRef.current) {
+                   // If we had results but now it's null, clear them
+                   setPath(null);
+                   setShowResults(false);
+                   setError(null);
+                   setDetailedLogs([]);
+                   setSearchSteps([]);
+                   hasLoadedResultRef.current = false;
                }
            }
-       } catch (e) {}
+       } catch (e) {
+         console.warn("Status poll error:", e);
+         setHasInitialCheckDone(true);
+       }
        
-       timer = setTimeout(checkStatus, pollStatusRef.current ? 1000 : 5000); 
+       timer = setTimeout(checkStatus, pollStatusRef.current ? 800 : 1500); 
     };
     checkStatus();
-    return () => clearTimeout(timer);
-  }, [showResults]);
+    return () => {
+      clearTimeout(timer);
+      abortController.abort();
+    };
+  }, [showResults, explorerId, isAdmin]);
 
   useEffect(() => {
     if (logsScrollRef.current) {
@@ -179,10 +237,15 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   }, []);
 
   const handleStop = async () => {
-    const headers: any = {};
+    const headers: any = { "Content-Type": "application/json" };
     if (isAdmin) headers["x-admin-password"] = localStorage.getItem("admin_password") || "";
-    await fetch("/api/explore/stop", { method: "POST", headers });
+    await fetch("/api/explore/stop", { 
+      method: "POST", 
+      headers,
+      body: JSON.stringify({ explorerId })
+    });
     pollStatusRef.current = false;
+    hasAutoExpandedRunningRef.current = false;
     setIsLoading(false);
     if (!path) setError("搜索已由用户中断。");
   };
@@ -242,21 +305,24 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     
     setIsCollapsed(false);
     setIsLoading(true);
+    setIsOwner(true);
+    hasLoadedResultRef.current = false;
+    hasAutoExpandedRunningRef.current = true;
     setError(null);
     setPath(null);
     setShowResults(false);
     if (onPathFound) onPathFound(null);
     setNewArrivals([]);
     setSearchSteps([]);
-    
     setDetailedLogs([]);
+    setError(null);
     pollStatusRef.current = true;
     
     try {
       const res = await fetch("/api/explore/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source: finalSource, target: finalTarget, isAdmin })
+        body: JSON.stringify({ source: finalSource, target: finalTarget, isAdmin, explorerId })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -273,7 +339,8 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
      }
   }, []); // Only on mount
 
-  const clearResults = () => {
+  const clearResults = async () => {
+    isResettingRef.current = true;
     setPath(null);
     setShowResults(false);
     if (onPathFound) onPathFound(null);
@@ -281,6 +348,15 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     setDetailedLogs([]);
     setError(null);
     setNewArrivals([]);
+    hasAutoExpandedRunningRef.current = false;
+    
+    try {
+      await fetch("/api/explore/reset", { method: "POST" });
+    } catch (e) {
+      console.warn("Reset failed:", e);
+    } finally {
+      isResettingRef.current = false;
+    }
   };
 
   const content = (
@@ -325,23 +401,23 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                     </div>
 
                     <div className="pt-2 flex gap-2 w-full">
-                      {isAdmin && (
+                      {(isAdmin || !hasInitialCheckDone) && (
                         <button 
                           onClick={handlePickRandomPair}
-                          disabled={isPickingRandom || isLoading}
+                          disabled={isPickingRandom || isLoading || !hasInitialCheckDone}
                           className="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 disabled:opacity-50 rounded-xl font-bold text-[12px] transition-all flex items-center justify-center gap-1.5 active:scale-[0.98]"
                         >
-                          <RefreshCw className={`w-3.5 h-3.5 ${isPickingRandom ? 'animate-spin' : ''}`} />
-                          <span>随机更换</span>
+                          {(!hasInitialCheckDone) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className={`w-3.5 h-3.5 ${isPickingRandom ? 'animate-spin' : ''}`} />}
+                          <span>{(!hasInitialCheckDone) ? "检查状态..." : "随机更换"}</span>
                         </button>
                       )}
                       <button 
                         onClick={() => handleSearch()}
-                        disabled={isLoading || !source.trim() || !target.trim()}
+                        disabled={isLoading || !source.trim() || !target.trim() || !hasInitialCheckDone}
                         className="flex-1 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-[12px] font-bold rounded-xl transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-1.5 active:scale-[0.98] group"
                       >
-                        {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 group-hover:animate-pulse" />}
-                        <span>{isLoading ? "正在编织..." : "开启探索"}</span>
+                        {isLoading || !hasInitialCheckDone ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 group-hover:animate-pulse" />}
+                        <span>{isLoading ? "正在编织..." : !hasInitialCheckDone ? "检查状态..." : "开启探索"}</span>
                       </button>
                     </div>
                   </div>
@@ -368,11 +444,13 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                         </div>
                       </div>
                       
-                      <button 
-                        onClick={handleStop}
-                        className="relative z-10 w-5 h-5 bg-red-500 hover:bg-red-600 rounded-[4px] transition-all shrink-0 active:scale-90"
-                        title="停止探索"
-                      />
+                      {(isOwner || isAdmin) && (
+                        <button 
+                          onClick={handleStop}
+                          className="relative z-10 w-5 h-5 bg-red-500 hover:bg-red-600 rounded-[4px] transition-all shrink-0 active:scale-90"
+                          title="停止探索"
+                        />
+                      )}
                   </div>
                   <div className="flex flex-col space-y-2.5 pl-2 border-l-2 border-slate-100 mb-2">
                     {searchSteps.map((step, i) => (
@@ -559,16 +637,36 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     return (
       <div className={`flex flex-col min-h-0 overflow-hidden h-full max-w-full transition-all duration-300 ${isCollapsed ? 'w-auto' : finalWidth}`}>
         {!hideHeader && (
-          <div className="px-3 py-2 bg-slate-50/50 border-b border-slate-100 flex items-center justify-between cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => setIsCollapsed(!isCollapsed)}>
+          <div className="px-3 py-2 bg-slate-50/50 border-b border-slate-100 flex items-center justify-between cursor-pointer hover:bg-slate-100 transition-colors relative h-9 group" onClick={() => setIsCollapsed(!isCollapsed)}>
+            {/* Collapsed mini progress bar */}
+            {isCollapsed && isLoading && (
+              <motion.div 
+                className="absolute bottom-0 left-0 h-[2px] bg-indigo-500 opacity-60"
+                initial={{ width: "0%" }}
+                animate={{ width: "100%" }}
+                transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
+              />
+            )}
+            
             <div className="flex items-center gap-1.5 pr-2">
-              <Zap className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-              <span className="text-xs font-bold text-slate-800 whitespace-nowrap">时空关系网络探索</span>
+              <Zap className={`w-3.5 h-3.5 ${isLoading ? 'text-indigo-500 animate-pulse' : 'text-indigo-600'} shrink-0`} />
+              <div className="flex flex-col">
+                <span className="text-xs font-bold text-slate-800 whitespace-nowrap">时空关系网络探索</span>
+                {isCollapsed && isLoading && (
+                   <span className="text-[8px] font-bold text-indigo-500 -mt-1 uppercase tracking-tighter opacity-70">正在编织中...</span>
+                )}
+              </div>
             </div>
-            <button 
-              className="p-1 hover:bg-white rounded-md text-slate-400 hover:text-indigo-600 transition-all border border-transparent hover:border-slate-200"
-            >
-              {isCollapsed ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
-            </button>
+            <div className="flex items-center gap-2">
+              {isCollapsed && isLoading && (
+                 <Loader2 className="w-3 h-3 text-indigo-400 animate-spin" />
+              )}
+              <button 
+                className="p-1 hover:bg-white rounded-md text-slate-400 group-hover:text-indigo-600 transition-all border border-transparent hover:border-slate-200"
+              >
+                {isCollapsed ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+              </button>
+            </div>
           </div>
         )}
         {content}

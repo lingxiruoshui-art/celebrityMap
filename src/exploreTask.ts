@@ -4,6 +4,7 @@ export interface ExploreState {
   status: "idle" | "running" | "success" | "error";
   source: string;
   target: string;
+  explorerId?: string;
   logs: { timestamp: string; msg: string; type: string; data?: any }[];
   steps: { msg: string; status: string }[];
   path: any[] | null;
@@ -27,11 +28,13 @@ export async function runExplorationTask(
   VALIDATION_SCHEMA: any,
   c: any,
   isAdmin: boolean,
+  explorerId?: string,
 ) {
   let state: ExploreState = {
     status: "running",
     source,
     target,
+    explorerId,
     logs: [],
     steps: [],
     path: null,
@@ -96,8 +99,12 @@ export async function runExplorationTask(
     await saveState();
 
     addLog("请求馆藏核心元数据", "api");
-    const people = await db.prepare("SELECT name FROM people").all();
-    const existingNames = people.map((p) => p.name).join("、");
+    const peopleCountRow = await db.prepare("SELECT COUNT(*) as count FROM people").get() as { count: number };
+    const peopleCount = peopleCountRow.count;
+    
+    // 随机抽取少量样本作为 AI 提示词参考，避免随着数据增加导致 Prompt 过长
+    const samplePeople = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 20").all() as any[];
+    const sampleNames = samplePeople.map((p) => p.name).join("、");
 
     const provider = await getConfig(db, "active_model_provider", "gemini");
     const modelId =
@@ -132,22 +139,18 @@ export async function runExplorationTask(
       }
     };
 
-    const existingArray = existingNames ? existingNames.split("、") : [];
-    const findNormalizedInDB = (name: string) =>
-      existingArray.find(
-        (ex) => ex.toLowerCase() === name.trim().toLowerCase(),
-      ) || null;
-
     const validate = async (name: string) => {
-      const localMatch = findNormalizedInDB(name);
-      if (localMatch)
+      // 先尝试库内精确匹配，减少 AI 调用
+      const p = (await db.prepare("SELECT name FROM people WHERE name = ?").get(name)) as any;
+      if (p)
         return {
           accepted: true,
-          normalizedName: localMatch,
+          normalizedName: p.name,
           reason: "馆藏库内已存身份",
         };
+
       const text = await callAIProxy(
-        VALIDATION_PROMPT(name, existingNames),
+        VALIDATION_PROMPT(name, sampleNames),
         "json",
         VALIDATION_SCHEMA,
       );
@@ -245,7 +248,7 @@ export async function runExplorationTask(
     await saveState();
 
     const bridgeText = await callAIProxy(
-      PATH_PROMPT(normalizedSource, normalizedTarget, existingNames),
+      PATH_PROMPT(normalizedSource, normalizedTarget, sampleNames),
       "json",
       PATH_SCHEMA,
     );
@@ -301,7 +304,7 @@ export async function runExplorationTask(
         );
         await saveState();
         const archiveText = await callAIProxy(
-          ARCHIVE_PROMPT(step.name, categories, existingNames),
+          ARCHIVE_PROMPT(step.name, categories, sampleNames),
           "json",
           ARCHIVE_SCHEMA,
         );

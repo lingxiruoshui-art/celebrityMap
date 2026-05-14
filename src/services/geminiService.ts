@@ -11,7 +11,7 @@ export function getGemini(apiKeyOverride?: string): GoogleGenAI {
   return ai;
 }
 
-export const ARCHIVE_PROMPT = (name: string, categories: string[], existingNames: string) => `
+export const ARCHIVE_PROMPT = (name: string, categories: string[], sampleNames?: string) => `
 你是一位研究历史人物的传记专家。请为人物 "${name}" 撰写一份既有历史厚度又风趣幽默的传记。
 
 请严格返回以下格式的 JSON 对象：
@@ -30,8 +30,9 @@ export const ARCHIVE_PROMPT = (name: string, categories: string[], existingNames
 }
 
 特别要求：
-1. relationships 中的人物必须是实名历史人物，优先包含：[${existingNames.slice(0, 500)}]。
-2. 所有返回内容必须使用简体中文。
+1. relationships 中的人物必须是实名历史人物。为了保持时空网络的连通性，请优先尝试关联那些能够显著增加该人物历史交叉度的知名人物${sampleNames ? `（例如：${sampleNames} 等）` : ""}。
+2. 请务必使用广泛公认的学术标准中文译名，以确保数据一致性，避免重复录入。
+3. 所有返回内容必须使用简体中文。
 `;
 
 export const ARCHIVE_SCHEMA: Schema = {
@@ -60,7 +61,7 @@ export const ARCHIVE_SCHEMA: Schema = {
   required: ["keyword", "lifespan", "birthplace", "biography", "achievements", "category", "latitude", "longitude", "relationships"]
 };
 
-export const PATH_PROMPT = (source: string, target: string, existingNames: string) => `你是一位极其博学的人文历史百科专家。找出 "${source}" 和 "${target}" 之间【最短】且【最合理】的历史联系路径。
+export const PATH_PROMPT = (source: string, target: string, sampleNames?: string) => `你是一位极其博学的人文历史百科专家。找出 "${source}" 和 "${target}" 之间【最短】且【最合理】的历史联系路径。
 
 请严格返回以下格式的 JSON 对象：
 {
@@ -74,9 +75,10 @@ export const PATH_PROMPT = (source: string, target: string, existingNames: strin
 
 要求：
 1. 【极简主义】：必须采用最短路径。中间的人物（不包含起止点）最少可以是0个，最多不能超过5个。
-2. 【直接沟通优先】：如果这两个人能够直接认识、交流或有直接历史交集（例如老子和孔子、李白和杜甫等），必须直接相连，中间**绝不能**经过其他任何人。
-3. 避重就轻：优先使用以下馆藏中已有的人物：[${existingNames.slice(0, 500)}]。
-4. relationshipToPrevious 的描述必须在 20 到 30 个汉字之间，描述与其前一个人的真实历史交集（师生/政敌/亲属等）。
+2. 【直接沟通优先】：如果这两个人能够直接认识、交流或有直接历史交集（例如笔友、政敌、师生等），必须直接相连，中间**绝不能**经过其他任何人。
+3. 路径优选：在路径选择上，鼓励优先利用那些历史影响力重大且知名度高的节点${sampleNames ? `（如：${sampleNames} 等）` : ""}来建立稳固的逻辑联系。
+4. 命名规范：必须使用最公认的标准中文译名（如“伏尔泰”而非“法兰索瓦-马利·阿鲁埃”）。
+5. relationshipToPrevious 的描述必须在 20 到 30 个汉字之间，描述与其前一个人的真实历史交集。
 `;
 
 export const PATH_SCHEMA: Schema = {
@@ -97,7 +99,7 @@ export const PATH_SCHEMA: Schema = {
   required: ["chain"]
 };
 
-export const VALIDATION_PROMPT = (name: string, existingNames: string) => `用户输入了一个名称或代称： "${name}"
+export const VALIDATION_PROMPT = (name: string, sampleNames?: string) => `用户输入了一个名称或代称： "${name}"
 请严格返回唯一的 JSON 对象，格式必须如下：
 {
   "accepted": true 或 false，
@@ -106,10 +108,11 @@ export const VALIDATION_PROMPT = (name: string, existingNames: string) => `用�
 }
 
 规则：
-1. "normalizedName": 找出最符合该输入且最知名的历史人物标准中文译名。
-   - **重要**：如果该人物在以下馆藏名单中，请务必返回名单中的精确名称以避免重复：[${existingNames.slice(0, 1000)}]。
-   - 如果不在名单中，请返回该人物最公认的中文译名。
-2. "accepted": 布尔值。只要是在世人物、当代名人、敏感人物、虚构人物或非人物实体，都设为 false。真实历史人物设为 true。
+1. "normalizedName": 找出最符合该输入且最知名的真实历史人物标准中文译名。
+   - **核心一致性**：请务必返回该人物在学术界及主流百科中最通用、最权威的简体中文名称。
+   - 避免使用非常规译名、缩写或昵称。
+   - 如果系统已有一些知名馆藏（如：${sampleNames || "孔子、苏格拉底 等"}），请确保与这些广泛认可的命名风格保持一致。
+2. "accepted": 布尔值。只要是在世人物、当代名人、敏感人物、虚构人物或非人物实体（如公司、神话形象），都设为 false。真实且已故的历史人物设为 true。
 3. "reason": 如果 accepted 为 false，说明原因；如果为 true，简洁描述该人物的历史地位（20字以内）。
 `;
 

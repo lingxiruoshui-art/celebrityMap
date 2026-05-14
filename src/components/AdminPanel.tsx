@@ -8,13 +8,14 @@ import ConfirmDialog from "./ConfirmDialog";
 interface AdminPanelProps {
   onClose: () => void;
   onAuthorized?: () => void;
+  remainingQuota: number | null;
 }
 
 type Tab = "archive" | "archive_plus" | "config";
 type SortField = "created_at" | "views" | "name" | "category";
 type SortOrder = "asc" | "desc";
 
-export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
+export default function AdminPanel({ onClose, onAuthorized, remainingQuota: initialRemainingQuota }: AdminPanelProps) {
   const [activeTab, setActiveTab] = useState<Tab>("archive_plus");
   const [people, setPeople] = useState<Person[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -101,7 +102,7 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
 
   // Config states
   const [config, setConfig] = useState<any>({});
-  const [remainingQuota, setRemainingQuota] = useState<number | null>(null);
+  const [remainingQuota, setRemainingQuota] = useState<number | null>(initialRemainingQuota);
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [autoFetchLogs, setAutoFetchLogs] = useState<{type:string, msg:string}[]>([]);
   const logsContainerRef = useRef<HTMLDivElement>(null);
@@ -449,13 +450,15 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
 
   if (!isAuthorized) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-md bg-slate-900/40">
+      <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-md bg-slate-900/40">
         <div className="bg-white rounded-3xl shadow-2xl p-8 w-full max-w-md">
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-xl font-bold text-slate-800">管理员验证</h2>
-            <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-400">
-              <X className="w-5 h-5" />
-            </button>
+            <div className="flex items-center gap-3">
+              <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-400">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
           </div>
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
@@ -508,13 +511,18 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
   const paginatedPeople = filteredAndSortedPeople.slice(startIndex, startIndex + itemsPerPage);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 xl:p-8 backdrop-blur-md bg-slate-900/40 font-sans">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 xl:p-8 backdrop-blur-md bg-slate-900/40 font-sans">
       <div className="bg-white lg:rounded-[2rem] rounded-2xl shadow-2xl shadow-slate-900/20 w-full max-w-7xl overflow-hidden flex flex-col md:flex-row h-[90vh] md:h-[88vh]">
         {/* Sidebar */}
         <div className="w-full md:w-48 shrink-0 border-b md:border-b-0 md:border-r border-slate-100 flex flex-col bg-slate-50/50">
-          <div className="p-4 md:p-5 h-14 md:h-16 flex items-center gap-3 border-b border-slate-100 bg-white shrink-0">
-             <ShieldCheck className="w-5 h-5 text-indigo-600" />
-             <h2 className="font-bold text-slate-800 tracking-tight text-base md:text-lg">后台管理</h2>
+          <div className="p-4 md:p-5 h-14 md:h-16 flex items-center justify-between border-b border-slate-100 bg-white shrink-0">
+             <div className="flex items-center gap-3">
+               <ShieldCheck className="w-5 h-5 text-indigo-600" />
+               <h2 className="font-bold text-slate-800 tracking-tight text-base md:text-lg">后台管理</h2>
+             </div>
+             <button onClick={onClose} className="md:hidden p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-400">
+                <X className="w-5 h-5" />
+             </button>
           </div>
           
           <nav className="p-2 md:p-3 flex flex-row md:flex-col gap-1.5 space-y-0 md:space-y-1.5 overflow-x-auto custom-scrollbar shrink-0 bg-white md:bg-transparent">
@@ -573,7 +581,7 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
                 {activeTab === 'archive_plus' ? '时空入库' : activeTab === 'archive' ? '馆藏管理' : '系统配置'}
               </h3>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 sm:gap-4">
               {activeTab === 'config' && (
                 <button
                   onClick={saveAllConfig}
@@ -584,7 +592,7 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
                   {savingKey === 'all' ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-5 h-5" />}
                 </button>
               )}
-              <button onClick={onClose} className="p-2.5 hover:bg-slate-100 rounded-full transition-colors text-slate-400 hover:text-slate-600">
+              <button onClick={onClose} className="hidden md:flex p-2.5 hover:bg-slate-100 rounded-full transition-colors text-slate-400 hover:text-slate-600">
                 <X className="w-5 h-5" />
               </button>
             </div>

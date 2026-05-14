@@ -188,7 +188,7 @@ export default function App() {
       <div className="absolute inset-0 z-0 bg-gradient-to-br from-slate-50/80 via-slate-100/90 to-white/80 pointer-events-none" />
 
       {/* Header: Navigation & System Status */}
-      <header className="h-9 sm:h-11 shrink-0 border-b border-slate-200/50 bg-white/60 backdrop-blur-xl z-10 shadow-sm transition-all duration-500">
+      <header className="h-9 sm:h-11 shrink-0 border-b border-slate-200/50 bg-white/60 backdrop-blur-xl z-[70] shadow-sm transition-all duration-500">
         <div className="max-w-[1800px] w-full mx-auto h-full px-3 sm:px-6 flex items-center justify-between">
           <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-shrink-0">
             <div className="scale-75 sm:scale-100 origin-left flex shrink-0">
@@ -207,14 +207,14 @@ export default function App() {
             <div className="hidden lg:flex text-sm px-4 py-1.5 rounded-xl border border-slate-200 text-indigo-600 font-medium bg-white/80 shadow-sm whitespace-nowrap items-center justify-center">
               共收录：{data.people.length} 位
             </div>
-            {remainingQuota !== null && !isAuthorized && (
+            {remainingQuota !== null && (
               <div 
                 className="group relative flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1 sm:py-1.5 bg-indigo-50 border border-indigo-100 rounded-lg sm:rounded-xl transition-colors"
                 title="所有访客共用的每日探索额度，北京时间0点自动重置"
               >
                 <Zap className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-indigo-500 animate-pulse" />
                 <span className="text-[10px] sm:text-xs font-bold text-slate-600 flex items-center gap-1">
-                  <span className="hidden sm:group-hover:inline transition-all duration-300 whitespace-nowrap">网站今日剩余次数:</span>
+                  <span className="hidden sm:group-hover:inline transition-all duration-300 whitespace-nowrap">今天剩余探索次数</span>
                   <span className="text-indigo-600 font-black">{remainingQuota}</span>
                 </span>
               </div>
@@ -389,8 +389,10 @@ export default function App() {
                   <h3 className="text-xs uppercase tracking-widest text-slate-400 font-bold mb-4 flex items-center gap-2">
                     <BookOpen className="w-4 h-4 text-slate-400" /> 人物小传
                   </h3>
-                  <div className="text-slate-600 leading-relaxed text-base whitespace-pre-wrap font-medium bg-indigo-50/30 p-5 rounded-2xl border border-indigo-100/50 shadow-inner">
-                    {selectedPerson.biography}
+                  <div className="text-slate-600 leading-relaxed text-base font-medium bg-indigo-50/30 p-5 rounded-2xl border border-indigo-100/50 shadow-inner space-y-5 text-justify">
+                    {selectedPerson.biography?.split('\n').filter(p => p.trim()).map((para: string, idx: number) => (
+                      <p key={idx}>{para}</p>
+                    ))}
                   </div>
                 </div>
 
@@ -640,6 +642,7 @@ export default function App() {
 
       {isAdminOpen && (
         <AdminPanel
+          remainingQuota={remainingQuota}
           onClose={() => {
             setIsAdminOpen(false);
             fetchArchive();
