@@ -102,9 +102,11 @@ export const PATH_SCHEMA: Schema = {
 export const VALIDATION_PROMPT = (names: string[], sampleNames?: string) => `辨识历史人物： ${names.map(n => `"${n}"`).join(' 和 ')}
 请严格返回 JSON 对象，包含 results 数组，对应每个输入的人物。
 注意：
-- accepted字段：仅限真实已故历史人物为 true，其余(如虚构、在世、非人类实体)一律为 false。
-- normalizedName字段：该人物公认的标准中文全名。确保名称与现有馆藏风格统一 ${sampleNames ? `(参考: ${sampleNames})` : ""}。
-- reason字段：10字内描述其核心历史身份。`;
+- accepted：仅限真实已故历史人物为 true，其余(虚构、在世、非人类实体等)一律为 false。
+- normalizedName：该人物公认的标准中文全名。参考现有风格：${sampleNames || "无"}。
+- reason：极简描述其历史身份(限10字内)。
+
+必须直接返回合法的 JSON，不要有多余的提示说明，要求极速响应。`;
 
 export const VALIDATION_SCHEMA: Schema = {
   type: Type.OBJECT,

@@ -208,9 +208,12 @@ export async function runExplorationTask(
       }
 
       if (results && results.length > 0) {
-        for (const res of results) {
-          if (res.name === source) srcValid = res;
-          else if (res.name === target) tgtValid = res;
+        for (let i = 0; i < results.length; i++) {
+          const res = results[i];
+          const queryName = i < missingValidationNames.length ? missingValidationNames[i] : (res.name || "");
+          
+          if (res.name === source || queryName === source || (source.includes(res.name) && res.name.length > 1)) srcValid = res;
+          else if (res.name === target || queryName === target || (target.includes(res.name) && res.name.length > 1)) tgtValid = res;
         }
       } else {
         throw new Error("系统未能识别该人物");
@@ -450,6 +453,10 @@ export async function runExplorationTask(
     if (e.message === "AbortError") return;
     state.status = "error";
     state.error = e.message;
-    await saveState();
+    try {
+      await saveState();
+    } catch (saveErr) {
+      console.error("Failed to save error state:", saveErr);
+    }
   }
 }

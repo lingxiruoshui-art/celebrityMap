@@ -210,11 +210,13 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
         } : undefined
       });
 
+      let timeoutId: any;
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error("Timeout")), 120000);
+        timeoutId = setTimeout(() => reject(new Error("Timeout")), 120000);
       });
 
       const result = await Promise.race([generatePromise, timeoutPromise]) as any;
+      clearTimeout(timeoutId);
       cleanup();
 
       const duration = Date.now() - startTime;

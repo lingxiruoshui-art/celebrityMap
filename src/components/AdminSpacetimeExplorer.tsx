@@ -419,7 +419,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                 <button 
                   onClick={(e) => {
                     e.stopPropagation();
-                    clearResults();
+                    clearResults(true);
                   }}
                   className="mt-2 text-[11px] font-bold py-1.5 px-3 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors w-fit border border-indigo-200"
                 >
@@ -505,7 +505,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
      }
   }, []); // Only on mount
 
-  const clearResults = async () => {
+  const clearResults = async (forceServerReset = false) => {
     const isJustRejectionError = typeof error === 'string' && (error.includes("探索正在进行中") || error.includes("重置状态"));
     
     isResettingRef.current = true;
@@ -519,7 +519,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     setNewArrivals([]);
     hasAutoExpandedRunningRef.current = false;
     
-    if (isAdmin && !isJustRejectionError) {
+    if ((isAdmin && !isJustRejectionError) || forceServerReset) {
       try {
         const headers: any = {};
         if (isAdmin) headers["x-admin-password"] = localStorage.getItem("admin_password") || "";
