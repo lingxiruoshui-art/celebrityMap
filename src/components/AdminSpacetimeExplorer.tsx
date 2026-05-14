@@ -482,14 +482,29 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
       });
       
       const contentType = res.headers.get("content-type");
-      if (!res.ok || !contentType || !contentType.includes("application/json")) {
+      if (!res.ok || !contentType || !(contentType.includes("application/json") || contentType.includes("text/event-stream"))) {
           const text = await res.text();
           console.error("Start explore error:", text);
           throw new Error(`无法启动探索: ${res.status}`);
       }
       
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      if (contentType.includes("text/event-stream")) {
+        // Read stream in background to keep it alive
+        const reader = res.body?.getReader();
+        if (reader) {
+          (async () => {
+             try {
+               while (true) {
+                 const { done } = await reader.read();
+                 if (done) break;
+               }
+             } catch (e) {}
+          })();
+        }
+      } else {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+      }
     } catch (err: any) {
       setError(err.message || "探索过程中发生未知错误。");
       setIsLoading(false);

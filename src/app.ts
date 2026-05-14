@@ -3,7 +3,7 @@ import { streamSSE } from "hono/streaming";
 import { GoogleGenAI } from "@google/genai";
 import { D1DatabaseAdapter, DatabaseAdapter } from "./db.ts";
 import { CATEGORIES, FIGURE_POOL } from "./figuresPool.ts";
-import { ARCHIVE_PROMPT, ARCHIVE_SCHEMA, PATH_PROMPT, PATH_SCHEMA, VALIDATION_PROMPT, VALIDATION_SCHEMA } from "./services/geminiService.ts";
+import { ARCHIVE_PROMPT, ARCHIVE_SCHEMA, PATH_PROMPT, PATH_SCHEMA, VALIDATION_PROMPT, VALIDATION_SCHEMA } from "./services/aiService.ts";
 import { runExplorationTask } from "./exploreTask.ts";
 
 const root = new Hono<{ 
@@ -1033,32 +1033,36 @@ app.post("/explore/start", async (c) => {
       await setConfig(db, "explore_state", stateStr);
   }
 
-  const task = runExplorationTask(
-      db, source, target, callAI, getConfig, setConfig, addRelationship, 
-      ARCHIVE_PROMPT, ARCHIVE_SCHEMA, PATH_PROMPT, PATH_SCHEMA, VALIDATION_PROMPT, VALIDATION_SCHEMA, 
-      c, !!isAdmin,
-      async (msg) => {
-          // Log pulse for debugging in background task
+  // Return SSE to keep the Cloudflare Worker isolate alive while the AI is computing
+  return streamSSE(c, async (stream) => {
+      // Re-bind the pulse callback to also write to the stream
+      const originalPulse = async (msg: string) => {
           if (msg !== 'heartbeat') console.log(`[Explore Pulse] ${msg}`);
-      }
-  );
-  
-  // Safe check for waitUntil to prevent "no executioncontext" error on non-Worker platforms
-  const hasWaitUntil = (() => {
-      try {
-          return c.executionCtx && typeof c.executionCtx.waitUntil === 'function';
-      } catch (e) {
-          return false;
-      }
-  })();
+          try {
+             await stream.writeSSE({ data: JSON.stringify({ type: msg === 'heartbeat' ? 'ping' : 'msg', text: msg }) });
+          } catch (e) {
+             // Client might have disconnected, ignore
+          }
+      };
 
-  if (hasWaitUntil) {
-      c.executionCtx.waitUntil(task.catch((err: any) => console.error("Background task error:", err)));
-  } else {
-      task.catch((err: any) => console.error("Background task error:", err));
-  }
-  
-  return c.json({ success: true, status: 'running' });
+      // Create a background promise that tracks the task
+      const taskWithStream = runExplorationTask(
+          db, source, target, callAI, getConfig, setConfig, addRelationship, 
+          ARCHIVE_PROMPT, ARCHIVE_SCHEMA, PATH_PROMPT, PATH_SCHEMA, VALIDATION_PROMPT, VALIDATION_SCHEMA, 
+          c, !!isAdmin,
+          originalPulse
+      );
+
+      try {
+          await taskWithStream;
+      } catch (err: any) {
+          console.error("Background task error:", err);
+      } finally {
+          try {
+              await stream.writeSSE({ data: JSON.stringify({ type: 'done' }) });
+          } catch (e) {}
+      }
+  });
 });
 
 app.post("/explore/stop", async (c) => {

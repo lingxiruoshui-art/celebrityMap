@@ -305,7 +305,7 @@ export async function runExplorationTask(
 
     const bridgeStartTime = Date.now();
     const bridgeText = await callAIProxy(
-      PATH_PROMPT(normalizedSource, normalizedTarget, sampleNames),
+      PATH_PROMPT(normalizedSource, normalizedTarget),
       "json",
       PATH_SCHEMA,
       undefined, // Default timeout or use specific
