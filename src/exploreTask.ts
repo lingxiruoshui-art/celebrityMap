@@ -155,11 +155,15 @@ export async function runExplorationTask(
             setTimeout(() => reject(new Error("请求超时")), timeoutMs);
           });
           text = await Promise.race([
-            callAI(c, db, prompt, responseFormat, schema),
+            callAI(c, db, prompt, responseFormat, schema, async () => {
+              await saveState("AI推理维持心跳");
+            }),
             timeoutPromise
           ]);
         } else {
-          text = await callAI(c, db, prompt, responseFormat, schema);
+          text = await callAI(c, db, prompt, responseFormat, schema, async () => {
+              await saveState("AI推理维持心跳");
+          });
         }
         addLog("AI 响应解码成功", "ai-res", { rawText: text.substring(0, 100) + "..." });
         return text;

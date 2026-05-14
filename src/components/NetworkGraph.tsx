@@ -625,7 +625,7 @@ export default function NetworkGraph({
   const initialTop = selectedRelationship ? Math.max(16, Math.min(dimensions.height - 200, selectedRelationship.y < 350 ? selectedRelationship.y + 20 : selectedRelationship.y - Math.min(300, dimensions.height / 2))) : 0;
 
   return (
-    <div ref={containerRef} className="w-full h-full cursor-grab active:cursor-grabbing relative overflow-visible">
+    <div ref={containerRef} className="w-full h-full cursor-default relative overflow-visible">
       <style>{`
         @keyframes colorful-glow {
           0% { stroke: #818cf8; }

@@ -110,14 +110,26 @@ const getAdminPassword = (c: any) => {
     return (c.env && c.env.ADMIN_PASSWORD) || (typeof process !== "undefined" && process.env.ADMIN_PASSWORD) || "admin";
 };
 
-export async function callAI(c: any, db: DatabaseAdapter, prompt: string, responseFormat: "text" | "json" = "text", schema?: any): Promise<string> {
+export async function callAI(c: any, db: DatabaseAdapter, prompt: string, responseFormat: "text" | "json" = "text", schema?: any, onStreamPulse?: () => Promise<void>): Promise<string> {
   const provider = await getConfig(db, "active_model_provider", "gemini");
+  
+  // Set up an interval to send heartbeats to the frontend every 15 seconds to prevent Cloudflare from dropping the connection
+  let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  if (onStreamPulse) {
+      heartbeatTimer = setInterval(() => {
+          onStreamPulse().catch(console.error);
+      }, 15000);
+  }
+
+  const cleanup = () => {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+  };
   
   if (provider === "aliyun") {
     const apiKey = await getConfig(db, "aliyun_api_key");
     const modelId = await getConfig(db, "aliyun_model_id");
-    if (!apiKey) throw new Error("缺少 Aliyun API Key");
-    if (!modelId) throw new Error("缺少 Aliyun 模型 ID");
+    if (!apiKey) { cleanup(); throw new Error("缺少 Aliyun API Key"); }
+    if (!modelId) { cleanup(); throw new Error("缺少 Aliyun 模型 ID"); }
     
     const systemContent = `你是一个历史学和百科知识专家。当被要求返回 JSON 时，请严格遵守指定的 schema，且只返回 JSON 原始内容。不要包含任何 Markdown 格式。`;
 
@@ -144,6 +156,7 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
       });
       
       clearTimeout(timeoutId);
+      cleanup();
       
       if (!res.ok) {
         console.error(`Aliyun API error: ${res.status} ${res.statusText}`);
@@ -175,14 +188,15 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
       return content;
     } catch (err: any) {
       clearTimeout(timeoutId);
+      cleanup();
       if (err.name === 'AbortError') throw new Error("AI 调用超时 (120s)");
       throw err;
     }
   } else {
     const apiKey = (await getConfig(db, "gemini_api_key")) || (c.env && c.env.GEMINI_API_KEY) || (typeof process !== "undefined" && process.env.GEMINI_API_KEY);
     const modelId = (await getConfig(db, "gemini_model_id")) || (c.env && c.env.GEMINI_MODEL_ID) || (typeof process !== "undefined" && process.env.GEMINI_MODEL_ID) || "gemini-1.5-flash";
-    if (!apiKey) throw new Error("缺少 Gemini API Key");
-    if (!modelId) throw new Error("缺少 Gemini 模型 ID");
+    if (!apiKey) { cleanup(); throw new Error("缺少 Gemini API Key"); }
+    if (!modelId) { cleanup(); throw new Error("缺少 Gemini 模型 ID"); }
     
     const ai = new GoogleGenAI({ apiKey });
     const startTime = Date.now();
@@ -201,6 +215,7 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
       });
 
       const result = await Promise.race([generatePromise, timeoutPromise]) as any;
+      cleanup();
 
       const duration = Date.now() - startTime;
       console.log(`Gemini call took ${duration}ms`);
@@ -226,6 +241,7 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
       }
       return content;
     } catch (err: any) {
+      cleanup();
       const duration = Date.now() - startTime;
       console.error(`Gemini call failed after ${duration}ms:`, err);
       if (err.message === "Timeout") throw new Error("AI 调用超时 (120s)");
@@ -753,7 +769,9 @@ app.post("/archive-figure", async (c) => {
               }
               重要：请尝试建立与已知时空节点的联系（如：${sampleNames} 等）。请使用标准权威的中文译名。`;
 
-              let resultText = await callAI(c, db, prompt, "json");
+              let resultText = await callAI(c, db, prompt, "json", undefined, async () => {
+                  await send({ type: 'heartbeat', msg: 'AI 仍在思考中...' });
+              });
               let data: any = {};
               try {
                   let rawData = JSON.parse(resultText || "{}");
