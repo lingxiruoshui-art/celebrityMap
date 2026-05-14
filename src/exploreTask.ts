@@ -173,18 +173,19 @@ export async function runExplorationTask(
       }
     };
 
-    const validate = async (name: string) => {
-      // 先尝试库内精确匹配，减少 AI 调用
-      const p = (await db.prepare("SELECT name FROM people WHERE name = ?").get(name)) as any;
-      if (p)
-        return {
-          accepted: true,
-          normalizedName: p.name,
-          reason: "馆藏库内已存身份",
-        };
+    const missingValidationNames: string[] = [];
+    const srcInDb = (await db.prepare("SELECT name FROM people WHERE name = ?").get(source)) as any;
+    if (!srcInDb) missingValidationNames.push(source);
+    
+    const tgtInDb = (await db.prepare("SELECT name FROM people WHERE name = ?").get(target)) as any;
+    if (!tgtInDb && source !== target) missingValidationNames.push(target);
 
+    let srcValid: any = { accepted: true, normalizedName: srcInDb?.name || source };
+    let tgtValid: any = { accepted: true, normalizedName: tgtInDb?.name || target };
+
+    if (missingValidationNames.length > 0) {
       const text = await callAIProxy(
-        VALIDATION_PROMPT(name, sampleNames),
+        VALIDATION_PROMPT(missingValidationNames, sampleNames),
         "json",
         VALIDATION_SCHEMA,
         120000
@@ -192,23 +193,30 @@ export async function runExplorationTask(
       let parsed: any = {};
       try {
         let rawParsed = JSON.parse(text || "{}");
-        parsed =
-          Array.isArray(rawParsed) && rawParsed.length > 0
-            ? rawParsed[0]
-            : rawParsed;
+        parsed = rawParsed;
       } catch (e) {
-        return { accepted: false, reason: "AI 响应解析失败" };
+        throw new Error("AI 响应解析失败");
       }
-      if (parsed.accepted === undefined) {
-        if (parsed.result && parsed.result.accepted !== undefined)
-          parsed = parsed.result;
-        else return { accepted: false, reason: "系统未能识别该人物" };
+      
+      let results = [];
+      if (parsed.results) {
+          results = parsed.results;
+      } else if (parsed.result && parsed.result.results) {
+          results = parsed.result.results;
+      } else if (Array.isArray(parsed)) {
+          results = parsed;
       }
-      return parsed;
-    };
 
-    const srcValid = await validate(source);
-    const tgtValid = await validate(target);
+      if (results && results.length > 0) {
+        for (const res of results) {
+          if (res.name === source) srcValid = res;
+          else if (res.name === target) tgtValid = res;
+        }
+      } else {
+        throw new Error("系统未能识别该人物");
+      }
+    }
+
     if (!srcValid.accepted)
       throw new Error(`起点人物无效: ${srcValid.reason || "原因未知"}`);
     if (!tgtValid.accepted)

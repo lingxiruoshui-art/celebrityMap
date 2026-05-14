@@ -565,7 +565,7 @@ export default function App() {
               <Sparkles className="w-4 h-4" /> 全景图谱
             </h2>
             <div className="absolute left-4 right-4 sm:left-auto sm:right-6 top-2 z-30 flex justify-end origin-top-right">
-              <div className="bg-white/95 backdrop-blur-md rounded-lg border border-slate-200/60 shadow-xl overflow-hidden flex flex-col max-h-[85dvh] sm:max-h-[calc(100dvh-120px)] w-full sm:w-max max-w-full">
+              <div className="bg-white/95 backdrop-blur-md rounded-lg border border-slate-200/60 shadow-xl overflow-hidden flex flex-col max-h-[85dvh] sm:max-h-[calc(100dvh-120px)] w-full sm:w-[320px]">
                 <SpacetimeExplorer
                   onClose={() => setIsSixDegreesOpen(false)}
                   onRefreshArchive={fetchArchive}

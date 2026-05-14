@@ -113,6 +113,17 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   }, []);
 
   const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isLoading) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isLoading]);
   const [hasInitialCheckDone, setHasInitialCheckDone] = useState(false);
   const [sourceOptions, setSourceOptions] = useState<string[]>([]);
   const [targetOptions, setTargetOptions] = useState<string[]>([]);
@@ -460,6 +471,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
       return;
     }
 
+    setSearchSteps([{ msg: "正在初始化跨时空检索协议...", status: "pending", startTime: Date.now() }]);
     pollStatusRef.current = true;
     
     try {
@@ -525,7 +537,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
       {!isCollapsed && (
         <div className={`flex-1 flex flex-col lg:flex-row items-stretch overflow-hidden min-h-0 bg-white`}>
           {/* Main Controls & Results Column (Responsive Width - Now on Left) */}
-          <div className={`${showLogs ? "w-full lg:w-[480px] xl:w-[560px] lg:border-r border-slate-100 bg-slate-50/20 shadow-[-10px_0_20px_-10px_rgba(0,0,0,0.05)_inset]" : "w-full max-w-[440px] mx-auto"} flex flex-col flex-1 lg:flex-none lg:shrink-0 overflow-hidden min-h-0 max-h-full`}>
+          <div className={`${showLogs ? "w-full lg:w-[360px] xl:w-[400px] lg:border-r border-slate-100 bg-slate-50/20 shadow-[-10px_0_20px_-10px_rgba(0,0,0,0.05)_inset]" : "w-full max-w-[440px] mx-auto"} flex flex-col flex-1 lg:flex-none lg:shrink-0 overflow-hidden min-h-0 max-h-full`}>
               <div className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5 sm:px-6 sm:pb-6 space-y-4">
                 {!showResults && !error && !hideInputs && (
                   <div className="space-y-3 pt-0 pb-6 border-b border-slate-100 mb-2">
@@ -862,10 +874,10 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     const finalWidth = isPane 
       ? 'w-full' 
       : isShowingData && showLogs 
-        ? 'w-full lg:w-[1200px] xl:w-[1300px]' 
+        ? 'w-full md:w-[680px] lg:w-[680px] xl:w-[740px]' 
         : isShowingData 
-          ? 'w-full sm:w-[440px]' 
-          : 'w-full sm:w-[380px]';
+          ? 'w-full sm:w-[440px] md:w-[350px] lg:w-[350px]' 
+          : 'w-full sm:w-[380px] md:w-[320px] lg:w-[320px]';
 
     return (
       <div className={`flex flex-col min-h-0 overflow-hidden h-full max-w-full transition-all duration-300 ${isCollapsed ? 'w-auto' : finalWidth}`}>
