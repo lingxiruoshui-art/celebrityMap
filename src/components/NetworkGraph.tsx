@@ -333,7 +333,7 @@ export default function NetworkGraph({
       .data(processedPeople)
       .join("g")
       .attr("class", "node-group")
-      .style("cursor", "default")
+      .style("cursor", "pointer")
       .on("click", (event, d: any) => onSelectRef.current?.(d.id))
       .on("mouseenter", function(event, d: any) {
         isHoveringNode = true;

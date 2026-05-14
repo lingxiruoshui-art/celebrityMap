@@ -316,7 +316,7 @@ export default function App() {
                 <div className="flex items-start gap-6">
                   <button
                     onClick={() => setZoomedImage(selectedPerson.image_url)}
-                    className="w-32 h-44 bg-gradient-to-br from-slate-100 to-slate-200 rounded-2xl border border-slate-200/50 flex-shrink-0 relative overflow-hidden shadow-inner flex items-center justify-center group cursor-default"
+                    className="w-32 h-44 bg-gradient-to-br from-slate-100 to-slate-200 rounded-2xl border border-slate-200/50 flex-shrink-0 relative overflow-hidden shadow-inner flex items-center justify-center group cursor-zoom-in"
                   >
                     {selectedPerson.image_url ? (
                       <img

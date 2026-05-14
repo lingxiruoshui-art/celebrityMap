@@ -859,7 +859,7 @@ app.get("/explore/status", async (c) => {
   
   if (data && data.status === 'running') {
       const diff = data.lastHeartbeat ? (Date.now() - data.lastHeartbeat) : Infinity;
-      if (diff > 150000) { // 150 seconds
+      if (diff > 300000) { // 300 seconds
           data.status = 'error';
           data.error = '探索任务可能已意外中断或超时。系统检测到心跳丢失，请尝试重置后重新开始。';
           const newState = JSON.stringify(data);
@@ -983,7 +983,7 @@ app.post("/explore/start", async (c) => {
   }
   if (currentStr !== "null") {
       const current = JSON.parse(currentStr);
-      const isStale = current.status === 'running' && (!current.lastHeartbeat || (Date.now() - current.lastHeartbeat > 150000)); // 150 seconds
+      const isStale = current.status === 'running' && (!current.lastHeartbeat || (Date.now() - current.lastHeartbeat > 300000)); // 300 seconds
       
       if (current.status === 'running' && !isStale) {
           return c.json({ error: "探索正在进行中，请稍候。若任务已长久挂起，请重置状态后重试。" }, 400);
