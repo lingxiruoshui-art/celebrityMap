@@ -61,25 +61,12 @@ export const ARCHIVE_SCHEMA: Schema = {
   required: ["keyword", "lifespan", "birthplace", "biography", "achievements", "category", "latitude", "longitude", "relationships"]
 };
 
-export const PATH_PROMPT = (source: string, target: string, sampleNames?: string) => `你是一位极其博学的人文历史百科专家。找出 "${source}" 和 "${target}" 之间【最短】且【最合理】的历史联系路径。
-
-请严格返回以下格式的 JSON 对象：
-{
-  "chain": [
-    { "name": "${source}", "relationshipToPrevious": "" },
-    { "name": "中间人物1", "relationshipToPrevious": "与前一个人物的详细关系描述" },
-    ...
-    { "name": "${target}", "relationshipToPrevious": "与前一个人物的详细关系描述" }
-  ]
-}
-
-要求：
-1. 【极简主义】：必须采用最短路径。中间的人物（不包含起止点）最少可以是0个，最多不能超过5个。
-2. 【直接沟通优先】：如果这两个人能够直接认识、交流或有直接历史交集（例如笔友、政敌、师生等），必须直接相连，中间**绝不能**经过其他任何人。
-3. 路径优选：在路径选择上，鼓励优先利用那些历史影响力重大且知名度高的节点${sampleNames ? `（如：${sampleNames} 等）` : ""}来建立稳固的逻辑联系。
-4. 命名规范：必须使用最公认的标准中文译名（如“伏尔泰”而非“法兰索瓦-马利·阿鲁埃”）。
-5. relationshipToPrevious 的描述必须在 20 到 30 个汉字之间，描述与其前一个人的真实历史交集。
-`;
+export const PATH_PROMPT = (source: string, target: string, sampleNames?: string) => `找出 "${source}" 和 "${target}" 之间的最短历史联系路径。要求：
+1. 最短路径：中间人物0-5个。若两人有直接历史交集，则必须直接相连(0个中间人)。
+2. 优先通过世界知名历史人物${sampleNames ? `(如: ${sampleNames})` : ""}联系。
+3. 使用公认的标准中文全名。
+4. relationshipToPrevious：20字以内极简概括两人真实历史交集。
+请极速思考并直接返回合法的 JSON 对象。`;
 
 export const PATH_SCHEMA: Schema = {
   type: Type.OBJECT,
