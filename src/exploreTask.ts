@@ -6,7 +6,7 @@ export interface ExploreState {
   target: string;
   explorerId?: string;
   logs: { timestamp: string; msg: string; type: string; data?: any }[];
-  steps: { msg: string; status: string }[];
+  steps: { msg: string; status: string; startTime?: number }[];
   path: any[] | null;
   newArrivals: string[];
   error: string | null;
@@ -84,7 +84,7 @@ export async function runExplorationTask(
   };
 
   const addStep = (msg: string) => {
-    state.steps.push({ msg, status: "pending" });
+    state.steps.push({ msg, status: "pending", startTime: Date.now() });
   };
 
   const updateLastStep = (
@@ -113,7 +113,7 @@ export async function runExplorationTask(
     const peopleCount = peopleCountRow.count;
     
     // 随机抽取少量样本作为 AI 提示词参考，避免随着数据增加导致 Prompt 过长
-    const samplePeople = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 20").all() as any[];
+    const samplePeople = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 8").all() as any[];
     const sampleNames = samplePeople.map((p) => p.name).join("、");
 
     const provider = await getConfig(db, "active_model_provider", "gemini");
@@ -136,16 +136,28 @@ export async function runExplorationTask(
       prompt: string,
       responseFormat: "text" | "json" = "json",
       schema?: any,
+      timeoutMs?: number
     ) => {
       addLog(`AI 代理请求发送`, "ai-req", { prompt, responseFormat, schema });
       await saveState();
       try {
-        const text = await callAI(c, db, prompt, responseFormat, schema);
+        let text: string;
+        if (timeoutMs) {
+          const timeoutPromise = new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error("请求超时")), timeoutMs);
+          });
+          text = await Promise.race([
+            callAI(c, db, prompt, responseFormat, schema),
+            timeoutPromise
+          ]);
+        } else {
+          text = await callAI(c, db, prompt, responseFormat, schema);
+        }
         addLog("AI 响应解码成功", "ai-res", { rawText: text });
         return text;
       } catch (e: any) {
         addLog("AI 服务响应失败", "error", e.message);
-        throw new Error(e.message || "AI 服务异常");
+        throw new Error(e.message === "请求超时" ? "AI 探索思考时间过长，已中断" : (e.message || "AI 服务异常"));
       }
     };
 
@@ -163,6 +175,7 @@ export async function runExplorationTask(
         VALIDATION_PROMPT(name, sampleNames),
         "json",
         VALIDATION_SCHEMA,
+        60000
       );
       let parsed: any = {};
       try {
@@ -215,7 +228,7 @@ export async function runExplorationTask(
         .all(p.id)) as any[];
       const rows2 = (await db
         .prepare(
-          `SELECT p.name as targetName, '' as type FROM relationships r JOIN people p ON (r.person1_id = p.id) WHERE r.person2_id = ?`,
+          `SELECT p.name as targetName, r.relationship_type as type FROM relationships r JOIN people p ON (r.person1_id = p.id) WHERE r.person2_id = ?`,
         )
         .all(p.id)) as any[];
       return [...rows, ...rows2];
@@ -254,14 +267,19 @@ export async function runExplorationTask(
     }
 
     updateLastStep("success", "现有馆藏中无直接路径，启动 AI 逻辑推理...");
-    addStep("AI 正在编织历史脉络...");
+    addStep("AI 专家正在深度检索时空档案...");
     await saveState();
 
     const bridgeText = await callAIProxy(
       PATH_PROMPT(normalizedSource, normalizedTarget, sampleNames),
       "json",
       PATH_SCHEMA,
+      180000
     );
+    addLog("已获取 AI 连通路径", "info", { result: bridgeText });
+    updateLastStep("success", "AI 已成功规划时空路径");
+    addStep("正在验证并激活路径上的关键节点...");
+    await saveState();
     let bridgeData: any = { chain: [] };
     try {
       let rawBridge = JSON.parse(bridgeText || "{}");
@@ -298,25 +316,25 @@ export async function runExplorationTask(
       "医学家",
       "其他历史名人",
     ];
-    for (let i = 0; i < chain.length; i++) {
-      const step = chain[i];
+    const missingNames = [];
+    for (const step of chain) {
       if (!step.name) continue;
-      addStep(`正在处理节点: ${step.name}...`);
+      const p = (await db
+        .prepare("SELECT id FROM people WHERE name = ?")
+        .get(step.name)) as any;
+      if (!p) missingNames.push(step.name);
+    }
+
+    if (missingNames.length > 0) {
+      addStep(`正在同步 ${missingNames.length} 个缺失的时空锚点资料...`);
       await saveState();
 
-      const p = (await db
-        .prepare("SELECT id, biography FROM people WHERE name = ?")
-        .get(step.name)) as any;
-      if (!p || !p.biography) {
-        updateLastStep(
-          "pending",
-          `正在为新发现的人物 ${step.name} 撰写传记...`,
-        );
-        await saveState();
+      await Promise.all(missingNames.map(async (name) => {
         const archiveText = await callAIProxy(
-          ARCHIVE_PROMPT(step.name, categories, sampleNames),
+          ARCHIVE_PROMPT(name, categories, sampleNames),
           "json",
           ARCHIVE_SCHEMA,
+          90000
         );
         let personData: any = {};
         try {
@@ -326,12 +344,11 @@ export async function runExplorationTask(
               ? rawPerson[0]
               : rawPerson;
         } catch (e) {
-          throw new Error("AI 生成的人物传记无法解析，探索被中断。");
+          throw new Error(`AI 生成人物 ${name} 的传记无法解析`);
         }
         if (!personData.biography && personData.result)
           personData = personData.result;
 
-        // Save person
         await db
           .prepare(
             `
@@ -341,7 +358,7 @@ export async function runExplorationTask(
             `,
           )
           .run(
-            step.name,
+            name,
             personData.category || "未知",
             personData.keyword || "",
             personData.biography || "",
@@ -352,25 +369,29 @@ export async function runExplorationTask(
             personData.latitude || 0,
             personData.longitude || 0,
           );
+        state.newArrivals.push(name);
+      }));
+      updateLastStep("success", `成功同步 ${missingNames.length} 个时空锚点`);
+    }
 
-        state.newArrivals.push(step.name);
-      }
+    for (let i = 0; i < chain.length; i++) {
+        const step = chain[i];
+        if (!step.name) continue;
 
-      if (i > 0) {
-        let p1 = (await db
-          .prepare("SELECT id FROM people WHERE name = ?")
-          .get(chain[i - 1].name)) as any;
-        let p2 = (await db
-          .prepare("SELECT id FROM people WHERE name = ?")
-          .get(step.name)) as any;
-        if (p1 && p2)
-          await addRelationship(db, p1.id, p2.id, step.relationshipToPrevious);
-      }
+        if (i > 0) {
+          let p1 = (await db
+            .prepare("SELECT id FROM people WHERE name = ?")
+            .get(chain[i - 1].name)) as any;
+          let p2 = (await db
+            .prepare("SELECT id FROM people WHERE name = ?")
+            .get(step.name)) as any;
+          if (p1 && p2)
+            await addRelationship(db, p1.id, p2.id, step.relationshipToPrevious);
+        }
 
-      finalPath.push({ name: step.name, type: step.relationshipToPrevious });
-      state.path = [...finalPath];
-      updateLastStep("success");
-      await saveState();
+        finalPath.push({ name: step.name, type: step.relationshipToPrevious });
+        state.path = [...finalPath];
+        await saveState();
     }
 
     state.status = "success";

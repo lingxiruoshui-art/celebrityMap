@@ -99,22 +99,16 @@ export const PATH_SCHEMA: Schema = {
   required: ["chain"]
 };
 
-export const VALIDATION_PROMPT = (name: string, sampleNames?: string) => `用户输入了一个名称或代称： "${name}"
-请严格返回唯一的 JSON 对象，格式必须如下：
+export const VALIDATION_PROMPT = (name: string, sampleNames?: string) => `辨识历史人物： "${name}"
+请严格返回 JSON 对象：
 {
-  "accepted": true 或 false，
-  "normalizedName": "人物标准中文名",
-  "reason": "判断理由"
+  "accepted": true/false (仅限真实已故历史人物为 true，其余为 false),
+  "normalizedName": "该人物公认的标准中文全名",
+  "reason": "10字内描述其核心历史身份"
 }
-
-规则：
-1. "normalizedName": 找出最符合该输入且最知名的真实历史人物标准中文译名。
-   - **核心一致性**：请务必返回该人物在学术界及主流百科中最通用、最权威的简体中文名称。
-   - 避免使用非常规译名、缩写或昵称。
-   - 如果系统已有一些知名馆藏（如：${sampleNames || "孔子、苏格拉底 等"}），请确保与这些广泛认可的命名风格保持一致。
-2. "accepted": 布尔值。只要是在世人物、当代名人、敏感人物、虚构人物或非人物实体（如公司、神话形象），都设为 false。真实且已故的历史人物设为 true。
-3. "reason": 如果 accepted 为 false，说明原因；如果为 true，简洁描述该人物的历史地位（20字以内）。
-`;
+注意：
+- 确保名称与现有馆藏风格统一 ${sampleNames ? `(参考: ${sampleNames})` : ""}。
+- 虚构、在世、非人类实体一律拒绝。`;
 
 export const VALIDATION_SCHEMA: Schema = {
   type: Type.OBJECT,

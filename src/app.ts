@@ -144,6 +144,7 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
     
     const systemContent = `你是一个历史学和百科知识专家。当被要求返回 JSON 时，请严格遵守指定的 schema，且只返回 JSON 原始内容...`;
 
+    const startTime = Date.now();
     const res = await fetch("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -160,8 +161,13 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
       })
     });
     
-    if (!res.ok) throw new Error(`Aliyun API error`);
+    if (!res.ok) {
+      console.error(`Aliyun API error: ${res.status} ${res.statusText}`);
+      throw new Error(`Aliyun API error`);
+    }
     const json = await res.json() as any;
+    const duration = Date.now() - startTime;
+    console.log(`Aliyun call took ${duration}ms`);
     let content = json.choices[0].message.content || "";
     content = content.replace(/<think>[\s\S]*?<\/think>/ig, '').trim();
     if (responseFormat === "json") {
@@ -190,35 +196,44 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
     if (!modelId) throw new Error("缺少 Gemini 模型 ID");
     
     const ai = new GoogleGenAI({ apiKey });
-    const result = await ai.models.generateContent({
-      model: modelId,
-      contents: prompt,
-      config: responseFormat === "json" ? { 
-        responseMimeType: "application/json",
-        responseSchema: schema 
-      } : undefined
-    });
-    let content = result.text || "";
-    content = content.replace(/<think>[\s\S]*?<\/think>/ig, '').trim();
-    if (responseFormat === "json") {
-       const jsonMatch = content.match(/```json\\n([\s\S]*?)\\n```/i);
-       if (jsonMatch) content = jsonMatch[1].trim();
-       else {
-         const firstBrace = content.indexOf('{');
-         const firstBracket = content.indexOf('[');
-         let start = -1, end = -1;
-         if (firstBrace !== -1 && firstBracket !== -1) {
-             start = Math.min(firstBrace, firstBracket);
-             end = start === firstBrace ? content.lastIndexOf('}') : content.lastIndexOf(']');
-         } else if (firstBrace !== -1) {
-             start = firstBrace; end = content.lastIndexOf('}');
-         } else if (firstBracket !== -1) {
-             start = firstBracket; end = content.lastIndexOf(']');
+    const startTime = Date.now();
+    try {
+      const result = await ai.models.generateContent({
+        model: modelId,
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        config: responseFormat === "json" ? { 
+          responseMimeType: "application/json",
+          responseSchema: schema 
+        } : undefined
+      });
+      const duration = Date.now() - startTime;
+      console.log(`Gemini call took ${duration}ms`);
+      let content = result.text || "";
+      content = content.replace(/<think>[\s\S]*?<\/think>/ig, '').trim();
+      if (responseFormat === "json") {
+         const jsonMatch = content.match(/```json\\n([\s\S]*?)\\n```/i);
+         if (jsonMatch) content = jsonMatch[1].trim();
+         else {
+           const firstBrace = content.indexOf('{');
+           const firstBracket = content.indexOf('[');
+           let start = -1, end = -1;
+           if (firstBrace !== -1 && firstBracket !== -1) {
+               start = Math.min(firstBrace, firstBracket);
+               end = start === firstBrace ? content.lastIndexOf('}') : content.lastIndexOf(']');
+           } else if (firstBrace !== -1) {
+               start = firstBrace; end = content.lastIndexOf('}');
+           } else if (firstBracket !== -1) {
+               start = firstBracket; end = content.lastIndexOf(']');
+           }
+           if (start !== -1 && end !== -1) content = content.substring(start, end + 1);
          }
-         if (start !== -1 && end !== -1) content = content.substring(start, end + 1);
-       }
+      }
+      return content;
+    } catch (err) {
+      const duration = Date.now() - startTime;
+      console.error(`Gemini call failed after ${duration}ms:`, err);
+      throw err;
     }
-    return content;
   }
 }
 
@@ -232,7 +247,15 @@ export async function addRelationship(db: DatabaseAdapter, p1: number, p2: numbe
   const min = Math.min(p1, p2);
   const max = Math.max(p1, p2);
   try {
-    await db.prepare("INSERT INTO relationships (person1_id, person2_id, relationship_type) VALUES (?, ?, ?)").run(min, max, type);
+    await db.prepare(`
+      INSERT INTO relationships (person1_id, person2_id, relationship_type) 
+      VALUES (?, ?, ?) 
+      ON CONFLICT(person1_id, person2_id) DO UPDATE SET 
+        relationship_type = CASE 
+          WHEN length(excluded.relationship_type) > length(relationship_type) THEN excluded.relationship_type 
+          ELSE relationship_type 
+        END
+    `).run(min, max, type);
   } catch(e) {}
 }
 
@@ -860,8 +883,15 @@ app.get("/explore/status", async (c) => {
   const data = JSON.parse(statusStr);
   const explorerId = c.req.header("x-explorer-id");
   const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
+  const isInitial = c.req.query("initial") === "true";
   
   data.isOwner = isAdmin || (data.explorerId && data.explorerId === explorerId);
+
+  // if not admin, and it's an initial check or not owner, do not show finished results
+  if (!isAdmin) {
+      if (!data.isOwner) return c.json(null);
+      if (isInitial && data.status !== 'running') return c.json(null);
+  }
 
   // if not admin, strip logs and steps except last step or error? No, frontend needs steps for UI. 
   if (!isAdmin) {
@@ -954,6 +984,22 @@ app.post("/explore/stop", async (c) => {
 
 app.post("/explore/reset", async (c) => {
   const db = await getDb(c);
+  // Check admin or owner
+  const explorerId = c.req.header("x-explorer-id");
+  const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
+  let stateStr = "null";
+  if (c.env && c.env.EXPLORE_KV) {
+      stateStr = await c.env.EXPLORE_KV.get("explore_state") || "null";
+  } else {
+      stateStr = await getConfig(db, "explore_state", "null");
+  }
+  if (stateStr !== "null") {
+      const state = JSON.parse(stateStr);
+      if (!isAdmin && state.explorerId !== explorerId) {
+          return c.json({ error: "无权操作" }, 403);
+      }
+  }
+
   if (c.env && c.env.EXPLORE_KV) {
       await c.env.EXPLORE_KV.put("explore_state", "null");
   } else {

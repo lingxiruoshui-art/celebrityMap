@@ -31,6 +31,34 @@ interface Step {
   type?: string;
 }
 
+const PendingTimerMessage = ({ msg, startTime }: { msg: string, startTime?: number }) => {
+  const [seconds, setSeconds] = useState(() => {
+    if (startTime) {
+      const diff = Math.floor((Date.now() - startTime) / 1000);
+      return diff > 0 ? diff : 0;
+    }
+    return 0;
+  });
+  
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setSeconds(s => s + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [startTime]);
+  
+  return (
+    <span className="flex flex-col">
+      <span>
+        {msg}
+        <span className="opacity-70 ml-1 font-mono">({seconds}s)</span>
+      </span>
+      {seconds > 10 && <span className="mt-1 opacity-70 font-normal">AI 正在深度考古，请稍候...</span>}
+      {seconds > 60 && <span className="mt-1 opacity-70 font-normal">时空连接建立中，即将揭晓。</span>}
+    </span>
+  );
+};
+
 export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(function SpacetimeExplorer({ 
   onClose, 
   onRefreshArchive, 
@@ -100,7 +128,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   const [error, setError] = useState<string | null>(null);
   const [isCollapsed, setIsCollapsed] = useState(() => hideHeader ? false : true);
   const [detailedLogs, setDetailedLogs] = useState<{timestamp: string, msg: string, data?: any, type: 'info' | 'ai-req' | 'ai-res' | 'error'}[]>([]);
-  const [searchSteps, setSearchSteps] = useState<{msg: string, status: 'pending' | 'success' | 'error'}[]>([]);
+  const [searchSteps, setSearchSteps] = useState<{msg: string, status: 'pending' | 'success' | 'error', startTime?: number}[]>([]);
   const [showResults, setShowResults] = useState(false);
   const [metadata, setMetadata] = useState<{
     categories: string[], 
@@ -123,6 +151,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     let timer: any;
     let isActive = true;
     const abortController = new AbortController();
+    let isInitial = true;
 
     const checkStatus = async () => {
        if (!isActive) return;
@@ -130,15 +159,17 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
            const headers: any = { "x-explorer-id": explorerId, "Cache-Control": "no-cache" };
            if (isAdmin) headers["x-admin-password"] = localStorage.getItem("admin_password") || "";
            
-           const cacheBuster = `?t=${Date.now()}`;
-           const res = await fetch("/api/explore/status" + cacheBuster, { 
+           const cacheBuster = `&t=${Date.now()}`;
+           const res = await fetch(`/api/explore/status?initial=${isInitial}${cacheBuster}`, { 
              headers,
              signal: abortController.signal
            });
            const data = await res.json();
+           isInitial = false;
            
            if (!isActive) return;
            setHasInitialCheckDone(true);
+
            if (isResettingRef.current) {
                if (isActive) timer = setTimeout(checkStatus, 2000);
                return;
@@ -146,7 +177,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
 
            if (data) {
                if (data.isOwner !== undefined) setIsOwner(data.isOwner);
-               
+
                if (data.status === 'running') {
                    setSource(data.source);
                    setTarget(data.target);
@@ -188,29 +219,15 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
 
                if (data.logs && (pollStatusRef.current || isAdmin || hasLoadedResultRef.current)) setDetailedLogs(data.logs);
                if (data.steps && (pollStatusRef.current || isAdmin || hasLoadedResultRef.current)) setSearchSteps(data.steps);
-               
-               if (!pollStatusRef.current && !hasLoadedResultRef.current && (isAdmin || data.status !== 'idle')) {
-                   if (data.status === 'success' && data.path && !path) {
-                       setSource(data.source || "");
-                       setTarget(data.target || "");
-                       setDetailedLogs(data.logs || []);
-                       setSearchSteps(data.steps || []);
-                       setPath(data.path);
-                       setNewArrivals(data.newArrivals || []);
-                       setShowResults(true);
-                       hasLoadedResultRef.current = true;
-                   } else if (data.status === 'error' && !path) {
-                       setSource(data.source || "");
-                       setTarget(data.target || "");
-                       setDetailedLogs(data.logs || []);
-                       setSearchSteps(data.steps || []);
-                       setError(data.error);
-                   }
-               }
            } else {
+               // Data is null: No search active or user doesn't own it
                setIsOwner(false);
                setIsLoading(false);
                pollStatusRef.current = false;
+               if (!isAdmin) {
+                 setDetailedLogs([]);
+                 setSearchSteps([]);
+               }
                if (hasLoadedResultRef.current) {
                    setPath(null);
                    setShowResults(false);
@@ -356,9 +373,12 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   }, []); // Only on mount
 
   const clearResults = async () => {
+    const isJustRejectionError = error === "探索正在进行中" || error === "今日探索次数已达上限" || error?.includes("上限");
+    
     isResettingRef.current = true;
     setPath(null);
     setShowResults(false);
+    setIsLoading(false);
     if (onPathFound) onPathFound(null);
     setSearchSteps([]);
     setDetailedLogs([]);
@@ -366,13 +386,17 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     setNewArrivals([]);
     hasAutoExpandedRunningRef.current = false;
     
-    try {
-      await fetch("/api/explore/reset", { method: "POST" });
-    } catch (e) {
-      console.warn("Reset failed:", e);
-    } finally {
-      isResettingRef.current = false;
+    if (!isJustRejectionError) {
+      try {
+        const headers: any = { "x-explorer-id": explorerId };
+        if (isAdmin) headers["x-admin-password"] = localStorage.getItem("admin_password") || "";
+        await fetch("/api/explore/reset", { method: "POST", headers });
+      } catch (e) {
+        console.warn("Reset failed:", e);
+      }
     }
+    
+    isResettingRef.current = false;
   };
 
   const content = (
@@ -476,7 +500,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                       >
                         <div className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${step.status === 'success' ? 'bg-emerald-500' : step.status === 'error' ? 'bg-red-500' : 'bg-indigo-500 animate-pulse'}`} />
                         <span className={`text-[10px] font-bold tracking-tight break-words leading-relaxed ${step.status === 'pending' ? 'text-indigo-600' : 'text-slate-400 font-medium'}`}>
-                          {step.msg}
+                          {step.status === 'pending' ? <PendingTimerMessage msg={step.msg} startTime={step.startTime} /> : step.msg}
                           {step.status === 'success' && <span className="ml-1 opacity-50">✓</span>}
                         </span>
                       </motion.div>
@@ -538,10 +562,18 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                     
                     {path.map((item, idx) => (
                       <div key={idx} className="relative z-10">
-                        {idx > 0 && (
+                        {idx > 0 && (item.type || "").trim() !== "" && (
                           <div className="py-3 pl-12 pr-2">
                             <div className="bg-indigo-50/60 p-2.5 rounded-xl border border-indigo-100/30 text-[10px] font-bold text-indigo-500 text-center leading-tight shadow-sm">
-                              {item.type || "历史渊源"}
+                              {item.type}
+                            </div>
+                          </div>
+                        )}
+                        
+                        {idx > 0 && !(item.type || "").trim() && (
+                           <div className="py-3 pl-12 pr-2">
+                            <div className="bg-slate-50/60 p-2.5 rounded-xl border border-slate-100 border-dashed text-[10px] font-bold text-slate-400 text-center leading-tight">
+                              时空关联
                             </div>
                           </div>
                         )}
