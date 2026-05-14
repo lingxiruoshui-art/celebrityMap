@@ -74,12 +74,6 @@ async function getDb(c: any): Promise<DatabaseAdapter> {
       `CREATE TABLE IF NOT EXISTS config (
         key TEXT PRIMARY KEY,
         value TEXT
-      )`,
-      `CREATE TABLE IF NOT EXISTS guest_usage (
-        ip TEXT,
-        date TEXT,
-        count INTEGER,
-        PRIMARY KEY(ip, date)
       )`
     ];
     for (const q of initQueries) {
@@ -111,30 +105,6 @@ export const getConfig = async (db: DatabaseAdapter, key: string, defaultValue: 
 export const setConfig = async (db: DatabaseAdapter, key: string, value: string) => {
   await db.prepare("INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
 };
-
-function getCSTDate(): string {
-    const now = new Date();
-    const utcTime = now.getTime() + (now.getTimezoneOffset() * 60000);
-    const cstTime = new Date(utcTime + (8 * 3600000));
-    return cstTime.toISOString().split('T')[0];
-}
-
-async function getRemainingQuota(db: DatabaseAdapter): Promise<number> {
-    const limit = parseInt(await getConfig(db, "guest_explore_limit", "5"), 10);
-    const date = getCSTDate();
-    const row = await db.prepare("SELECT count FROM guest_usage WHERE ip = 'GLOBAL_GUEST' AND date = ?").get(date) as any;
-    const used = row ? row.count : 0;
-    return Math.max(0, limit - used);
-}
-
-async function incrementUsage(db: DatabaseAdapter) {
-    const date = getCSTDate();
-    await db.prepare(`
-        INSERT INTO guest_usage (ip, date, count) 
-        VALUES ('GLOBAL_GUEST', ?, 1) 
-        ON CONFLICT(ip, date) DO UPDATE SET count = count + 1
-    `).run(date);
-}
 
 const getAdminPassword = (c: any) => {
     return (c.env && c.env.ADMIN_PASSWORD) || (typeof process !== "undefined" && process.env.ADMIN_PASSWORD) || "admin";
@@ -374,7 +344,6 @@ app.get("/admin/config", async (c) => {
     gemini_model_id: await getConfig(db, "gemini_model_id"),
     aliyun_api_key: await getConfig(db, "aliyun_api_key"),
     aliyun_model_id: await getConfig(db, "aliyun_model_id"),
-    guest_explore_limit: await getConfig(db, "guest_explore_limit", "5"),
   });
 });
 
@@ -387,7 +356,6 @@ app.post("/admin/config", async (c) => {
   if (body.gemini_model_id !== undefined) await setConfig(db, "gemini_model_id", body.gemini_model_id);
   if (body.aliyun_api_key !== undefined) await setConfig(db, "aliyun_api_key", body.aliyun_api_key);
   if (body.aliyun_model_id !== undefined) await setConfig(db, "aliyun_model_id", body.aliyun_model_id);
-  if (body.guest_explore_limit !== undefined) await setConfig(db, "guest_explore_limit", String(body.guest_explore_limit));
   return c.json({ success: true });
 });
 
@@ -457,19 +425,7 @@ app.get("/metadata", async (c) => {
       geminiApiKey: !!((await getConfig(db, "gemini_api_key")) || (c.env && c.env.GEMINI_API_KEY) || (typeof process !== "undefined" && process.env.GEMINI_API_KEY)),
       aliyunModelId: await getConfig(db, "aliyun_model_id"),
       aliyunApiKey: !!(await getConfig(db, "aliyun_api_key")),
-      remainingQuota: await getRemainingQuota(db)
   });
-});
-
-app.get("/usage/remaining", async (c) => {
-  const db = await getDb(c);
-  return c.json({ remaining: await getRemainingQuota(db) });
-});
-
-app.post("/usage/record", async (c) => {
-  const db = await getDb(c);
-  await incrementUsage(db);
-  return c.json({ success: true, remaining: await getRemainingQuota(db) });
 });
 
 app.post("/people/:id/view", async (c) => {
@@ -632,15 +588,24 @@ app.post("/archiver/admin-pick-pair", async (c) => {
   const archivedNames = people.map(p => p.name);
   const archivedSet = new Set(archivedNames);
   
-  if (archivedNames.length === 0) {
-      return c.json({ error: "No people in database to start from" });
-  }
-
   const shuffle = (array: any[]) => array.sort(() => 0.5 - Math.random());
   
-  let sourceName = shuffle([...archivedNames])[0];
-  let targetName = "";
-  
+  // 1. Get available from pool
+  const poolUnarchived: string[] = [];
+  for (const cat of CATEGORIES) {
+      FIGURE_POOL[cat]?.forEach((n: string) => { 
+          if (!archivedSet.has(n)) poolUnarchived.push(n); 
+      });
+  }
+  const uniquePoolUnarchived = Array.from(new Set(poolUnarchived));
+
+  // Priority 1: 2 from pool
+  if (uniquePoolUnarchived.length >= 2) {
+      const picked = shuffle([...uniquePoolUnarchived]).slice(0, 2);
+      return c.json({ sourceName: picked[0], targetName: picked[1], strategy: "pool" });
+  }
+
+  // 2. Get available from relationships
   const connectedUnarchived = new Set<string>();
   people.forEach(p => {
     try {
@@ -651,28 +616,32 @@ app.post("/archiver/admin-pick-pair", async (c) => {
       });
     } catch(e) {}
   });
-  
-  const unarch = Array.from(connectedUnarchived);
-  
-  const poolUnarchived: string[] = [];
-  for (const cat of CATEGORIES) {
-      FIGURE_POOL[cat]?.forEach((n: string) => { 
-          if (!archivedSet.has(n)) poolUnarchived.push(n); 
-      });
-  }
+  const uniqueRelsUnarchived = Array.from(connectedUnarchived);
 
-  const allUnarchived = [...unarch, ...poolUnarchived];
+  // Combine (Pool + Rels)
+  const combinedUnarchived = Array.from(new Set([...uniquePoolUnarchived, ...uniqueRelsUnarchived]));
   
-  if (allUnarchived.length > 0) {
-      targetName = shuffle(allUnarchived)[0];
-      return c.json({ sourceName, targetName, source: "mixed" });
+  // Priority 2: Use unarchived from pool and rels
+  if (combinedUnarchived.length >= 2) {
+      const picked = shuffle([...combinedUnarchived]).slice(0, 2);
+      return c.json({ sourceName: picked[0], targetName: picked[1], strategy: "combined" });
+  } else if (combinedUnarchived.length === 1) {
+      // 1 unarchived + 1 archived
+      if (archivedNames.length > 0) {
+          const archived = shuffle([...archivedNames])[0];
+          return c.json({ sourceName: combinedUnarchived[0], targetName: archived, strategy: "one-unarch-one-arch" });
+      } else {
+          // Only 1 person total (unarchived), but no archived to pair with
+          // This shouldn't happen if we have people with relationships, but safety check
+          return c.json({ sourceName: combinedUnarchived[0], targetName: "", isEmpty: true });
+      }
   }
   
-  // Need AI fallback
+  // Fallback: Empty state
   return c.json({ 
-     sourceName: sourceName || "",
+     sourceName: "",
      targetName: "",
-     needsAI: true
+     isEmpty: true
   });
 });
 
@@ -743,10 +712,6 @@ app.post("/archive-figure", async (c) => {
       const pass = c.req.header("x-admin-password");
       const isAdmin = pass === getAdminPassword(c);
 
-      if (!isAdmin && await getRemainingQuota(db) <= 0) {
-          return c.json({ error: "今日探索次数已达上限" }, 403);
-      }
-
       return streamSSE(c, async (stream) => {
           const send = async (data: any) => await stream.writeSSE({ data: JSON.stringify(data) });
           try {
@@ -816,11 +781,6 @@ app.post("/archive-figure", async (c) => {
                   else await send({ type: 'info', msg: `未发现即时时空连接，已保留关联索引供后续追溯。` });
               }
 
-              if (!isAdmin) {
-                  await incrementUsage(db);
-                  await send({ type: 'usage-update', remaining: await getRemainingQuota(db) });
-              }
-
               await send({ type: 'result', personId });
           } catch (e: any) {
               await send({ type: 'error', msg: e.message });
@@ -877,11 +837,11 @@ app.get("/explore/status", async (c) => {
   const data = JSON.parse(statusStr);
   const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
   
-  if (data && data.status === 'running' && data.lastHeartbeat) {
-      const diff = Date.now() - data.lastHeartbeat;
-      if (diff > 180000) { // 3 minutes
+  if (data && data.status === 'running') {
+      const diff = data.lastHeartbeat ? (Date.now() - data.lastHeartbeat) : Infinity;
+      if (diff > 120000) { // 120 seconds
           data.status = 'error';
-          data.error = '探索任务可能已意外中断或超时，请尝试重置后重新开始。';
+          data.error = '探索任务可能已意外中断或超时。系统检测到心跳丢失，请尝试重置后重新开始。';
           const newState = JSON.stringify(data);
           if (c.env && c.env.EXPLORE_KV) {
               await c.env.EXPLORE_KV.put("explore_state", newState);
@@ -981,8 +941,6 @@ app.post("/public/explore", async (c) => {
   }
 
   if (directPath) {
-      const date = new Date(new Date().getTime() + 8 * 3600 * 1000).toISOString().split('T')[0];
-      await db.prepare(`INSERT INTO guest_usage (ip, date, count) VALUES ('GLOBAL_GUEST', ?, 1) ON CONFLICT(ip, date) DO UPDATE SET count = count + 1`).run(date);
       return c.json({
           status: 'success',
           path: directPath,
@@ -1005,7 +963,7 @@ app.post("/explore/start", async (c) => {
   }
   if (currentStr !== "null") {
       const current = JSON.parse(currentStr);
-      const isStale = current.status === 'running' && current.lastHeartbeat && (Date.now() - current.lastHeartbeat > 90000); // 90 seconds
+      const isStale = current.status === 'running' && (!current.lastHeartbeat || (Date.now() - current.lastHeartbeat > 120000)); // 120 seconds, and consider missing heartbeat stale
       
       if (current.status === 'running' && !isStale) {
           return c.json({ error: "探索正在进行中，请稍候。若任务已长久挂起，请重置状态后重试。" }, 400);
@@ -1016,13 +974,17 @@ app.post("/explore/start", async (c) => {
       }
   }
   
-  if (!isAdmin && await getRemainingQuota(db) <= 0) {
-      return c.json({ error: "今日探索次数已达上限" }, 403);
-  }
-
   // Set initial state synchronously so immediately following reads see it
   const initialState = {
-      status: 'running', source, target, logs: [], steps: [], path: null, error: null, newArrivals: []
+      status: 'running', 
+      source, 
+      target, 
+      logs: [], 
+      steps: [], 
+      path: null, 
+      error: null, 
+      newArrivals: [],
+      lastHeartbeat: Date.now()
   };
   const stateStr = JSON.stringify(initialState);
   if (c.env && c.env.EXPLORE_KV) {

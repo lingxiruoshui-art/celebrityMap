@@ -13,8 +13,6 @@ interface SpacetimeExplorerProps {
   onSelectPerson: (id: number) => void;
   onPathFound?: (path: any[] | null) => void;
   isInline?: boolean;
-  remainingQuota?: number | null;
-  onQuotaUpdate?: (quota: number) => void;
   isAdmin?: boolean; 
   peopleNames?: string[];
 }

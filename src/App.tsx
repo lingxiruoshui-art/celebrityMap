@@ -28,7 +28,6 @@ export default function App() {
     people: [],
     relationships: [],
   });
-  const [remainingQuota, setRemainingQuota] = useState<number | null>(null);
   const [selectedPersonId, setSelectedPersonId] = useState<number | null>(null);
   const [isArchiving, setIsArchiving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -91,16 +90,6 @@ export default function App() {
       setData(json);
       if (json.people.length > 0 && selectedPersonId === null) {
         setSelectedPersonId(json.people[json.people.length - 1].id);
-      }
-
-      // Also refresh quota
-      const metaRes = await fetch("/api/metadata");
-      if (metaRes.ok) {
-          const metaContentType = metaRes.headers.get("content-type");
-          if (metaContentType && metaContentType.includes("application/json")) {
-              const metaJson = await metaRes.json();
-              setRemainingQuota(metaJson.remainingQuota);
-          }
       }
     } catch (err) {
       console.error(err);
@@ -588,8 +577,6 @@ export default function App() {
                     }
                   }}
                   isInline={true}
-                  remainingQuota={remainingQuota}
-                  onQuotaUpdate={setRemainingQuota}
                   isAdmin={isAuthorized}
                   peopleNames={data.people.map((p) => p.name)}
                 />
@@ -644,7 +631,6 @@ export default function App() {
 
       {isAdminOpen && (
         <AdminPanel
-          remainingQuota={remainingQuota}
           onClose={() => {
             setIsAdminOpen(false);
             fetchArchive();

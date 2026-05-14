@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useImperativeHandle, forwardRef } from "react";
+import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef } from "react";
 import { X, Search, ChevronRight, User, Loader2, Sparkles, AlertCircle, Zap, ChevronDown, ChevronUp, StopCircle, RefreshCw, Save } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { getGemini, ARCHIVE_PROMPT, ARCHIVE_SCHEMA, PATH_PROMPT, PATH_SCHEMA, VALIDATION_PROMPT, VALIDATION_SCHEMA } from "../services/geminiService";
@@ -20,8 +20,6 @@ interface SpacetimeExplorerProps {
   autoStart?: boolean;
   hideInputs?: boolean;
   hideHeader?: boolean;
-  remainingQuota?: number | null;
-  onQuotaUpdate?: (quota: number) => void;
   isAdmin?: boolean;
   showLogs?: boolean;
   peopleNames?: string[];
@@ -82,8 +80,6 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   autoStart = false,
   hideInputs = false,
   hideHeader = false,
-  remainingQuota,
-  onQuotaUpdate,
   isAdmin = false,
   allowAdminControls = false,
   showLogs = false,
@@ -317,23 +313,24 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
 
   const handlePickRandomPair = async () => {
     setIsPickingRandom(true);
+    setError(null);
     try {
       if (isAdmin) {
         const res = await fetch("/api/archiver/admin-pick-pair", { method: "POST" });
         const data = await res.json();
         
-        if (data.needsAI) {
-           const genRes = await fetch("/api/archiver/generate-target", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ sourceName: data.sourceName })
-           });
-           const genData = await genRes.json();
-           if (data.sourceName) setSource(data.sourceName);
-           if (genData.targetName) setTarget(genData.targetName);
+        if (data.isEmpty) {
+          setSource("");
+          setTarget("");
+          setError(
+            <div className="flex flex-col gap-1 items-center">
+              <p className="font-bold">✨ 所有预置及关联人物均已录入</p>
+              <p className="text-[10px] opacity-70">系统已穷尽所有已知线索。请手动填入新的人物开启探索之旅。</p>
+            </div>
+          );
         } else {
-           if (data.sourceName) setSource(data.sourceName);
-           if (data.targetName) setTarget(data.targetName);
+          setSource(data.sourceName || "");
+          setTarget(data.targetName || "");
         }
       } else {
         const res = await fetch("/api/archiver/random-pair");
@@ -345,6 +342,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
       }
     } catch (e) {
       console.error(e);
+      setError("检索随机人物失败，请稍后重试。");
     } finally {
       setIsPickingRandom(false);
     }
@@ -359,11 +357,6 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     if (!finalSource.trim() || !finalTarget.trim()) {
        console.log("handleSearch aborted: empty source or target");
        return;
-    }
-
-    if (!isAdmin && remainingQuota !== null && remainingQuota !== undefined && remainingQuota <= 0) {
-      setError("今日探索次数已达上限，请明天再试或联系管理员。");
-      return;
     }
     
     setIsCollapsed(false);
@@ -415,7 +408,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                 <button 
                   onClick={(e) => {
                     e.stopPropagation();
-                    handleResetState();
+                    clearResults();
                   }}
                   className="mt-2 text-[11px] font-bold py-1.5 px-3 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors w-fit border border-indigo-200"
                 >
@@ -495,11 +488,13 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   useEffect(() => {
      if (autoStart && initialSource && initialTarget) {
        handleSearch();
+     } else if (isAdmin && !initialSource && !initialTarget) {
+       handlePickRandomPair();
      }
   }, []); // Only on mount
 
   const clearResults = async () => {
-    const isJustRejectionError = error === "探索正在进行中" || error === "今日探索次数已达上限" || error?.includes("上限");
+    const isJustRejectionError = typeof error === 'string' && (error.includes("探索正在进行中") || error.includes("重置状态"));
     
     isResettingRef.current = true;
     setPath(null);
