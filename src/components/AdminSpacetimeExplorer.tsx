@@ -161,6 +161,20 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   const hasAutoExpandedRunningRef = useRef(false);
   const isResettingRef = useRef(false);
   const publicSearchAbortControllerRef = useRef<AbortController | null>(null);
+  const lastStreamPulseRef = useRef<number>(Date.now());
+  const [pulseActive, setPulseActive] = useState(true);
+
+  // 5s periodic check for the respiratory light as requested
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (isLoading && Date.now() - lastStreamPulseRef.current > 15000) {
+        setPulseActive(false); // Backend has not communicated via stream or status for 15s
+      } else {
+        setPulseActive(true);
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [isLoading]);
 
   useEffect(() => {
     if (!isAdmin) {
@@ -212,6 +226,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
            if (data) {
                if (data.status === 'running') {
                    setSource(data.source);
+                   lastStreamPulseRef.current = Date.now();
                    setTarget(data.target);
                    setIsLoading(true);
                    setError(null);
@@ -497,6 +512,8 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                while (true) {
                  const { done } = await reader.read();
                  if (done) break;
+                 lastStreamPulseRef.current = Date.now();
+                 setPulseActive(true);
                }
              } catch (e) {}
           })();
@@ -836,7 +853,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                <div className="px-5 py-4 bg-slate-50/50 border-b border-slate-100 flex items-center justify-between shrink-0">
                   <div className="flex items-center gap-3">
                     <div className={`w-2.5 h-2.5 rounded-full ${
-                      isLoading ? 'bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]' :
+                      isLoading ? (pulseActive ? 'bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]') :
                       error ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]' :
                       'bg-indigo-500 shadow-[0_0_8px_rgba(79,70,229,0.4)]'
                     }`}></div>

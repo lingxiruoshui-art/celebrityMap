@@ -879,9 +879,9 @@ app.get("/explore/status", async (c) => {
   
   if (data && data.status === 'running') {
       const diff = data.lastHeartbeat ? (Date.now() - data.lastHeartbeat) : Infinity;
-      if (diff > 25000) { // 25 seconds
+      if (diff > 120000) { // 120 seconds
           data.status = 'error';
-          data.error = '探索任务被系统在后台强制回收（心跳超时 >25s）。这通常是因为大语言模型响应太慢，导致触发了 Cloudflare Workers 的 CPU 限额或生命周期被强行终止。请尝试重置并重试。';
+          data.error = '探索任务被系统认定为已脱机（持续 >120s 无响应）。可能由于大模型 API 限流或响应过慢导致请求彻底熔断。请检查 API 状态后重试。';
           const newState = JSON.stringify(data);
           if (c.env && c.env.EXPLORE_KV) {
               await c.env.EXPLORE_KV.put("explore_state", newState);

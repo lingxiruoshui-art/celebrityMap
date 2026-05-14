@@ -73,10 +73,14 @@ export async function runExplorationTask(
     }
 
     const stateStr = JSON.stringify(state);
-    if (c.env && c.env.EXPLORE_KV) {
-        await c.env.EXPLORE_KV.put("explore_state", stateStr);
-    } else {
-        await setConfig(db, "explore_state", stateStr);
+    try {
+        if (c.env && c.env.EXPLORE_KV) {
+            await c.env.EXPLORE_KV.put("explore_state", stateStr);
+        } else {
+            await setConfig(db, "explore_state", stateStr);
+        }
+    } catch (kvError) {
+        console.error("Failed to save state to KV/Config:", kvError);
     }
   };
 
