@@ -43,19 +43,29 @@ export async function runExplorationTask(
   };
 
   const saveState = async () => {
-    // Check if aborted by user
+    // Check if aborted or reset by user
     let currentRaw = "null";
     if (c.env && c.env.EXPLORE_KV) {
         currentRaw = await c.env.EXPLORE_KV.get("explore_state") || "null";
     } else {
         currentRaw = await getConfig(db, "explore_state", "null");
     }
-    if (currentRaw !== "null") {
-      const current = JSON.parse(currentRaw);
-      if (current.status === "error" && current.error === "探索已中止") {
+    
+    if (currentRaw === "null") {
+        // State was cleared (reset), stop this task
         throw new Error("AbortError");
-      }
     }
+
+    const current = JSON.parse(currentRaw);
+    if (current.status === "error" && current.error === "探索已中止") {
+        throw new Error("AbortError");
+    }
+    
+    // Check if it is a different task (different source/target)
+    if (current.status === 'running' && (current.source !== state.source || current.target !== state.target)) {
+        throw new Error("AbortError");
+    }
+
     const stateStr = JSON.stringify(state);
     if (c.env && c.env.EXPLORE_KV) {
         await c.env.EXPLORE_KV.put("explore_state", stateStr);

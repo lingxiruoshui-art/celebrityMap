@@ -46,6 +46,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   remainingQuota,
   onQuotaUpdate,
   isAdmin = false,
+  allowAdminControls = false,
   showLogs = false
 }, ref) {
   const [source, setSource] = useState(() => initialSource || localStorage.getItem("last_explorer_source") || "");
@@ -86,6 +87,12 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   useEffect(() => {
     localStorage.setItem("last_explorer_target", target);
   }, [target]);
+
+  useEffect(() => {
+    const fallbackTimer = setTimeout(() => setHasInitialCheckDone(true), 3000);
+    return () => clearTimeout(fallbackTimer);
+  }, []);
+
   const [isLoading, setIsLoading] = useState(false);
   const [hasInitialCheckDone, setHasInitialCheckDone] = useState(false);
   const [path, setPath] = useState<Step[] | null>(null);
@@ -114,9 +121,11 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
 
   useEffect(() => {
     let timer: any;
+    let isActive = true;
     const abortController = new AbortController();
 
     const checkStatus = async () => {
+       if (!isActive) return;
        try {
            const headers: any = { "x-explorer-id": explorerId, "Cache-Control": "no-cache" };
            if (isAdmin) headers["x-admin-password"] = localStorage.getItem("admin_password") || "";
@@ -128,8 +137,12 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
            });
            const data = await res.json();
            
+           if (!isActive) return;
            setHasInitialCheckDone(true);
-           if (isResettingRef.current) return;
+           if (isResettingRef.current) {
+               if (isActive) timer = setTimeout(checkStatus, 2000);
+               return;
+           }
 
            if (data) {
                if (data.isOwner !== undefined) setIsOwner(data.isOwner);
@@ -142,6 +155,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                    setShowResults(false);
                    setPath(null);
                    setNewArrivals([]);
+                   hasLoadedResultRef.current = false;
                    pollStatusRef.current = true; 
 
                    if (!hasAutoExpandedRunningRef.current) {
@@ -172,10 +186,10 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                    }
                }
 
-               if (data.logs && (pollStatusRef.current || isAdmin || showResults)) setDetailedLogs(data.logs);
-               if (data.steps && (pollStatusRef.current || isAdmin || showResults)) setSearchSteps(data.steps);
+               if (data.logs && (pollStatusRef.current || isAdmin || hasLoadedResultRef.current)) setDetailedLogs(data.logs);
+               if (data.steps && (pollStatusRef.current || isAdmin || hasLoadedResultRef.current)) setSearchSteps(data.steps);
                
-               if (!pollStatusRef.current && !showResults && !hasLoadedResultRef.current && (isAdmin || data.status !== 'idle')) {
+               if (!pollStatusRef.current && !hasLoadedResultRef.current && (isAdmin || data.status !== 'idle')) {
                    if (data.status === 'success' && data.path && !path) {
                        setSource(data.source || "");
                        setTarget(data.target || "");
@@ -194,12 +208,10 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                    }
                }
            } else {
-               // Data is null, meaning it was reset or never started
                setIsOwner(false);
                setIsLoading(false);
                pollStatusRef.current = false;
                if (hasLoadedResultRef.current) {
-                   // If we had results but now it's null, clear them
                    setPath(null);
                    setShowResults(false);
                    setError(null);
@@ -208,19 +220,23 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                    hasLoadedResultRef.current = false;
                }
            }
-       } catch (e) {
+       } catch (e: any) {
+         if (e.name === 'AbortError') return;
          console.warn("Status poll error:", e);
-         setHasInitialCheckDone(true);
+         if (isActive) setHasInitialCheckDone(true);
        }
        
-       timer = setTimeout(checkStatus, pollStatusRef.current ? 800 : 1500); 
+       if (isActive) {
+           timer = setTimeout(checkStatus, pollStatusRef.current ? 800 : 1500); 
+       }
     };
     checkStatus();
     return () => {
+      isActive = false;
       clearTimeout(timer);
       abortController.abort();
     };
-  }, [showResults, explorerId, isAdmin]);
+  }, [explorerId, isAdmin]);
 
   useEffect(() => {
     if (logsScrollRef.current) {
@@ -401,16 +417,14 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                     </div>
 
                     <div className="pt-2 flex gap-2 w-full">
-                      {(isAdmin || !hasInitialCheckDone) && (
-                        <button 
-                          onClick={handlePickRandomPair}
-                          disabled={isPickingRandom || isLoading || !hasInitialCheckDone}
-                          className="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 disabled:opacity-50 rounded-xl font-bold text-[12px] transition-all flex items-center justify-center gap-1.5 active:scale-[0.98]"
-                        >
-                          {(!hasInitialCheckDone) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className={`w-3.5 h-3.5 ${isPickingRandom ? 'animate-spin' : ''}`} />}
-                          <span>{(!hasInitialCheckDone) ? "检查状态..." : "随机更换"}</span>
-                        </button>
-                      )}
+                      <button 
+                        onClick={handlePickRandomPair}
+                        disabled={isPickingRandom || isLoading || !hasInitialCheckDone}
+                        className="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 disabled:opacity-50 rounded-xl font-bold text-[12px] transition-all flex items-center justify-center gap-1.5 active:scale-[0.98]"
+                      >
+                        {(!hasInitialCheckDone) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className={`w-3.5 h-3.5 ${isPickingRandom ? 'animate-spin' : ''}`} />}
+                        <span>{(!hasInitialCheckDone) ? "检查状态..." : "随机更换"}</span>
+                      </button>
                       <button 
                         onClick={() => handleSearch()}
                         disabled={isLoading || !source.trim() || !target.trim() || !hasInitialCheckDone}
@@ -444,7 +458,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                         </div>
                       </div>
                       
-                      {(isOwner || isAdmin) && (
+                      {allowAdminControls && (
                         <button 
                           onClick={handleStop}
                           className="relative z-10 w-5 h-5 bg-red-500 hover:bg-red-600 rounded-[4px] transition-all shrink-0 active:scale-90"

@@ -39,9 +39,6 @@ export default function AdminPanel({ onClose, onAuthorized, remainingQuota: init
   });
 
   // Manual Fetcher states
-  const [fetchSource, setFetchSource] = useState("");
-  const [fetchTarget, setFetchTarget] = useState("");
-  const [isGeneratingTarget, setIsGeneratingTarget] = useState(false);
   const explorerRef = useRef<SpacetimeExplorerHandle | null>(null);
 
   const startResize = (e: React.MouseEvent, col: keyof typeof colWidths) => {
@@ -67,38 +64,6 @@ export default function AdminPanel({ onClose, onAuthorized, remainingQuota: init
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
   };
-
-  const handlePickRandom = async () => {
-    setIsGeneratingTarget(true);
-    explorerRef.current?.clear();
-    try {
-      const res = await fetch("/api/archiver/pick-target", { method: "POST" });
-      const data = await res.json();
-      if (data.sourceName) setFetchSource(data.sourceName);
-      if (data.targetName) {
-        setFetchTarget(data.targetName);
-      } else {
-        // Pool empty, ask AI
-        const genRes = await fetch("/api/archiver/generate-target", { 
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sourceName: data.sourceName })
-        });
-        const genData = await genRes.json();
-        if (genData.targetName) setFetchTarget(genData.targetName);
-      }
-    } catch(e) {
-      console.error(e);
-    } finally {
-      setIsGeneratingTarget(false);
-    }
-  };
-
-  useEffect(() => {
-    if (activeTab === "archive_plus" && !fetchSource) {
-      handlePickRandom();
-    }
-  }, [activeTab]);
 
   // Config states
   const [config, setConfig] = useState<any>({});
@@ -759,15 +724,14 @@ export default function AdminPanel({ onClose, onAuthorized, remainingQuota: init
                     isInline={true}
                     isPane={true}
                     showLogs={true}
-                    initialSource={fetchSource}
-                    initialTarget={fetchTarget}
                     autoStart={false}
                     hideInputs={false}
                     hideHeader={true}
+                    isAdmin={true}
+                    allowAdminControls={true}
                     onClose={() => {}}
                     onRefreshArchive={fetchArchive}
                     onSelectPerson={() => {}}
-                    isAdmin={true}
                   />
                 </div>
               </div>
