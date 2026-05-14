@@ -992,6 +992,56 @@ app.post("/public/explore", async (c) => {
   }
 });
 
+app.post("/explore/ai-proxy", async (c) => {
+  const db = await getDb(c);
+  const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
+  if (!isAdmin) return c.json({ error: "Unauthorized" }, 401);
+  const { prompt, responseFormat, schema } = await c.req.json();
+  try {
+     return streamSSE(c, async (stream) => {
+       const originalPulse = async (msg: string) => {
+         try { await stream.writeSSE({ data: JSON.stringify({ type: msg === 'heartbeat' ? 'ping' : 'msg', text: msg }) }); } catch(e){}
+       };
+       try {
+           const result = await callAI(c, db, prompt, responseFormat, schema, originalPulse);
+           await stream.writeSSE({ data: JSON.stringify({ type: 'done', result }) });
+       } catch (err: any) {
+           await stream.writeSSE({ data: JSON.stringify({ type: 'error', error: err.message }) });
+       }
+     });
+  } catch (err: any) {
+     return c.json({ error: err.message }, 500);
+  }
+});
+
+app.post("/explore/ping", async (c) => {
+  const db = await getDb(c);
+  // Updates the lastHeartbeat of the running task as requested by frontend handshake
+  let currentStr = "null";
+  if (c.env && c.env.EXPLORE_KV) {
+      currentStr = await c.env.EXPLORE_KV.get("explore_state") || "null";
+  } else {
+      currentStr = await getConfig(db, "explore_state", "null");
+  }
+  
+  if (currentStr !== "null") {
+      try {
+          const current = JSON.parse(currentStr);
+          if (current.status === 'running') {
+              current.lastHeartbeat = Date.now();
+              const stateStr = JSON.stringify(current);
+              if (c.env && c.env.EXPLORE_KV) {
+                  await c.env.EXPLORE_KV.put("explore_state", stateStr);
+              } else {
+                  await setConfig(db, "explore_state", stateStr);
+              }
+              return c.json({ success: true, pulsed: true });
+          }
+      } catch (e) {}
+  }
+  return c.json({ success: true, pulsed: false });
+});
+
 app.post("/explore/start", async (c) => {
   const db = await getDb(c);
   const { source, target, isAdmin } = await c.req.json();

@@ -164,16 +164,38 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   const lastStreamPulseRef = useRef<number>(Date.now());
   const [pulseActive, setPulseActive] = useState(true);
 
-  // 5s periodic check for the respiratory light as requested
+  // 5s periodic check for the respiratory light and handshake as requested
   useEffect(() => {
-    const interval = setInterval(() => {
-      if (isLoading && Date.now() - lastStreamPulseRef.current > 15000) {
-        setPulseActive(false); // Backend has not communicated via stream or status for 15s
-      } else {
-        setPulseActive(true);
+    let _active = true;
+    const interval = setInterval(async () => {
+      if (isLoading) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 4000);
+          
+          const res = await fetch('/api/explore/ping', { 
+            method: 'POST',
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
+          
+          if (!res.ok) throw new Error("bad ping");
+          const data = await res.json();
+          
+          if (_active) {
+            setPulseActive(!!data.pulsed);
+          }
+        } catch (e) {
+          if (_active) {
+            setPulseActive(false); // Backend has not communicated or failed to ping
+          }
+        }
       }
     }, 5000);
-    return () => clearInterval(interval);
+    return () => {
+      _active = false;
+      clearInterval(interval);
+    };
   }, [isLoading]);
 
   useEffect(() => {
