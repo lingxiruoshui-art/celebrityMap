@@ -154,19 +154,45 @@ export async function runExplorationTask(
 
     state.target = finalTargetName;
     updateLastStep("success", `锁定目标: ${finalTargetName}`);
-    addStep(`正在从 Wikidata/Wikipedia 唤醒 ${finalTargetName} 的记忆...`);
-    await saveState();
+    addStep(`探索检索：正在寻找 ${finalTargetName} 的全网数字足迹...`);
+    addLog(`扫描中：正在从 Wikidata/Wikipedia 提取 ${finalTargetName} 的核心时空特征...`, "info", { query: finalTargetName });
+    
+    // Heartbeat for wiki fetch (optional but helpful if it's slow)
+    const wikiHeartbeat = setInterval(async () => {
+        addLog("连接全网数据库中，正在跨维检索人物词条...", "info");
+        await saveState("Wiki 检索中");
+    }, 10000);
 
-    const meta = await fetchMetadataFromWiki(finalTargetName);
+    const metaPromise = fetchMetadataFromWiki(finalTargetName);
+    // Give it a timeout so it doesn't hang forever
+    let wikiMeta: any;
+    try {
+        wikiMeta = await Promise.race([
+            metaPromise,
+            new Promise<any>((_, reject) => setTimeout(() => reject(new Error("Wiki/Wikidata 响应超时")), 45000))
+        ]);
+    } catch (err: any) {
+        addLog(`Wiki唤醒异常: ${err.message}`, "error", { target: finalTargetName });
+        throw new Error(`无法从全网数据库识别 ${finalTargetName}: ${err.message}`);
+    } finally {
+        clearInterval(wikiHeartbeat);
+    }
+    
+    if (!wikiMeta || !wikiMeta.imageUrl) {
+        addLog(`识别限制: ${finalTargetName} 缺乏有效的标准化肖像或百科词条。`, "error");
+        throw new Error(`全网检索失败：未能在数据库中找到 ${finalTargetName} 的有效标准化档案或肖像照片，已中止任务以确保档案品质。`);
+    }
+
+    const meta = wikiMeta;
     finalTargetName = meta.normalizedName;
     state.target = finalTargetName;
 
-    updateLastStep("success", `确定抓取目标: ${finalTargetName}`);
+    updateLastStep("success", `特征提取成功: ${finalTargetName}`);
     if (meta.description) {
-        addLog(`识别到身份线索: ${meta.description}`, "info");
+        addLog(`Wiki识别到身份线索: ${meta.description.substring(0, 100)}${meta.description.length > 100 ? '...' : ''}`, "info");
     }
 
-    addStep(`正在利用 AI 深度检索并编织 ${finalTargetName} 的历史时空数据...`);
+    addStep(`深度分析：AI 正在构建 ${finalTargetName} 的核心时空档案...`);
     await saveState();
 
     const CATEGORIES = [
@@ -177,17 +203,34 @@ export async function runExplorationTask(
 
     const prompt = ARCHIVE_PROMPT(finalTargetName, CATEGORIES, sampleNames, meta.description);
 
-    addLog(`AI 代理请求发送`, "ai-req", { prompt_snippet: prompt.substring(0, 300) + "..." });
+    addLog(`AI 代理请求发送 [Gemini/Aliyun]`, "ai-req", { 
+        target: finalTargetName,
+        categories: CATEGORIES.slice(0, 3).join(",") + "...",
+        prompt_snippet: prompt.substring(0, 300) + "..." 
+    });
     let resultText: string;
+    
+    // Heartbeat for long AI wait
+    const aiHeartbeat = setInterval(async () => {
+        addLog("AI 正在进行深度时空测算，请耐心等待...", "info");
+        await saveState("AI 思考中");
+    }, 15000);
+
     try {
         resultText = await callAI(c, db, prompt, "json", ARCHIVE_SCHEMA, async () => {
-            await saveState("AI 仍在思考中...");
+            // This is the internal callback of callAI if it supports it
+            await saveState("AI 流式处理中...");
         });
     } catch (e: any) {
-        throw new Error(e.message === "请求超时" ? "AI 探索思考时间过长，已中断" : (e.message || "AI 服务异常"));
+        addLog(`AI 请求失败: ${e.message}`, "error");
+        throw new Error(e.message === "请求超时" ? "AI 探索思考时间过长，已中止" : (e.message || "AI 服务异常"));
+    } finally {
+        clearInterval(aiHeartbeat);
     }
 
-    addLog("AI 响应解码成功", "ai-res", { rawTextSnippet: resultText.substring(0, 200) + "..." });
+    addLog("AI 响应解码成功", "ai-res", { 
+        rawTextSnippet: resultText.substring(0, 150) + "..." 
+    });
 
     let personData: any = {};
     try {
@@ -212,22 +255,31 @@ export async function runExplorationTask(
     const portraitUrlRaw = meta.imageUrl || `https://image.pollinations.ai/prompt/${encodeURIComponent("Historical portrait of " + finalName + ", realistic oil painting style, highly detailed")}`;
     const portraitUrl = `/api/portraits/${encodeURIComponent(finalName.toLowerCase())}.jpg`;
 
+    addLog(`准备转存人物肖像...`, "info", { 
+        source: portraitUrlRaw ? (portraitUrlRaw.substring(0, 100) + "...") : "Default" 
+    });
+
     if (c.env && c.env.IMAGES && portraitUrlRaw) {
         try {
+          addLog(`正在从外部源抓取肖像并同步至 KV 存储...`, "info");
           const imgRes = await fetch(portraitUrlRaw);
           if (imgRes.ok) {
               const buffer = await imgRes.arrayBuffer();
               await c.env.IMAGES.put(`portraits/${encodeURIComponent(finalName.toLowerCase())}.jpg`, buffer, {
                   httpMetadata: { contentType: imgRes.headers.get("content-type") || "image/jpeg" }
               });
+              addLog(`肖像同步成功 [${buffer.byteLength} bytes]`, "success");
+          } else {
+              addLog(`肖像抓取失败: HTTP ${imgRes.status}`, "warn");
           }
-        } catch(e) {
+        } catch(e: any) {
+           addLog(`肖像同步异常: ${e.message}`, "warn");
            console.warn("Failed to cache image:", e);
         }
     }
 
     updateLastStep("success", "肖像获取完成");
-    addStep(`归档处理：将 ${finalName} 接入时空连续体...`);
+    addStep(`归档处理：将 ${finalName} 映射至数据库...`);
     await saveState();
 
     const res = await db
@@ -256,6 +308,12 @@ export async function runExplorationTask(
         portraitUrl
       );
     
+    addLog(`数据库归档任务已提交`, "info", { 
+        name: finalName, 
+        category: personData.category,
+        bio_snippet: (personData.biography || "").substring(0, 100) + "..."
+    });
+    
     let newId = (res as any)?.id;
     if (!newId) {
         const getRes = await db.prepare("SELECT id FROM people WHERE name = ? COLLATE NOCASE").get(finalName) as any;
@@ -263,30 +321,46 @@ export async function runExplorationTask(
     }
 
     if (newId) {
+        updateLastStep("success", `数据已归档 (ID: ${newId})`);
+        addStep(`编织关系网：正在检索 ${finalName} 的历史交集...`);
+        await saveState();
+        
+        let connCount = 0;
         // 1. 主动连接
         if (personData.relationships && Array.isArray(personData.relationships)) {
             for (const rel of personData.relationships) {
                 const matched = await db.prepare("SELECT id FROM people WHERE name = ?").get(rel.personName) as any;
                 if (matched) {
                     await addRelationship(db, newId, matched.id, rel.relationshipType);
+                    connCount++;
                 }
             }
         }
+        addLog(`主动连结扫描完成，发现 ${connCount} 处交集`, "info");
 
         // 2. 被动追溯
+        addLog(`正在执行反向溯源，寻找图谱中对 ${finalName} 的现有引用...`, "info");
         const previousMentions = await db.prepare(`SELECT id, name, raw_relationships FROM people WHERE id != ? AND (raw_relationships LIKE ? OR raw_relationships LIKE ?)`).all(newId, `%${finalName}%`, `%${target}%`) as any[];
+        let reverseCount = 0;
         for (const p of previousMentions) {
             try {
                 const rels = JSON.parse(p.raw_relationships || "[]");
                 const matchingRel = rels.find((r: any) => r.personName === finalName || r.personName === target);
                 if (matchingRel) {
                     await addRelationship(db, p.id, newId, matchingRel.relationshipType);
+                    reverseCount++;
                 }
             } catch(e) {}
         }
+        addLog(`反向溯源完成，补全 ${reverseCount} 条历史连边`, "info");
+        connCount += reverseCount;
+        
+        updateLastStep("success", `关系网编织完成：新增 ${connCount} 条连结`);
     }
     
+    addStep(`入库协议最终校检：正在生成时空锚点...`);
     state.newArrivals.push(finalName);
+    addLog(`入库协议执行完毕：${finalName} 已正式载入史册`, "success");
     updateLastStep("success", `时空节点建立成功：${finalName}`);
     
     state.status = "success";

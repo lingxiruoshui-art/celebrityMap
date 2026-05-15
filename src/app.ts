@@ -456,6 +456,10 @@ app.get("/admin/config", async (c) => {
     gemini_model_id: await getConfig(db, "gemini_model_id"),
     aliyun_api_key: await getConfig(db, "aliyun_api_key"),
     aliyun_model_id: await getConfig(db, "aliyun_model_id"),
+    cron_interval_enabled: await getConfig(db, "cron_interval_enabled", "false") === "true",
+    cron_interval_hours: parseInt(await getConfig(db, "cron_interval_hours", "0")),
+    cron_interval_minutes: parseInt(await getConfig(db, "cron_interval_minutes", "15")),
+    last_cron_trigger_time: await getConfig(db, "last_cron_trigger_time", "")
   });
 });
 
@@ -468,6 +472,11 @@ app.post("/admin/config", async (c) => {
   if (body.gemini_model_id !== undefined) await setConfig(db, "gemini_model_id", body.gemini_model_id);
   if (body.aliyun_api_key !== undefined) await setConfig(db, "aliyun_api_key", body.aliyun_api_key);
   if (body.aliyun_model_id !== undefined) await setConfig(db, "aliyun_model_id", body.aliyun_model_id);
+  
+  if (body.cron_interval_enabled !== undefined) await setConfig(db, "cron_interval_enabled", String(body.cron_interval_enabled));
+  if (body.cron_interval_hours !== undefined) await setConfig(db, "cron_interval_hours", String(body.cron_interval_hours));
+  if (body.cron_interval_minutes !== undefined) await setConfig(db, "cron_interval_minutes", String(body.cron_interval_minutes));
+  
   return c.json({ success: true });
 });
 
@@ -1157,18 +1166,58 @@ app.post("/explore/reset", async (c) => {
 
 // Added cron endpoint
 app.post("/cron", async (c) => {
-    console.trace("[Cron Worker] 后台成功收到 worker 触发的消息，准备启动自动探索任务");
+    const now = Date.now();
+    console.trace(`[Cron Worker] ${new Date(now).toISOString()} 后台成功收到 worker 触发的消息`);
     const secret = c.req.query("secret");
+    const force = c.req.query("force") === "true";
+
     if (secret !== "update_celeb") {
         return c.json({ error: "Unauthorized" }, 401);
     }
     
     const db = await getDb(c);
+    
+    // Check if task is already running
+    const statusKV = c.env.EXPLORE_KV;
+    if (statusKV) {
+        const liveStatus = await statusKV.get("exploration_status");
+        if (liveStatus === "running") {
+            console.log("[Cron Skip] A task is already running.");
+            return c.json({ status: "skipped", message: "探索正在进行中，跳过本次触发" });
+        }
+    }
+
+    // Check interval (unless forced)
+    const intervalEnabled = await getConfig(db, "cron_interval_enabled", "false") === "true";
+    const lastTrigger = await getConfig(db, "last_cron_trigger_time", "");
+    
+    if (!force && intervalEnabled && lastTrigger) {
+        const lastTime = parseInt(lastTrigger);
+        const hours = parseInt(await getConfig(db, "cron_interval_hours", "0"));
+        const mins = parseInt(await getConfig(db, "cron_interval_minutes", "15"));
+        const intervalMs = (hours * 3600 + mins * 60) * 1000;
+        
+        if (now - lastTime < intervalMs) {
+            console.log(`[Cron Skip] Interval not reached. Last: ${new Date(lastTime).toISOString()}`);
+            return c.json({ 
+                status: "skipped", 
+                message: "间隔时间未到，自动探索任务跳过（可使用 force=true 强制运行）", 
+                last_trigger: new Date(lastTime).toISOString(),
+                next_allowable: new Date(lastTime + intervalMs).toISOString()
+            });
+        }
+    }
+
     const { targetName, isEmpty } = await pickTarget(db);
     
     if (isEmpty || !targetName) {
+        // Even if we don't start a task because no target, we should still update last trigger if we want to honor the "gap"
+        // But usually we only update if a task is actually launched.
         return c.json({ status: "no target found", isEmpty, message: "成功收到消息，但已无更多人物可探索" });
     }
+
+    // Update last trigger time
+    await setConfig(db, "last_cron_trigger_time", String(now));
 
     // Set initial state
     const initialState = {

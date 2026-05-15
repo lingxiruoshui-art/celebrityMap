@@ -21,8 +21,18 @@ export default {
       const response = await fetch(url.toString(), {
         method: "POST"
       });
+      
       const text = await response.text();
-      console.log(`触发结果 (${response.status}): ${text}`);
+      try {
+        const data = JSON.parse(text);
+        if (data.status === "skipped") {
+            console.warn(`[任务跳过] ${data.message}`);
+        } else {
+            console.log(`触发结果 (${response.status}):`, data);
+        }
+      } catch(e) {
+        console.log(`触发结果 (${response.status}): ${text}`);
+      }
     } catch (e) {
       console.error(`触发请求失败:`, e);
     }

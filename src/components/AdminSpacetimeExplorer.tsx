@@ -163,6 +163,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   const publicSearchAbortControllerRef = useRef<AbortController | null>(null);
   const lastStreamPulseRef = useRef<number>(Date.now());
   const lastActivityRef = useRef<number>(Date.now());
+  const [lastActivityTime, setLastActivityTime] = useState<number | null>(null);
   const [pulseActive, setPulseActive] = useState(true);
 
   // Monitor activity to update respiratory light status
@@ -242,6 +243,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
            if (data) {
                if (data.lastHeartbeat) {
                    lastActivityRef.current = data.lastHeartbeat;
+                   setLastActivityTime(data.lastHeartbeat);
                }
                if (data.status === 'running') {
                    if (allowAdminControls) {
@@ -555,15 +557,12 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   useEffect(() => {
      if (autoStart && initialSource && initialTarget) {
        handleSearch();
-     } else if (isAdmin && !initialSource && !initialTarget) {
-       // We wait a tiny bit to give checkStatus a chance to detect an existing cron task
-       setTimeout(() => {
-         if (!pollStatusRef.current && !isLoading) {
-           handlePickRandomPair();
-         }
-       }, 500);
      }
-  }, []); // Only on mount
+     
+     if (hasInitialCheckDone && isAdmin && !initialSource && !initialTarget && !source && !target && !isLoading && !pollStatusRef.current) {
+        handlePickRandomPair();
+     }
+  }, [hasInitialCheckDone, isAdmin, autoStart, initialSource, initialTarget]);
 
   const clearResults = async (forceServerReset = false) => {
     const isJustRejectionError = typeof error === 'string' && (error.includes("探索正在进行中") || error.includes("重置状态"));
@@ -918,12 +917,22 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
             <div className="flex-1 flex flex-col min-w-0 bg-white overflow-hidden">
                <div className="px-5 py-4 bg-slate-50/50 border-b border-slate-100 flex items-center justify-between shrink-0">
                   <div className="flex items-center gap-3">
-                    <div className={`w-2.5 h-2.5 rounded-full ${
-                      isLoading ? (pulseActive ? 'bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]') :
-                      error ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]' :
-                      'bg-indigo-500 shadow-[0_0_8px_rgba(79,70,229,0.4)]'
-                    }`}></div>
-                    <span className="text-[10px] font-black text-slate-700 uppercase tracking-[0.2em] font-mono">Trace Log</span>
+                    <div className="flex items-center gap-2">
+                       <div className={`w-2.5 h-2.5 rounded-full ${
+                        isLoading ? (pulseActive ? 'bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.4)]') :
+                        error ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]' :
+                        'bg-indigo-500 shadow-[0_0_8px_rgba(79,70,229,0.4)]'
+                      }`}></div>
+                      <span className="text-[10px] font-black text-slate-700 uppercase tracking-[0.2em] font-mono">运行日志</span>
+                    </div>
+                    {isLoading && lastActivityTime && (
+                       <div className="flex items-center gap-1.5 bg-white/80 px-2 py-0.5 rounded-full border border-slate-200 shadow-sm">
+                         <RefreshCw className={`w-2.5 h-2.5 text-emerald-500 ${pulseActive ? 'animate-spin' : ''}`} />
+                         <span className="text-[9px] font-bold text-slate-500">
+                           {Math.max(0, Math.floor((Date.now() - lastActivityTime) / 1000))}s 前活跃
+                         </span>
+                       </div>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     <button 
