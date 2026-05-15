@@ -5,6 +5,7 @@ export interface ExploreState {
   status: "idle" | "running" | "success" | "error";
   lastHeartbeat?: number;
   pulse?: number;
+  taskId?: number;
   target: string;
   logs: { timestamp: string; msg: string; type: string; data?: any }[];
   steps: { msg: string; status: string; startTime?: number }[];
@@ -30,6 +31,7 @@ export async function runExplorationTask(
   let state: ExploreState = {
     status: "running",
     target,
+    taskId: Date.now(),
     pulse: 0,
     logs: [],
     steps: [],
@@ -60,7 +62,7 @@ export async function runExplorationTask(
                 throw new Error("AbortError");
             }
             
-            if (current.status === 'running' && current.target !== state.target) {
+            if (current.status === 'running' && current.taskId && state.taskId && current.taskId > state.taskId) {
                 throw new Error("AbortError");
             }
         }
