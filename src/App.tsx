@@ -636,6 +636,10 @@ export default function App() {
             fetchArchive();
           }}
           onAuthorized={() => setIsAuthorized(true)}
+          onPreviewPerson={(id) => {
+            setIsAdminOpen(false);
+            setSelectedPersonId(id);
+          }}
         />
       </div>
 

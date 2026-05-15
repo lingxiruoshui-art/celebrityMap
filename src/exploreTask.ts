@@ -159,17 +159,18 @@ export async function runExplorationTask(
     
     // Heartbeat for wiki fetch (optional but helpful if it's slow)
     const wikiHeartbeat = setInterval(async () => {
-        addLog("连接全网数据库中，正在跨维检索人物词条...", "info");
+        const waitingSecs = Math.floor((Date.now() - (state.steps[state.steps.length-1]?.startTime || Date.now())) / 1000);
+        addLog(`连接全网数据库中，正在跨维检索人物词条... (已等待 ${waitingSecs}s)`, "info");
         await saveState("Wiki 检索中");
     }, 10000);
 
     const metaPromise = fetchMetadataFromWiki(finalTargetName);
-    // Give it a timeout so it doesn't hang forever
+    // Wikidata timeout set to 30s as requested
     let wikiMeta: any;
     try {
         wikiMeta = await Promise.race([
             metaPromise,
-            new Promise<any>((_, reject) => setTimeout(() => reject(new Error("Wiki/Wikidata 响应超时")), 45000))
+            new Promise<any>((_, reject) => setTimeout(() => reject(new Error("Wiki/Wikidata 响应超时")), 30000))
         ]);
     } catch (err: any) {
         addLog(`Wiki唤醒异常: ${err.message}`, "error", { target: finalTargetName });
@@ -212,9 +213,10 @@ export async function runExplorationTask(
     
     // Heartbeat for long AI wait
     const aiHeartbeat = setInterval(async () => {
-        addLog("AI 正在进行深度时空测算，请耐心等待...", "info");
+        const waitingSecs = Math.floor((Date.now() - (state.steps[state.steps.length-1]?.startTime || Date.now())) / 1000);
+        addLog(`AI 正在进行深度时空测算，请耐心等待... (已等待 ${waitingSecs}s)`, "info");
         await saveState("AI 思考中");
-    }, 15000);
+    }, 10000);
 
     try {
         resultText = await callAI(c, db, prompt, "json", ARCHIVE_SCHEMA, async () => {
@@ -223,7 +225,7 @@ export async function runExplorationTask(
         });
     } catch (e: any) {
         addLog(`AI 请求失败: ${e.message}`, "error");
-        throw new Error(e.message === "请求超时" ? "AI 探索思考时间过长，已中止" : (e.message || "AI 服务异常"));
+        throw new Error(e.message === "请求超时" || e.message.includes("超时") ? "AI 探索思考时间过长，已中止" : (e.message || "AI 服务异常"));
     } finally {
         clearInterval(aiHeartbeat);
     }

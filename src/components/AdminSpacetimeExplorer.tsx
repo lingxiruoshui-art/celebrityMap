@@ -784,31 +784,39 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                          <StopCircle className="w-3.5 h-3.5" />
                       </button>
                     )}
-                    {(() => {
-                      const logsToRender = detailedLogs.filter(l => l.type === 'info');
-                      const finalLogs = logsToRender.length > 0 ? logsToRender : searchSteps.map((step, i) => ({
-                         timestamp: new Date(step.startTime || Date.now()).toLocaleTimeString(),
-                         msg: step.msg
-                      }));
-
-                      return finalLogs.map((log, i) => (
-                        <motion.div 
-                          key={i}
-                          initial={{ opacity: 0, x: -10 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          className="flex items-start gap-2.5 group"
-                        >
-                          <span className="text-[10px] text-slate-400 shrink-0 mt-0.5">[{log.timestamp}]</span>
-                          <span className="text-[11px] font-medium text-slate-600 leading-relaxed selection:bg-indigo-100">
-                            {log.msg}
+                    {searchSteps.map((step, i) => (
+                      <motion.div 
+                        key={i}
+                        initial={{ opacity: 0, x: -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        className="flex items-start gap-2.5 group"
+                      >
+                        <div className="mt-1 shrink-0">
+                          {step.status === 'success' ? (
+                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 border border-emerald-200" />
+                          ) : step.status === 'error' ? (
+                            <div className="w-1.5 h-1.5 rounded-full bg-red-500 border border-red-200" />
+                          ) : (
+                            <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 border border-indigo-200 animate-pulse" />
+                          )}
+                        </div>
+                        <span className={`text-[11px] font-medium leading-relaxed selection:bg-indigo-100 ${
+                          step.status === 'success' ? 'text-slate-500' : 
+                          step.status === 'error' ? 'text-red-500' : 'text-slate-800'
+                        }`}>
+                          {step.msg}
+                        </span>
+                        {step.startTime && (
+                          <span className="text-[9px] text-slate-300 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
+                            {new Date(step.startTime).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit' })}
                           </span>
-                        </motion.div>
-                      ));
-                    })()}
+                        )}
+                      </motion.div>
+                    ))}
                     {isLoading && (
-                       <div className="flex items-center gap-2 text-indigo-500 text-[11px] font-bold mt-1 pl-[52px]">
+                       <div className="flex items-center gap-2 text-indigo-500 text-[11px] font-bold mt-1 pl-4">
                           <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          <span className="animate-pulse">执行中...</span>
+                          <span className="animate-pulse">实时连接中...</span>
                        </div>
                     )}
                   </div>
@@ -899,7 +907,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                              <div className="flex items-center justify-between gap-2 overflow-hidden">
                                <span className="text-[13px] font-black text-slate-800 break-words">{item.name}</span>
                                {newArrivals.includes(item.name) && (
-                                 <span className="text-[8px] font-black bg-emerald-500 text-white px-1.5 py-0.5 rounded shadow-sm shrink-0">NEW</span>
+                                 <span className="text-[8px] font-black bg-emerald-500 text-white px-1.5 py-0.5 rounded shadow-sm shrink-0">新入库</span>
                                )}
                              </div>
                           </div>
@@ -918,11 +926,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                <div className="px-5 py-4 bg-slate-50/50 border-b border-slate-100 flex items-center justify-between shrink-0">
                   <div className="flex items-center gap-3">
                     <div className="flex items-center gap-2">
-                       <div className={`w-2.5 h-2.5 rounded-full ${
-                        isLoading ? (pulseActive ? 'bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.4)]') :
-                        error ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]' :
-                        'bg-indigo-500 shadow-[0_0_8px_rgba(79,70,229,0.4)]'
-                      }`}></div>
+                       <Zap className={`w-3.5 h-3.5 ${isLoading ? 'text-indigo-500' : 'text-indigo-600'} shrink-0`} />
                       <span className="text-[10px] font-black text-slate-700 uppercase tracking-[0.2em] font-mono">运行日志</span>
                     </div>
                     {isLoading && lastActivityTime && (
@@ -1015,7 +1019,9 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
             )}
             
             <div className="flex items-center gap-1.5 pr-2">
-              <Zap className={`w-3.5 h-3.5 ${isLoading ? 'text-indigo-500 animate-pulse' : 'text-indigo-600'} shrink-0`} />
+              <div className="relative">
+                <Zap className={`w-3.5 h-3.5 ${isLoading ? 'text-indigo-500' : 'text-indigo-600'} shrink-0`} />
+              </div>
               <div className="flex flex-col">
                 <span className="text-xs font-bold text-slate-800 whitespace-nowrap">时空关系网络探索</span>
                 {isCollapsed && isLoading && (

@@ -8,13 +8,14 @@ import ConfirmDialog from "./ConfirmDialog";
 interface AdminPanelProps {
   onClose: () => void;
   onAuthorized?: () => void;
+  onPreviewPerson?: (id: number) => void;
 }
 
 type Tab = "archive" | "archive_plus" | "config";
 type SortField = "created_at" | "views" | "name" | "category";
 type SortOrder = "asc" | "desc";
 
-export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
+export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: AdminPanelProps) {
   const [activeTab, setActiveTab] = useState<Tab>("archive_plus");
   const [people, setPeople] = useState<Person[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -637,7 +638,16 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
                             {p.image_url ? <img src={p.image_url} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : <User className="w-5 h-5" />}
                           </div>
                         </td>
-                        <td className="px-4 py-3 font-bold text-slate-800 text-sm whitespace-nowrap">{p.name}</td>
+                        <td 
+                          className="px-4 py-3 font-bold text-slate-800 text-sm whitespace-nowrap cursor-pointer hover:text-indigo-600 transition-colors group-hover:pl-5"
+                          onClick={() => onPreviewPerson?.(p.id)}
+                          title="点击在前台查看"
+                        >
+                          <div className="flex items-center gap-2">
+                             {p.name}
+                             <Eye className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </div>
+                        </td>
                         <td className="px-4 py-3 text-sm text-slate-600 whitespace-nowrap">{p.category}</td>
                         <td className="px-4 py-3 text-sm font-mono text-slate-600 whitespace-nowrap">{p.views}</td>
                         <td className="px-4 py-3 text-sm text-slate-600 whitespace-nowrap">
@@ -850,7 +860,7 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
                     </div>
                     <div>
                       <h4 className="text-sm font-bold text-slate-800">后台自动探索控制</h4>
-                      <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest leading-none mt-1">定时任务触发设置</p>
+                      <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest leading-none mt-1">定时任务自动同步</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
@@ -865,7 +875,7 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
                         <div className={`w-10 h-5 rounded-full transition-colors ${(config.cron_interval_enabled === true || config.cron_interval_enabled === 'true') ? 'bg-indigo-600' : 'bg-slate-200'}`}></div>
                         <div className={`absolute top-1 left-1 w-3 h-3 bg-white rounded-full transition-transform ${(config.cron_interval_enabled === true || config.cron_interval_enabled === 'true') ? 'translate-x-5' : ''}`}></div>
                       </div>
-                      <span className="text-xs font-bold text-slate-600 group-hover:text-indigo-600 transition-colors">启用探索间隔控制</span>
+                      <span className="text-xs font-bold text-slate-600 group-hover:text-indigo-600 transition-colors">开启间隔限制</span>
                     </label>
                   </div>
                 </div>
@@ -907,7 +917,7 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
                       </div>
                     </div>
                     <p className="text-[10px] text-slate-400 leading-relaxed italic">
-                      * 该设置仅对定时同步（Worker）生效。管理员在后台手动发起的探索任务不受此限制。
+                      * 定时探索任务将按照此间隔周期性尝试触发。若手动点击“开启探索”，则不受此处的间隔限制影响。
                     </p>
                   </div>
 

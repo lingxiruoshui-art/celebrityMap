@@ -142,7 +142,7 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
 
     const startTime = Date.now();
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 300000); // 300s timeout
+    const timeoutId = setTimeout(() => controller.abort(), 180000); // 180s timeout as requested
 
     try {
       const res = await fetch("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", {
@@ -219,7 +219,7 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
 
       let timeoutId: any;
       const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error("Timeout")), 300000);
+        timeoutId = setTimeout(() => reject(new Error("Timeout")), 180000); // 180s timeout as requested
       });
 
       const result = await Promise.race([generatePromise, timeoutPromise]) as any;
@@ -1177,13 +1177,26 @@ app.post("/cron", async (c) => {
     
     const db = await getDb(c);
     
-    // Check if task is already running
+    // 检查是否已经有探索任务在运行
+    let currentStr = "null";
     const statusKV = c.env.EXPLORE_KV;
     if (statusKV) {
-        const liveStatus = await statusKV.get("exploration_status");
-        if (liveStatus === "running") {
-            console.log("[Cron Skip] A task is already running.");
-            return c.json({ status: "skipped", message: "探索正在进行中，跳过本次触发" });
+        currentStr = await statusKV.get("explore_state") || "null";
+    } else {
+        currentStr = await getConfig(db, "explore_state", "null");
+    }
+
+    if (currentStr !== "null") {
+        try {
+            const current = JSON.parse(currentStr);
+            const isStale = current.status === 'running' && (!current.lastHeartbeat || (Date.now() - current.lastHeartbeat > 300000));
+            
+            if (current.status === 'running' && !isStale) {
+                console.log("[Cron Skip] 探索正在进行中，跳过本次触发");
+                return c.json({ status: "skipped", message: "探索正在进行中，跳过本次触发" });
+            }
+        } catch(e) {
+            console.error("[Cron] 解析状态失败:", e);
         }
     }
 
