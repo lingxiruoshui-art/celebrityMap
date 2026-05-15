@@ -600,7 +600,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
           {/* Main Controls & Results Column (Responsive Width - Now on Left) */}
           <div className={`${showLogs ? "w-full lg:w-[360px] xl:w-[400px] lg:border-r border-slate-100 bg-slate-50/20 shadow-[-10px_0_20px_-10px_rgba(0,0,0,0.05)_inset]" : "w-full max-w-[440px] mx-auto"} flex flex-col flex-1 lg:flex-none lg:shrink-0 overflow-hidden min-h-0 max-h-full`}>
               <div className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5 sm:px-6 sm:pb-6 space-y-4">
-                {!showResults && !error && !hideInputs && (
+                {!hideInputs && (
                   <div className="space-y-3 pt-4 pb-6 border-b border-slate-100 mb-2">
                     {allowAdminControls ? (
                       <div className="flex flex-col gap-1.5">

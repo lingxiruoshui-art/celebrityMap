@@ -289,7 +289,7 @@ export async function runExplorationTask(
     
     try {
         addLog(`[AI] 正在通过时空信道上行数据 (Payload: ${Math.round(prompt.length / 1024 * 10) / 10}KB)...`, "info");
-        resultText = await callAI(c, db, prompt, "json", ARCHIVE_SCHEMA, async () => {
+        resultText = await callAI(c, db, prompt, "json", ARCHIVE_SCHEMA(!!meta.description), async () => {
             // This is the internal callback of callAI if it supports it
             // We MUST update the heartbeat here too to prevent "stale" detection during long AI calls
             const waiting = Math.floor((Date.now() - (state.steps[state.steps.length - 1]?.startTime || Date.now())) / 1000);
@@ -317,8 +317,10 @@ export async function runExplorationTask(
         throw new Error(`AI 生成人物 ${finalTargetName} 的传记无法解析`);
     }
 
-    if (!personData.accepted && !isAdmin) {
-        throw new Error(`抱歉，${finalTargetName} 可能不符合入库标准（${personData.reason || "非真实历史人物"}）`);
+    if (!isAdmin) {
+        if (!meta.description && personData.accepted === false) {
+            throw new Error(`抱歉，${finalTargetName} 可能不符合入库标准（${personData.reason || "非真实历史人物"}）`);
+        }
     }
 
     const finalName = personData.standardChineseName || finalTargetName;

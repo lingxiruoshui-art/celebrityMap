@@ -158,21 +158,50 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
             { role: "system", content: systemContent },
             { role: "user", content: prompt }
           ],
+          stream: true,
           ...(responseFormat === "json" ? { response_format: { type: "json_object" } } : {})
         })
       });
       
-      clearTimeout(timeoutId);
-      cleanup();
-      
       if (!res.ok) {
+        clearTimeout(timeoutId);
+        cleanup();
         console.error(`Aliyun API error: ${res.status} ${res.statusText}`);
         throw new Error(`Aliyun API error`);
       }
-      const json = await res.json() as any;
+
+      if (!res.body) {
+        throw new Error("No response body");
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let fullContent = "";
+      
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
+        for (const line of lines) {
+          if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+            try {
+              const data = JSON.parse(line.substring(6));
+              const delta = data.choices[0]?.delta?.content || "";
+              fullContent += delta;
+            } catch (e) {
+              // ignore parse errors for partial chunks
+            }
+          }
+        }
+      }
+      
+      clearTimeout(timeoutId);
+      cleanup();
+      
       const duration = Date.now() - startTime;
       console.log(`Aliyun call took ${duration}ms`);
-      let content = json.choices[0].message.content || "";
+      let content = fullContent;
       content = content.replace(/<think>[\s\S]*?<\/think>/ig, '').trim();
       if (responseFormat === "json") {
          const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/i);
@@ -208,27 +237,34 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
     const ai = new GoogleGenAI({ apiKey });
     const startTime = Date.now();
     try {
-      const generatePromise = ai.models.generateContent({
-        model: modelId,
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        config: responseFormat === "json" ? { 
-          responseMimeType: "application/json",
-          responseSchema: schema 
-        } : undefined
-      });
-
       let timeoutId: any;
       const timeoutPromise = new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => reject(new Error("Timeout")), 180000); // 180s timeout as requested
       });
 
-      const result = await Promise.race([generatePromise, timeoutPromise]) as any;
+      const generateContentStreamPromise = async () => {
+        const stream = await ai.models.generateContentStream({
+          model: modelId,
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          config: responseFormat === "json" ? { 
+            responseMimeType: "application/json",
+            responseSchema: schema 
+          } : undefined
+        });
+        let fullText = "";
+        for await (const chunk of stream) {
+           fullText += chunk.text;
+        }
+        return fullText;
+      };
+
+      const result = await Promise.race([generateContentStreamPromise(), timeoutPromise]) as string;
       clearTimeout(timeoutId);
       cleanup();
 
       const duration = Date.now() - startTime;
       console.log(`Gemini call took ${duration}ms`);
-      let content = result.response?.text() || result.text || "";
+      let content = result;
       content = content.replace(/<think>[\s\S]*?<\/think>/ig, '').trim();
       if (responseFormat === "json") {
          const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/i);
@@ -845,7 +881,7 @@ app.post("/archive-figure", async (c) => {
               const prompt = ARCHIVE_PROMPT(targetName, CATEGORIES, sampleNames, meta.description);
 
               await send({ type: 'ai-req', msg: 'AI 代理请求发送', data: { prompt: prompt.substring(0, 300) + "..." } });
-              let resultText = await callAI(c, db, prompt, "json", ARCHIVE_SCHEMA, async () => {
+              let resultText = await callAI(c, db, prompt, "json", ARCHIVE_SCHEMA(!!meta.description), async () => {
                   await send({ type: 'heartbeat', msg: 'AI 仍在思考中...' });
               });
               await send({ type: 'ai-res', msg: 'AI 响应解码成功', data: { rawText: resultText.substring(0, 200) + "..." } });

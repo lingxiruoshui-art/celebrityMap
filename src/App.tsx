@@ -569,7 +569,13 @@ export default function App() {
                 <SpacetimeExplorer
                   onClose={() => setIsSixDegreesOpen(false)}
                   onRefreshArchive={fetchArchive}
-                  onSelectPerson={(id) => setSelectedPersonId(id)}
+                  onSelectPerson={(id, name) => {
+                    if (id > 0) {
+                      setSelectedPersonId(id);
+                    } else if (name) {
+                      setPendingSelectName(name);
+                    }
+                  }}
                   onPathFound={(path) => {
                     setDiscoveryPath(path);
                     if (path && path.length > 0) {
@@ -636,9 +642,11 @@ export default function App() {
             fetchArchive();
           }}
           onAuthorized={() => setIsAuthorized(true)}
-          onPreviewPerson={(id) => {
+          onPreviewPerson={(id, name) => {
             setIsAdminOpen(false);
-            setSelectedPersonId(id);
+            fetchArchive();
+            if (id > 0) setSelectedPersonId(id);
+            else if (name) setPendingSelectName(name);
           }}
         />
       </div>

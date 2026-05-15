@@ -16,19 +16,19 @@ export const ARCHIVE_PROMPT = (name: string, categories: string[], sampleNames?:
 ${bioSnippet ? `参考背景资料：${bioSnippet}` : ""}
 
 要求：
-- accepted：仅限真实已故历史人物为 true，其余(虚构、在世、非人类实体等)一律为 false。
-- reason：极简描述其历史身份(限10字内)。${bioSnippet ? `请优先直接提取使用参考背景资料。` : `请根据历史事实总结。`}
+${bioSnippet ? "" : `- accepted：仅限真实已故历史人物为 true，其余(虚构、在世、非人类实体等)一律为 false。
+- reason：极简描述其历史身份(限10字内)。`}
 - standardChineseName：该人物最权威、最广泛公认的学术标准中文全名（外国人名请使用标准译名，中国古人请使用姓名而非号或字）。
 
 请严格返回以下格式的 JSON 对象：
 {
-  "accepted": true/false,
-  "reason": "历史身份简述",
+${bioSnippet ? "" : `  "accepted": true/false,
+  "reason": "历史身份简述",`}
   "standardChineseName": "标准中文全名",
   "keyword": "该人物最经典、最具代表性的一句人生格言",
   "lifespan": "如公元前571年-公元前471年或1879年-1955年",
   "birthplace": "出生地",
-  "category": "${bioSnippet ? `参考背景资料（如有）或从以下选择：[${categories.join("、")}]` : `从以下选择最合适的：[${categories.join("、")}]`}",
+  "category": "${bioSnippet ? `参考背景资料提取角色身份，或从以下选择：[${categories.join("、")}]` : `从以下选择最合适的：[${categories.join("、")}]`}",
   "biography": "正规且诙谐幽默的传记。分3-4段，不少于300字。禁止使用大家好等开场白。",
   "achievements": ["成就1", "成就2"],
   "relationships": [
@@ -44,11 +44,13 @@ ${bioSnippet ? `参考背景资料：${bioSnippet}` : ""}
 3. 所有返回内容必须使用简体中文。
 `;
 
-export const ARCHIVE_SCHEMA: Schema = {
+export const ARCHIVE_SCHEMA = (hasBio: boolean): Schema => ({
   type: Type.OBJECT,
   properties: {
-    accepted: { type: Type.BOOLEAN },
-    reason: { type: Type.STRING },
+    ...(!hasBio ? {
+      accepted: { type: Type.BOOLEAN },
+      reason: { type: Type.STRING },
+    } : {}),
     standardChineseName: { type: Type.STRING },
     keyword: { type: Type.STRING },
     lifespan: { type: Type.STRING },
@@ -70,5 +72,8 @@ export const ARCHIVE_SCHEMA: Schema = {
       }
     }
   },
-  required: ["accepted", "reason", "standardChineseName", "keyword", "lifespan", "birthplace", "biography", "achievements", "category", "latitude", "longitude", "relationships"]
-};
+  required: [
+    ...(!hasBio ? ["accepted", "reason"] : []), 
+    "standardChineseName", "keyword", "lifespan", "birthplace", "biography", "achievements", "category", "latitude", "longitude", "relationships"
+  ]
+});

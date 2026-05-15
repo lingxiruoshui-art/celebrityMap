@@ -8,7 +8,7 @@ import ConfirmDialog from "./ConfirmDialog";
 interface AdminPanelProps {
   onClose: () => void;
   onAuthorized?: () => void;
-  onPreviewPerson?: (id: number) => void;
+  onPreviewPerson?: (id: number, name?: string) => void;
 }
 
 type Tab = "archive" | "archive_plus" | "config";
@@ -764,6 +764,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                       } else if (name) {
                         const p = people.find(person => person.name === name);
                         if (p) onPreviewPerson?.(p.id);
+                        else onPreviewPerson?.(-1, name);
                       }
                     }}
                     peopleNames={people.map(p => p.name)}
@@ -914,64 +915,61 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-3 sm:gap-4">
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                          小时
-                        </label>
-                        <input 
-                          type="number"
-                          min="0"
-                          value={config.cron_interval_hours || 0}
-                          onChange={(e) => setConfig({ ...config, cron_interval_hours: parseInt(e.target.value) || 0 })}
-                          onBlur={(e) => saveConfig("cron_interval_hours", e.target.value)}
-                          className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all appearance-none"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex justify-between">
-                          <span>分钟</span>
-                          <span className="text-indigo-500/60 font-black">最少 15</span>
-                        </label>
-                        <input 
-                          type="number"
-                          min="0"
-                          max="59"
-                          value={config.cron_interval_minutes || 0}
-                          onChange={(e) => setConfig({ ...config, cron_interval_minutes: parseInt(e.target.value) || 0 })}
-                          onBlur={(e) => {
-                             let val = parseInt(e.target.value) || 0;
-                             if (val < 15 && (!config.cron_interval_hours || config.cron_interval_hours === 0)) val = 15;
-                             saveConfig("cron_interval_minutes", String(val));
-                          }}
-                          className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all appearance-none"
-                        />
-                      </div>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4 items-start">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                        小时
+                      </label>
+                      <input 
+                        type="number"
+                        min="0"
+                        value={config.cron_interval_hours || 0}
+                        onChange={(e) => setConfig({ ...config, cron_interval_hours: parseInt(e.target.value) || 0 })}
+                        onBlur={(e) => saveConfig("cron_interval_hours", e.target.value)}
+                        className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all appearance-none"
+                      />
                     </div>
-                    <p className="text-[10px] text-slate-400 leading-relaxed italic">
-                      * 定时探索任务将按照此间隔周期性尝试触发。若手动点击“开启探索”，则不受此处的间隔限制影响。
-                    </p>
-                  </div>
-
-                  <div className="bg-slate-50/80 rounded-2xl p-4 md:p-5 border border-slate-100 flex flex-col justify-center min-h-[80px]">
-                    <div className="flex items-center gap-2 mb-2">
-                       <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
-                       <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">上次收到同步指令</span>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex justify-between">
+                        <span>分钟</span>
+                        <span className="text-indigo-500/60 font-black">最少 15</span>
+                      </label>
+                      <input 
+                        type="number"
+                        min="0"
+                        max="59"
+                        value={config.cron_interval_minutes || 0}
+                        onChange={(e) => setConfig({ ...config, cron_interval_minutes: parseInt(e.target.value) || 0 })}
+                        onBlur={(e) => {
+                           let val = parseInt(e.target.value) || 0;
+                           if (val < 15 && (!config.cron_interval_hours || config.cron_interval_hours === 0)) val = 15;
+                           saveConfig("cron_interval_minutes", String(val));
+                        }}
+                        className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all appearance-none"
+                      />
                     </div>
-                    <div className="text-sm md:text-base font-mono font-bold text-slate-700 tracking-tight">
-                       {config.last_cron_trigger_time ? new Date(parseInt(config.last_cron_trigger_time)).toLocaleString('zh-CN', {
-                         year: 'numeric',
-                         month: '2-digit',
-                         day: '2-digit',
-                         hour: '2-digit',
-                         minute: '2-digit',
-                         second: '2-digit',
-                         hour12: false
-                       }) : "尚无记录"}
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-2">
+                         <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                         上次收到同步指令
+                      </label>
+                      <div className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono font-bold text-slate-700 tracking-tight flex items-center h-[42px] overflow-hidden whitespace-nowrap">
+                         {config.last_cron_trigger_time ? new Date(parseInt(config.last_cron_trigger_time)).toLocaleString('zh-CN', {
+                           year: 'numeric',
+                           month: '2-digit',
+                           day: '2-digit',
+                           hour: '2-digit',
+                           minute: '2-digit',
+                           second: '2-digit',
+                           hour12: false
+                         }) : "尚无记录"}
+                      </div>
                     </div>
                   </div>
+                  <p className="text-[10px] text-slate-400 leading-relaxed italic">
+                    * 定时探索任务将按照此间隔周期性尝试触发。若手动点击“开启探索”，则不受此处的间隔限制影响。
+                  </p>
                 </div>
               </div>
             </div>
