@@ -676,6 +676,7 @@ app.post("/archiver/chat", async (c) => {
 
 请模拟这两人之间的一段简短、深刻且符合性格特征的对话（3-4个来回）。
 对话应围绕他们的核心思想、成就或历史遗憾展开。
+每句话长度必须限制在 1~20 个汉字。
 请直接返回 JSON 数组，格式如下：
 [
   { "speaker": "${p1Data.name}", "text": "..." },
@@ -697,7 +698,12 @@ app.post("/archiver/chat", async (c) => {
       });
 
       const messages = JSON.parse(result || "[]");
-      return c.json({ messages });
+      // Enforce dialog length limit on the backend result just in case
+      const validatedMessages = messages.map((m: any) => ({
+          speaker: m.speaker,
+          text: (m.text || "").substring(0, 20)
+      }));
+      return c.json({ messages: validatedMessages });
   } catch (e: any) {
       console.error("Chat error:", e);
       return c.json({ error: "跨时空通讯信号中断: " + e.message }, 500);

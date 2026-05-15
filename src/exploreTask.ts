@@ -46,35 +46,43 @@ export async function runExplorationTask(
       onPulse(reason || "heartbeat").catch(e => console.error("Pulse error:", e));
     }
     
-    let currentRaw = "null";
-    if (c.env && c.env.EXPLORE_KV) {
-        currentRaw = await c.env.EXPLORE_KV.get("explore_state") || "null";
-    } else {
-        currentRaw = await getConfig(db, "explore_state", "null");
-    }
-    
-    if (currentRaw === "null") {
-        throw new Error("AbortError");
-    }
+    const doSave = async () => {
+        let currentRaw = "null";
+        if (c.env && c.env.EXPLORE_KV) {
+            currentRaw = await c.env.EXPLORE_KV.get("explore_state") || "null";
+        } else {
+            currentRaw = await getConfig(db, "explore_state", "null");
+        }
+        
+        if (currentRaw === "null") {
+            throw new Error("AbortError");
+        }
 
-    const current = JSON.parse(currentRaw);
-    if (current.status === "error" && current.error === "探索已中止") {
-        throw new Error("AbortError");
-    }
-    
-    if (current.status === 'running' && current.target !== state.target) {
-        throw new Error("AbortError");
-    }
+        const current = JSON.parse(currentRaw);
+        if (current.status === "error" && current.error === "探索已中止") {
+            throw new Error("AbortError");
+        }
+        
+        if (current.status === 'running' && current.target !== state.target) {
+            throw new Error("AbortError");
+        }
 
-    const stateStr = JSON.stringify(state);
-    try {
+        const stateStr = JSON.stringify(state);
         if (c.env && c.env.EXPLORE_KV) {
             await c.env.EXPLORE_KV.put("explore_state", stateStr);
         } else {
             await setConfig(db, "explore_state", stateStr);
         }
-    } catch (kvError) {
-        console.error("Failed to save state to KV/Config:", kvError);
+    };
+
+    try {
+        await Promise.race([
+            doSave(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("SaveState Timeout")), 8000))
+        ]);
+    } catch (e: any) {
+        if (e.message === "AbortError") throw e;
+        console.warn(`[Explore Task] saveState failed/timeout: ${e.message}`);
     }
   };
 
@@ -116,12 +124,15 @@ export async function runExplorationTask(
 
   let globalHeartbeat: any;
   try {
+    console.log(`[Explore Task] Starting for: ${target}`);
     addLog("启动时空档案入库协议", "api", {
       target,
       timestamp: new Date().toISOString(),
     });
     addStep("正在初始化跨时空检索协议...");
+    console.log("[Explore Task] Initializing state...");
     await saveState("初始化协议");
+    console.log("[Explore Task] State initialized.");
 
     // Global activity heartbeat
     globalHeartbeat = setInterval(async () => {
@@ -135,19 +146,37 @@ export async function runExplorationTask(
     }, 5000);
 
     addLog("正在读取后台模型配置与权限校验...", "info");
-    const provider = await getConfig(db, "active_model_provider", "gemini");
+    console.log("[Explore Task] Reading config...");
+    addLog("正在验证时空模型权限...", "info");
+    
+    const getConfigWithTimeout = async (key: string, def?: any) => {
+        try {
+            return await Promise.race([
+                getConfig(db, key, def),
+                new Promise<any>((_, reject) => setTimeout(() => reject(new Error(`读取配置 [${key}] 超时`)), 10000))
+            ]);
+        } catch (e: any) {
+            console.error(`[Explore Task] Config fetch failed for ${key}:`, e);
+            return def;
+        }
+    };
+
+    const provider = await getConfigWithTimeout("active_model_provider", "gemini");
     const modelId =
       provider === "gemini"
-        ? await getConfig(db, "gemini_model_id")
-        : await getConfig(db, "aliyun_model_id");
+        ? await getConfigWithTimeout("gemini_model_id")
+        : await getConfigWithTimeout("aliyun_model_id");
 
     if (!modelId) {
+      console.error("[Explore Task] Model ID missing");
       throw new Error(`请先在后台配置 ${provider === "gemini" ? "Gemini" : "Aliyun"} 模型 ID`);
     }
 
     // Prepare samples for diversity
+    console.log("[Explore Task] Fetching samples...");
     addLog("正在通过 SQL 推算历史人物多样性样本...", "info");
     const samplePeople = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 20").all() as any[];
+    console.log(`[Explore Task] Samples found: ${samplePeople.length}`);
     const sampleNames = samplePeople.map((p: any) => p.name).join("、");
 
     let finalTargetName = target;
