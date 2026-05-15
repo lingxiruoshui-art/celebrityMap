@@ -16,7 +16,7 @@ export const ARCHIVE_PROMPT = (name: string, categories: string[], sampleNames?:
 ${bioSnippet ? `参考背景资料（身份线索）：${bioSnippet}\n\n注意：该人物的身份已通过背景资料确认，无须再次验证或标准化姓名。` : ""}
 
 要求：
-${bioSnippet ? "" : `- accepted：仅限真实已故历史人物为 true，其余(虚构、在世、非人类实体等)一律为 false。
+${bioSnippet ? "" : `- accepted：仅限真实已故客观存在的历史人物为 true。严禁包含神话人物、民间传说人物（如孟姜女、神农氏等）、虚构角色或在世人物，这类一律为 false。
 - reason：极简描述其历史身份(限10字内)。
 - standardChineseName：该人物最权威、最广泛公认的学术标准中文全名（外国人名请使用标准译名，中国古人请使用姓名而非号或字）。`}
 - keyword：该人物最经典、最具代表性的一句人生格言短语
@@ -32,7 +32,7 @@ ${bioSnippet ? "" : `  "accepted": true/false,
   "lifespan": "如公元前571年-公元前471年或1879年-1955年",
   "birthplace": "出生地",
   "category": "${bioSnippet ? `参考背景资料提取角色身份，或从以下选择：[${categories.join("、")}]` : `从以下选择最合适的：[${categories.join("、")}]`}",
-  "biography": "正规且诙谐幽默的传记。分3-4段，不少于300字。禁止使用大家好等开场白。",
+  "biography": "正规且诙谐幽默的传记。绝对不要写成1大段，必须分段，至少2段，至多3段（各段用\\n\\n分隔），不少于300字。禁止使用大家好等开场白。",
   "achievements": ["成就1", "成就2"],
   "relationships": [
     {"personName": "标准中文全名", "relationshipType": "20-30字关系描述"}
@@ -42,9 +42,10 @@ ${bioSnippet ? "" : `  "accepted": true/false,
 }
 
 特别要求：
-1. relationships 中提供3~5个人物，必须是实名历史人物且为中国老百姓家喻户晓的名字。不需要有强烈的交集，可以是弱关联，比如言论中谈到、思想上有继承、同一流派、参加过同一社团等等，只要能扯上关系就行。
+1. relationships 中提供3~5个人物，必须是真实的已故历史人物（严禁出现神话、民间传说、虚构小说中的人物，如孟姜女、女娲等），且为中国老百姓家喻户晓的名字。不需要有强烈的交集，可以是弱关联，比如言论中谈到、思想上有继承、同一流派、参加过同一社团等等，只要能扯上关系就行。
 2. 请务必使用广泛公认的学术标准中文译名，以确保数据一致性，避免重复录入。
-3. 所有返回内容必须使用简体中文。
+3. biography 字段绝对不能写成一大段，必须分成 2 到 3 段（使用 \\n\\n 进行真正的分段），结构清晰。
+4. 所有返回内容必须使用简体中文。
 `;
 
 export const ARCHIVE_SCHEMA = (hasBio: boolean): Schema => ({
@@ -59,7 +60,7 @@ export const ARCHIVE_SCHEMA = (hasBio: boolean): Schema => ({
     lifespan: { type: Type.STRING },
     birthplace: { type: Type.STRING },
     category: { type: Type.STRING },
-    biography: { type: Type.STRING },
+    biography: { type: Type.STRING, description: "正规且诙谐幽默的传记。绝对不要写成1大段，必须分段，至少2段，至多3段（各段用\\n\\n分隔），不少于300字。" },
     achievements: { type: Type.ARRAY, items: { type: Type.STRING } },
     latitude: { type: Type.NUMBER },
     longitude: { type: Type.NUMBER },
