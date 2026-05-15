@@ -127,12 +127,12 @@ export async function runExplorationTask(
     globalHeartbeat = setInterval(async () => {
         const lastStep = state.steps[state.steps.length - 1];
         const waitingSecs = Math.floor((Date.now() - (lastStep?.startTime || Date.now())) / 1000);
-        // Only log if we've been waiting for more than 2 seconds
+        // More frequent updates for better UI feedback
         if (waitingSecs > 1) {
-            addLog(`档案编织进行中... 已在当前步骤等待 ${waitingSecs}s`, "heartbeat", undefined, true);
+            addLog(`探索进行中... 已在当前步骤等待 ${waitingSecs}s`, "heartbeat", undefined, true);
         }
-        await saveState("正在后台深度处理");
-    }, 8000);
+        await saveState(waitingSecs % 10 === 0 ? "ongoing" : "heartbeat");
+    }, 5000);
 
     addLog("正在读取后台模型配置与权限校验...", "info");
     const provider = await getConfig(db, "active_model_provider", "gemini");
@@ -182,13 +182,22 @@ export async function runExplorationTask(
     addLog(`准备跨维检索：正在初始化 Wikidata 引擎以提取 ${finalTargetName} 的特征...`, "info", { query: finalTargetName });
 
     const metaPromise = fetchMetadataFromWiki(finalTargetName);
-    // Wikidata timeout set to 30s as requested
+    // Wikidata timeout set to 45s to be safe
     let wikiMeta: any;
     try {
+        // Explicitly pulse and log while waiting for Wiki
+        const wikiPulse = setInterval(() => {
+            const waiting = Math.floor((Date.now() - (state.steps[state.steps.length - 1]?.startTime || Date.now())) / 1000);
+            addLog(`Wikidata 深度检索中... (已等待 ${waiting}s)`, "heartbeat", undefined, true);
+            saveState("Wiki 检索中...");
+        }, 8000);
+
         wikiMeta = await Promise.race([
             metaPromise,
-            new Promise<any>((_, reject) => setTimeout(() => reject(new Error("Wiki/Wikidata 响应超时")), 30000))
+            new Promise<any>((_, reject) => setTimeout(() => reject(new Error("Wiki/Wikidata 响应超时")), 45000))
         ]);
+        
+        clearInterval(wikiPulse);
     } catch (err: any) {
         addLog(`Wiki唤醒异常: ${err.message}`, "error", { target: finalTargetName });
         throw new Error(`无法从全网数据库识别 ${finalTargetName}: ${err.message}`);
@@ -231,6 +240,9 @@ export async function runExplorationTask(
     try {
         resultText = await callAI(c, db, prompt, "json", ARCHIVE_SCHEMA, async () => {
             // This is the internal callback of callAI if it supports it
+            // We MUST update the heartbeat here too to prevent "stale" detection during long AI calls
+            const waiting = Math.floor((Date.now() - (state.steps[state.steps.length - 1]?.startTime || Date.now())) / 1000);
+            addLog(`AI 正在超维建模... (已等待 ${waiting}s)`, "heartbeat", undefined, true);
             await saveState("AI 流式处理中...");
         });
     } catch (e: any) {

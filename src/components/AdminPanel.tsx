@@ -188,7 +188,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
       try {
         const res = await fetch("/api/explore/status", { headers: adminHeaders });
         if (res.ok) {
-          const data = await res.json();
+          const data = await res.json() as any;
           setIsLoading(data && data.status === 'running');
         }
       } catch (e) {}

@@ -660,7 +660,48 @@ app.post("/pathfind", async (c) => {
 });
 
 app.post("/archiver/chat", async (c) => {
-  return c.json({ error: "此功能已下线" }, 410);
+  const db = await getDb(c);
+  const { person1, person2 } = await c.req.json();
+  if (!person1 || !person2) return c.json({ error: "Missing names" }, 400);
+
+  try {
+      const p1Data = await db.prepare("SELECT name, biography FROM people WHERE name = ? COLLATE NOCASE").get(person1) as any;
+      const p2Data = await db.prepare("SELECT name, biography FROM people WHERE name = ? COLLATE NOCASE").get(person2) as any;
+      
+      if (!p1Data || !p2Data) return c.json({ error: "人物档案尚未入库，无法开启跨时空对话" }, 404);
+
+      const prompt = `你正在主持一场跨越时空的对话。
+人物 A: ${p1Data.name}，传记: ${p1Data.biography}
+人物 B: ${p2Data.name}，传记: ${p2Data.biography}
+
+请模拟这两人之间的一段简短、深刻且符合性格特征的对话（3-4个来回）。
+对话应围绕他们的核心思想、成就或历史遗憾展开。
+请直接返回 JSON 数组，格式如下：
+[
+  { "speaker": "${p1Data.name}", "text": "..." },
+  { "speaker": "${p2Data.name}", "text": "..." },
+  ...
+]
+只返回 JSON 代码块，不要包含 Markdown 格式。`;
+
+      const result = await callAI(c, db, prompt, "json", {
+          type: "array",
+          items: {
+              type: "object",
+              properties: {
+                  speaker: { type: "string" },
+                  text: { type: "string" }
+              },
+              required: ["speaker", "text"]
+          }
+      });
+
+      const messages = JSON.parse(result || "[]");
+      return c.json({ messages });
+  } catch (e: any) {
+      console.error("Chat error:", e);
+      return c.json({ error: "跨时空通讯信号中断: " + e.message }, 500);
+  }
 });
 
 app.get("/archiver/random-pair", async (c) => {
@@ -725,11 +766,28 @@ app.post("/archiver/admin-pick-target", async (c) => {
 });
 
 app.post("/archiver/pick-target", async (c) => {
-  return c.json({ error: "此功能已下线" }, 410);
+  const db = await getDb(c);
+  return c.json(await pickTarget(db));
 });
 
 app.post("/archiver/generate-target", async (c) => {
-  return c.json({ error: "此功能已下线" }, 410);
+  const db = await getDb(c);
+  const samplePeople = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 20").all() as any[];
+  const sampleNames = samplePeople.map((p: any) => p.name).join("、");
+  
+  const prompt = `请从世界历史中选取一位极其著名、具有重大全球影响力且通常被视为正面的真实历史人物。
+要求：
+1. 不包含在以下列表中：[${sampleNames}]
+2. 此人必须在 Wikidata/Wikipedia 有详尽记载。
+3. 请只返回此人的标准中文译名，不带任何其他文字。`;
+
+  try {
+      const resultText = await callAI(c, db, prompt, "text");
+      const targetName = (resultText || "").trim().replace(/[「」""'']/g, "");
+      return c.json({ targetName });
+  } catch(e: any) {
+      return c.json({ error: e.message }, 500);
+  }
 });
 
 app.post("/archive-figure", async (c) => {
@@ -928,9 +986,9 @@ app.get("/explore/status", async (c) => {
   
   if (data && data.status === 'running') {
       const diff = data.lastHeartbeat ? (Date.now() - data.lastHeartbeat) : Infinity;
-      if (diff > 300000) { // 300 seconds
+      if (diff > 600000) { // 600 seconds (10 minutes)
           data.status = 'error';
-          data.error = '探索任务被系统认定为已脱机（持续 >300s 无响应）。可能由于大模型 API 限流或响应过慢导致请求彻底熔断。请检查 API 状态后重试。';
+          data.error = '探索任务被系统认定为已脱机（持续 >600s 无响应）。可能由于大模型 API 限流或响应过慢导致请求彻底熔断。请检查 API 状态后重试。';
           const newState = JSON.stringify(data);
           if (c.env && c.env.EXPLORE_KV) {
               await c.env.EXPLORE_KV.put("explore_state", newState);
@@ -1042,7 +1100,14 @@ app.post("/public/explore", async (c) => {
 });
 
 app.post("/explore/ai-proxy", async (c) => {
-  return c.json({ error: "此功能已下线" }, 410);
+  const db = await getDb(c);
+  const { prompt, responseFormat, schema } = await c.req.json();
+  try {
+      const text = await callAI(c, db, prompt, responseFormat, schema);
+      return c.json({ text });
+  } catch (e: any) {
+      return c.json({ error: e.message }, 500);
+  }
 });
 
 app.post("/explore/start", async (c) => {
@@ -1056,7 +1121,7 @@ app.post("/explore/start", async (c) => {
   }
   if (currentStr !== "null") {
       const current = JSON.parse(currentStr);
-      const isStale = current.status === 'running' && (!current.lastHeartbeat || (Date.now() - current.lastHeartbeat > 300000)); // 300 seconds
+      const isStale = current.status === 'running' && (!current.lastHeartbeat || (Date.now() - current.lastHeartbeat > 600000)); // 600 seconds
       
       if (current.status === 'running' && !isStale) {
           return c.json({ error: "探索正在进行中，请稍候。若任务已长久挂起，请重置状态后重试。" }, 400);
@@ -1189,7 +1254,7 @@ app.post("/cron", async (c) => {
     if (currentStr !== "null") {
         try {
             const current = JSON.parse(currentStr);
-            const isStale = current.status === 'running' && (!current.lastHeartbeat || (Date.now() - current.lastHeartbeat > 300000));
+            const isStale = current.status === 'running' && (!current.lastHeartbeat || (Date.now() - current.lastHeartbeat > 600000));
             
             if (current.status === 'running' && !isStale) {
                 console.log("[Cron Skip] 探索正在进行中，跳过本次触发");
