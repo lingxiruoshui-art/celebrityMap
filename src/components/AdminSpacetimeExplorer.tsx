@@ -244,8 +244,15 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
 
            if (data) {
                if (activeSearchTaskIdRef.current && data.taskId && data.taskId !== activeSearchTaskIdRef.current) {
-                   if (isActive) timer = setTimeout(checkStatus, 3000);
-                   return;
+                   if (data.taskId > activeSearchTaskIdRef.current) {
+                       activeSearchTaskIdRef.current = data.taskId;
+                       setDetailedLogs([]);
+                       setSearchSteps([]);
+                       setError(null);
+                   } else {
+                       if (isActive) timer = setTimeout(checkStatus, 3000);
+                       return;
+                   }
                }
                if (!activeSearchTaskIdRef.current && data.taskId) {
                    activeSearchTaskIdRef.current = data.taskId;
@@ -444,6 +451,15 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
           headers,
           body: JSON.stringify({ target: finalTargetForAI, isAdmin: true, clientTaskId: startTaskId })
         });
+        
+        if (!res.ok) {
+           let errMsg = "探索启动失败";
+           try {
+             const errData = await res.json();
+             errMsg = errData.error || errMsg;
+           } catch(e) {}
+           throw new Error(errMsg);
+        }
         
         pollStatusRef.current = true;
 

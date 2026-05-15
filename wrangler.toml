@@ -12,9 +12,6 @@ database_id = "b805d7ec-6522-446a-a9be-0553983c088d"
 binding = "IMAGES"
 bucket_name = "historical-portraits"
 
-[[kv_namespaces]]
-binding = "EXPLORE_KV"
-id = "84f4feb1c4c945c5b1fec8f534e6a206"
 
 [vars]
 # Add other environment variables here

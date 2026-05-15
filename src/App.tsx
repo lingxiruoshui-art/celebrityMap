@@ -35,6 +35,7 @@ export default function App() {
   const [isSixDegreesOpen, setIsSixDegreesOpen] = useState(true);
   const [zoomedImage, setZoomedImage] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [isLoadingArchive, setIsLoadingArchive] = useState(true);
   const [discoveryPath, setDiscoveryPath] = useState<
     { name: string; type?: string }[] | null
   >(null);
@@ -70,6 +71,7 @@ export default function App() {
   }, [selectedPersonId]);
 
   const fetchArchive = async () => {
+    setIsLoadingArchive(true);
     try {
       const res = await fetch("/api/archive");
       if (!res.ok) {
@@ -94,6 +96,8 @@ export default function App() {
     } catch (err) {
       console.error(err);
       setError("网络连接错误，无法访问服务器。");
+    } finally {
+      setIsLoadingArchive(false);
     }
   };
 
@@ -529,6 +533,18 @@ export default function App() {
                     )}
                   </div>
                 </div>
+              </div>
+            ) : isLoadingArchive ? (
+              <div className="bg-white/40 border-2 border-dashed border-slate-200 rounded-2xl p-10 text-center text-slate-500 flex flex-col items-center gap-4 m-auto">
+                <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-2">
+                  <div className="w-6 h-6 border-4 border-indigo-200 border-t-indigo-500 rounded-full animate-spin"></div>
+                </div>
+                <h3 className="text-lg font-bold text-slate-700">
+                  档案库正在加载
+                </h3>
+                <p className="text-sm text-slate-500 leading-relaxed max-w-[250px]">
+                  正在从历史长河中打捞数据，请稍候...
+                </p>
               </div>
             ) : data.people.length === 0 ? (
               <div className="bg-white/40 border-2 border-dashed border-slate-200 rounded-2xl p-10 text-center text-slate-500 flex flex-col items-center gap-4 m-auto">

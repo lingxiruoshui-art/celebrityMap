@@ -57,10 +57,6 @@ View your app in AI Studio: https://ai.studio/apps/309319c0-ccbb-434d-afc5-4fc77
     *   Variable name: `IMAGES`
     *   R2 bucket: 选择你刚才创建的 `historical-portraits`。
 
-3.  **KV namespace bindings**：
-    *   Variable name: `EXPLORE_KV`
-    *   KV namespace: 选择您刚才创建的 `explore_state_kv`。
-
 在 **Settings -> Environment variables** 处添加：
 *   `ADMIN_PASSWORD`: 管理员后台密码（选填，默认 admin）。
 *   `GEMINI_API_KEY`: Google Gemini API 密钥（选填，也可以在进入后台后动态配置）。

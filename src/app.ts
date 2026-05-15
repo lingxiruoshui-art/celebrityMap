@@ -13,7 +13,6 @@ const root = new Hono<{
     GEMINI_API_KEY?: string;
     GEMINI_MODEL_ID?: string;
     ADMIN_PASSWORD?: string;
-    EXPLORE_KV?: any;
   },
   Variables: { dbAdapter: DatabaseAdapter } 
 }>();
@@ -22,7 +21,7 @@ export const app = root.basePath('/api');
 
 app.onError((err, c) => {
   console.error("Hono error:", err);
-  return c.json({ error: err.message || "Internal Server Error", stack: process.env.NODE_ENV === 'development' ? err.stack : undefined }, 500);
+  return c.json({ error: err.message || "Internal Server Error", stack: typeof process !== 'undefined' && process.env.NODE_ENV === 'development' ? err.stack : undefined }, 500);
 });
 
 app.notFound((c) => {
@@ -1108,12 +1107,7 @@ app.get("/explore/status", async (c) => {
   c.header("Expires", "0");
   c.header("Surrogate-Control", "no-store");
 
-  let statusStr = "null";
-  if (c.env && c.env.EXPLORE_KV) {
-      statusStr = await c.env.EXPLORE_KV.get("explore_state") || "null";
-  } else {
-      statusStr = await getConfig(db, "explore_state", "null");
-  }
+  let statusStr = await getConfig(db, "explore_state", "null");
   if (statusStr === "null") return c.json(null);
   const data = JSON.parse(statusStr);
   const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
@@ -1124,11 +1118,7 @@ app.get("/explore/status", async (c) => {
           data.status = 'error';
           data.error = '探索任务被系统认定为已脱机（持续 >600s 无响应）。可能由于大模型 API 限流或响应过慢导致请求彻底熔断。请检查 API 状态后重试。';
           const newState = JSON.stringify(data);
-          if (c.env && c.env.EXPLORE_KV) {
-              await c.env.EXPLORE_KV.put("explore_state", newState);
-          } else {
-              await setConfig(db, "explore_state", newState);
-          }
+          await setConfig(db, "explore_state", newState);
       }
   }
 
@@ -1246,13 +1236,8 @@ app.post("/explore/ai-proxy", async (c) => {
 
 app.post("/explore/start", async (c) => {
   const db = await getDb(c);
-  const { target, isAdmin } = await c.req.json();
-  let currentStr = "null";
-  if (c.env && c.env.EXPLORE_KV) {
-      currentStr = await c.env.EXPLORE_KV.get("explore_state") || "null";
-  } else {
-      currentStr = await getConfig(db, "explore_state", "null");
-  }
+  const { target, isAdmin, clientTaskId } = await c.req.json();
+  let currentStr = await getConfig(db, "explore_state", "null");
   if (currentStr !== "null") {
       const current = JSON.parse(currentStr);
       const isStale = current.status === 'running' && (!current.lastHeartbeat || (Date.now() - current.lastHeartbeat > 600000)); // 600 seconds
@@ -1268,10 +1253,11 @@ app.post("/explore/start", async (c) => {
   
   // Set initial state synchronously so immediately following reads see it
   // Ensure logs and steps are completely fresh
+  const newTaskId = clientTaskId || Date.now();
   const initialState = {
       status: 'running', 
       target, 
-      taskId: Date.now(),
+      taskId: newTaskId,
       logs: [{ timestamp: new Date().toLocaleTimeString(), msg: `初始化任务: [${target || '随机发散探索'}]`, type: 'info' }], 
       steps: [{ msg: "探索序列启动中...", status: "pending", startTime: Date.now() }], 
       path: null, 
@@ -1280,11 +1266,7 @@ app.post("/explore/start", async (c) => {
       lastHeartbeat: Date.now()
   };
   const stateStr = JSON.stringify(initialState);
-  if (c.env && c.env.EXPLORE_KV) {
-      await c.env.EXPLORE_KV.put("explore_state", stateStr);
-  } else {
-      await setConfig(db, "explore_state", stateStr);
-  }
+  await setConfig(db, "explore_state", stateStr);
 
   // Return SSE to keep the Cloudflare Worker isolate alive while the AI is computing
   return streamSSE(c, async (stream) => {
@@ -1303,7 +1285,8 @@ app.post("/explore/start", async (c) => {
           db, target, callAI, getConfig, setConfig, addRelationship, 
           ARCHIVE_PROMPT, ARCHIVE_SCHEMA, 
           fetchMetadataFromWiki, c, !!isAdmin,
-          originalPulse
+          originalPulse,
+          newTaskId
       );
 
       if (c.executionCtx && c.executionCtx.waitUntil) {
@@ -1326,12 +1309,7 @@ app.post("/explore/stop", async (c) => {
   const db = await getDb(c);
   const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
 
-  let statusStr = "null";
-  if (c.env && c.env.EXPLORE_KV) {
-      statusStr = await c.env.EXPLORE_KV.get("explore_state") || "null";
-  } else {
-      statusStr = await getConfig(db, "explore_state", "null");
-  }
+  let statusStr = await getConfig(db, "explore_state", "null");
   
   if (statusStr !== "null") {
       const state = JSON.parse(statusStr);
@@ -1343,11 +1321,7 @@ app.post("/explore/stop", async (c) => {
          state.status = 'error';
          state.error = '探索已中止';
          const stateStr = JSON.stringify(state);
-         if (c.env && c.env.EXPLORE_KV) {
-             await c.env.EXPLORE_KV.put("explore_state", stateStr);
-         } else {
-             await setConfig(db, "explore_state", stateStr);
-         }
+         await setConfig(db, "explore_state", stateStr);
       }
   }
   return c.json({ success: true });
@@ -1361,11 +1335,7 @@ app.post("/explore/reset", async (c) => {
       return c.json({ error: "无权操作" }, 403);
   }
 
-  if (c.env && c.env.EXPLORE_KV) {
-      await c.env.EXPLORE_KV.put("explore_state", "null");
-  } else {
-      await setConfig(db, "explore_state", "null");
-  }
+  await setConfig(db, "explore_state", "null");
   return c.json({ success: true });
 });
 
@@ -1383,13 +1353,7 @@ app.post("/cron", async (c) => {
     const db = await getDb(c);
     
     // 检查是否已经有探索任务在运行
-    let currentStr = "null";
-    const statusKV = c.env.EXPLORE_KV;
-    if (statusKV) {
-        currentStr = await statusKV.get("explore_state") || "null";
-    } else {
-        currentStr = await getConfig(db, "explore_state", "null");
-    }
+    let currentStr = await getConfig(db, "explore_state", "null");
 
     if (currentStr !== "null") {
         try {
@@ -1438,10 +1402,11 @@ app.post("/cron", async (c) => {
     await setConfig(db, "last_cron_trigger_time", String(now));
 
     // Set initial state
+    const newTaskId = Date.now();
     const initialState = {
         status: 'running', 
         target: targetName, 
-        taskId: Date.now(),
+        taskId: newTaskId,
         logs: [{ timestamp: new Date().toLocaleTimeString(), msg: "系统周期性巡检：触发自动档案补完协议", type: "info" }], 
         steps: [{ msg: "周期性检索启动中...", status: "pending", startTime: Date.now() }], 
         path: null, 
@@ -1450,17 +1415,14 @@ app.post("/cron", async (c) => {
         lastHeartbeat: Date.now()
     };
     const stateStr = JSON.stringify(initialState);
-    if (c.env && c.env.EXPLORE_KV) {
-        await c.env.EXPLORE_KV.put("explore_state", stateStr);
-    } else {
-        await setConfig(db, "explore_state", stateStr);
-    }
+    await setConfig(db, "explore_state", stateStr);
 
     // Trigger task in background
     const task = runExplorationTask(
         db, targetName, callAI, getConfig, setConfig, addRelationship, 
         ARCHIVE_PROMPT, ARCHIVE_SCHEMA, fetchMetadataFromWiki, c, true,
-        async (msg) => { console.log(`[Cron Explore Pulse] ${msg}`); }
+        async (msg) => { console.log(`[Cron Explore Pulse] ${msg}`); },
+        newTaskId
     );
     
     if (c.executionCtx && c.executionCtx.waitUntil) {

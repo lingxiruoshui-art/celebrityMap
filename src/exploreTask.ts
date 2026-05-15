@@ -26,12 +26,13 @@ export async function runExplorationTask(
   fetchMetadataFromWiki: any,
   c: any,
   isAdmin: boolean,
-  onPulse?: (msg: string) => Promise<void>
+  onPulse?: (msg: string) => Promise<void>,
+  providedTaskId?: number
 ) {
   let state: ExploreState = {
     status: "running",
     target,
-    taskId: Date.now(),
+    taskId: providedTaskId || Date.now(),
     pulse: 0,
     logs: [{ timestamp: new Date().toLocaleTimeString(), msg: `初始化任务: [${target || '随机发散探索'}]`, type: 'info' }],
     steps: [{ msg: "探索序列启动中...", status: "pending", startTime: Date.now() }],
@@ -49,12 +50,7 @@ export async function runExplorationTask(
     }
     
     const doSave = async () => {
-        let currentRaw = "null";
-        if (c.env && c.env.EXPLORE_KV) {
-            currentRaw = await c.env.EXPLORE_KV.get("explore_state") || "null";
-        } else {
-            currentRaw = await getConfig(db, "explore_state", "null");
-        }
+        let currentRaw = await getConfig(db, "explore_state", "null");
         
         if (currentRaw !== "null") {
             const current = JSON.parse(currentRaw);
@@ -68,11 +64,7 @@ export async function runExplorationTask(
         }
 
         const stateStr = JSON.stringify(state);
-        if (c.env && c.env.EXPLORE_KV) {
-            await c.env.EXPLORE_KV.put("explore_state", stateStr);
-        } else {
-            await setConfig(db, "explore_state", stateStr);
-        }
+        await setConfig(db, "explore_state", stateStr);
     };
 
     try {

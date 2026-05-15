@@ -196,7 +196,6 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
     };
 
     const interval = setInterval(() => {
-      fetchConfig();
       fetchStatus();
       if (activeTab === "archive") {
         fetchArchive();
@@ -969,9 +968,13 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                       <input 
                         type="number"
                         min="0"
-                        value={config.cron_interval_hours || 0}
-                        onChange={(e) => setConfig({ ...config, cron_interval_hours: parseInt(e.target.value) || 0 })}
-                        onBlur={(e) => saveConfig("cron_interval_hours", e.target.value)}
+                        value={config.cron_interval_hours ?? ''}
+                        onChange={(e) => setConfig({ ...config, cron_interval_hours: e.target.value })}
+                        onBlur={(e) => {
+                           let val = parseInt(e.target.value) || 0;
+                           setConfig({ ...config, cron_interval_hours: val });
+                           saveConfig("cron_interval_hours", String(val));
+                        }}
                         className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all appearance-none"
                       />
                     </div>
@@ -983,12 +986,14 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                       <input 
                         type="number"
                         min="0"
-                        max="59"
-                        value={config.cron_interval_minutes || 0}
-                        onChange={(e) => setConfig({ ...config, cron_interval_minutes: parseInt(e.target.value) || 0 })}
+                        max="60"
+                        value={config.cron_interval_minutes ?? ''}
+                        onChange={(e) => setConfig({ ...config, cron_interval_minutes: e.target.value })}
                         onBlur={(e) => {
                            let val = parseInt(e.target.value) || 0;
-                           if (val < 15 && (!config.cron_interval_hours || config.cron_interval_hours === 0)) val = 15;
+                           if (val > 60) val = 60;
+                           if (val < 15 && (!config.cron_interval_hours || parseInt(String(config.cron_interval_hours)) === 0)) val = 15;
+                           setConfig({ ...config, cron_interval_minutes: val });
                            saveConfig("cron_interval_minutes", String(val));
                         }}
                         className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all appearance-none"
