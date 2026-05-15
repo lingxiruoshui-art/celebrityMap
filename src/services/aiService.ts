@@ -81,3 +81,36 @@ export const ARCHIVE_SCHEMA = (hasBio: boolean): Schema => ({
     "standardChineseName", "keyword", "lifespan", "birthplace", "biography", "achievements", "category", "latitude", "longitude", "relationships"
   ]
 });
+
+export const EXPAND_CONNECTIONS_PROMPT = (name: string, bio: string, candidates: string[]) => `
+你是一位历史关系网络专家。
+正在为人物 "${name}" 寻找新的历史关联。
+人物背景: ${bio}
+
+潜在候选人名单 (库中已有的已知人物):
+[${candidates.join("、")}]
+
+要求：
+1. 从候选人名单中挑选 1~3 位与 "${name}" 可能存在联系的人物。
+2. 联系可以是直接的 (如师生、同僚、劲敌) 也可以是间接的 (如思想继承、处于同一历史大事件、被其文章评论、共同被后世某位文豪提及等)。
+3. 给出的关系描述必须详实且有历史感，控制在 20-30 字。
+4. 必须只从给定的“候选人名单”中选择，严禁虚构他人。
+5. 如果候选人名单为空或实在无法找到合理联系，请返回空数组 []。
+
+请严格返回以下格式的 JSON 数组：
+[
+  {"personName": "候选人姓名", "relationshipType": "20-30字关系描述"}
+]
+`;
+
+export const EXPAND_CONNECTIONS_SCHEMA: Schema = {
+  type: Type.ARRAY,
+  items: {
+    type: Type.OBJECT,
+    properties: {
+      personName: { type: Type.STRING },
+      relationshipType: { type: Type.STRING }
+    },
+    required: ["personName", "relationshipType"]
+  }
+};

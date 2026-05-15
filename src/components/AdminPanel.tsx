@@ -72,6 +72,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
   const logsContainerRef = useRef<HTMLDivElement>(null);
 
   const [regeneratingName, setRegeneratingName] = useState<string | null>(null);
+  const [expandingId, setExpandingId] = useState<number | null>(null);
   const [notification, setNotification] = useState<{ type: 'success' | 'error' | 'info', msg: string } | null>(null);
 
   const showNotification = (type: 'success' | 'error' | 'info', msg: string) => {
@@ -250,6 +251,32 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
       showNotification('error', e.message || '重新生成失败');
     } finally {
       setRegeneratingName(null);
+    }
+  };
+
+  const expandConnections = async (id: number, name: string) => {
+    setExpandingId(id);
+    try {
+      const res = await fetch(`/api/admin/people/${id}/expand-connections`, {
+        method: "POST",
+        headers: adminHeaders
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.addedCount > 0) {
+          showNotification('success', `已成功为 [${name}] 扩展 ${data.addedCount} 条联系`);
+          fetchArchive();
+        } else {
+          showNotification('info', `未能在现有库中找到与 [${name}] 相关的新联系`);
+        }
+      } else {
+        const data = await res.json();
+        showNotification('error', data.error || '扩展失败');
+      }
+    } catch (e) {
+      showNotification('error', '连接超时');
+    } finally {
+      setExpandingId(null);
     }
   };
 
@@ -633,6 +660,9 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                       <th className="py-3 px-4 cursor-pointer hover:text-indigo-600 whitespace-nowrap" onClick={() => toggleSort("category")}>
                         分类 {sortField === 'category' ? (sortOrder === 'asc' ? '↑' : '↓') : ''}
                       </th>
+                      <th className="py-3 px-4 whitespace-nowrap text-center">
+                        连接数
+                      </th>
                       <th className="py-3 px-4 cursor-pointer hover:text-indigo-600 whitespace-nowrap" onClick={() => toggleSort("views")}>
                         访问量 {sortField === 'views' ? (sortOrder === 'asc' ? '↑' : '↓') : ''}
                       </th>
@@ -676,12 +706,27 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                           </div>
                         </td>
                         <td className="px-4 py-3 text-sm text-slate-600 whitespace-nowrap">{p.category}</td>
+                        <td className="px-4 py-3 text-sm text-center whitespace-nowrap font-mono">
+                          <span className={`px-2 py-0.5 rounded-full ${(p as any).connectionsCount > 0 ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-100 text-slate-400'}`}>
+                            {(p as any).connectionsCount || 0}
+                          </span>
+                        </td>
                         <td className="px-4 py-3 text-sm font-mono text-slate-600 whitespace-nowrap">{p.views}</td>
                         <td className="px-4 py-3 text-sm text-slate-600 whitespace-nowrap">
                           {new Date((p as any).created_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-center gap-2">
+                            {((p as any).connectionsCount || 0) < 3 && (
+                                <button 
+                                  onClick={() => expandConnections(p.id, p.name)} 
+                                  title="智能扩展联系 (库内匹配)" 
+                                  disabled={expandingId === p.id}
+                                  className={`p-2 rounded-lg transition-colors ${expandingId === p.id ? 'text-indigo-600 bg-indigo-50' : 'text-emerald-500 hover:text-emerald-700 hover:bg-emerald-50'}`}
+                                >
+                                  <UserPlus className={`w-4 h-4 ${expandingId === p.id ? 'animate-pulse' : ''}`} />
+                                </button>
+                            )}
                             <button 
                               onClick={() => regeneratePerson(p.name)} 
                               title="重新生成简介" 

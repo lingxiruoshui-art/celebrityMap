@@ -3,7 +3,7 @@ import { streamSSE } from "hono/streaming";
 import { GoogleGenAI } from "@google/genai";
 import { D1DatabaseAdapter, DatabaseAdapter } from "./db.ts";
 import { CATEGORIES, FIGURE_POOL } from "./figuresPool.ts";
-import { ARCHIVE_PROMPT, ARCHIVE_SCHEMA } from "./services/aiService.ts";
+import { ARCHIVE_PROMPT, ARCHIVE_SCHEMA, EXPAND_CONNECTIONS_PROMPT, EXPAND_CONNECTIONS_SCHEMA } from "./services/aiService.ts";
 import { runExplorationTask } from "./exploreTask.ts";
 
 const root = new Hono<{ 
@@ -555,6 +555,50 @@ app.post("/admin/people/batch-delete", async (c) => {
   return c.json({ success: true });
 });
 
+app.post("/admin/people/:id/expand-connections", async (c) => {
+  if (c.req.header("x-admin-password") !== getAdminPassword(c)) return c.json({ error: "Unauthorized" }, 401);
+  const db = await getDb(c);
+  const id = c.req.param("id");
+  
+  // 1. Get current person info
+  const person = await db.prepare("SELECT * FROM people WHERE id = ?").get(id) as any;
+  if (!person) return c.json({ error: "Person not found" }, 404);
+
+  // 2. Get existing connection IDs
+  const existingConnections = await db.prepare(`
+    SELECT person1_id as other_id FROM relationships WHERE person2_id = ?
+    UNION
+    SELECT person2_id as other_id FROM relationships WHERE person1_id = ?
+  `).all(id, id) as any[];
+  const existingIds = new Set(existingConnections.map(c => c.other_id));
+  existingIds.add(parseInt(id));
+
+  // 3. Get up to 50 candidates (archived people not connected)
+  const candidates = await db.prepare("SELECT name FROM people WHERE id NOT IN (" + Array.from(existingIds).join(",") + ") ORDER BY RANDOM() LIMIT 50").all() as any[];
+  if (candidates.length === 0) return c.json({ error: "No connection candidates found" });
+
+  // 4. Call AI
+  const prompt = EXPAND_CONNECTIONS_PROMPT(person.name, person.biography, candidates.map(c => c.name));
+  try {
+      const resultText = await callAI(c, db, prompt, "json", EXPAND_CONNECTIONS_SCHEMA);
+      const newRels = JSON.parse(resultText || "[]");
+      
+      let addedCount = 0;
+      for (const rel of newRels) {
+          const matched = await db.prepare("SELECT id FROM people WHERE name = ?").get(rel.personName) as any;
+          if (matched) {
+              await addRelationship(db, parseInt(id), matched.id, rel.relationshipType);
+              addedCount++;
+          }
+      }
+      
+      return c.json({ success: true, addedCount });
+  } catch (e: any) {
+      console.error("Expand connections error:", e);
+      return c.json({ error: e.message }, 500);
+  }
+});
+
 app.post("/admin/repair-images", async (c) => {
   if (c.req.header("x-admin-password") !== getAdminPassword(c)) return c.json({ error: "Unauthorized" }, 401);
   const db = await getDb(c);
@@ -572,7 +616,12 @@ app.post("/admin/repair-images", async (c) => {
 
 app.get("/archive", async (c) => {
   const db = await getDb(c);
-  let people = await db.prepare("SELECT * FROM people ORDER BY created_at DESC").all() as any[];
+  let people = await db.prepare(`
+    SELECT p.*, 
+    (SELECT COUNT(*) FROM relationships WHERE person1_id = p.id OR person2_id = p.id) as connectionsCount
+    FROM people p
+    ORDER BY created_at DESC
+  `).all() as any[];
   const relationships = await db.prepare("SELECT * FROM relationships").all();
   
   people = people.map(p => ({

@@ -273,14 +273,19 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                        setIsLoading(false);
                        pollStatusRef.current = false;
                    } else if (data.status === 'success') {
-                       if (data.target && allowAdminControls) setSource(data.target);
-                       if (!showResults && !hasLoadedResultRef.current) {
+                       if (data.target && allowAdminControls) {} // Removed auto-reset to successful target
+                       if (!hasLoadedResultRef.current) {
                            setPath(data.path || []);
                            setNewArrivals(data.newArrivals ? data.newArrivals : []);
                            setShowResults(true);
                            setIsLoading(false);
                            hasLoadedResultRef.current = true;
                            if (onPathFound) onPathFound(data.path || []);
+                            
+                            // Automatically pick next candidate after success
+                            if (allowAdminControls || isAdmin) {
+                                handlePickRandomPair();
+                            }
                            if (data.newArrivals && data.newArrivals.length > 0) onRefreshArchive();
                        }
                        pollStatusRef.current = false;
