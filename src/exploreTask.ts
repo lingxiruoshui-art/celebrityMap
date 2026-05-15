@@ -1,4 +1,5 @@
 import { DatabaseAdapter } from "./db.ts";
+import { FIGURE_POOL } from "./figuresPool.ts";
 
 export interface ExploreState {
   status: "idle" | "running" | "success" | "error";
@@ -126,9 +127,10 @@ export async function runExplorationTask(
     const peopleCount = peopleCountRow.count;
     
     state.lastHeartbeat = Date.now();
-    // 随机抽取少量样本作为 AI 提示词参考，避免随着数据增加导致 Prompt 过长
-    const samplePeople = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 8").all() as any[];
-    const sampleNames = samplePeople.map((p) => p.name).join("、");
+    // 随机抽取少量样本作为 AI 提示词参考，优先从 FIGURE_POOL 里选
+    const allKnownFigures = Object.values(FIGURE_POOL).flat();
+    const shuffledFigures = [...allKnownFigures].sort(() => 0.5 - Math.random());
+    const sampleNames = shuffledFigures.slice(0, 15).join("、");
 
     const provider = await getConfig(db, "active_model_provider", "gemini");
     const modelId =
@@ -309,7 +311,7 @@ export async function runExplorationTask(
 
     const bridgeStartTime = Date.now();
     const bridgeText = await callAIProxy(
-      PATH_PROMPT(normalizedSource, normalizedTarget),
+      PATH_PROMPT(normalizedSource, normalizedTarget, sampleNames),
       "json",
       PATH_SCHEMA,
       undefined, // Default timeout or use specific

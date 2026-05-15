@@ -61,9 +61,10 @@ export const ARCHIVE_SCHEMA: Schema = {
   required: ["keyword", "lifespan", "birthplace", "biography", "achievements", "category", "latitude", "longitude", "relationships"]
 };
 
-export const PATH_PROMPT = (source: string, target: string) => `找出 "${source}" 和 "${target}" 之间的最短历史&时空联系路径。
+export const PATH_PROMPT = (source: string, target: string, sampleNames?: string) => `找出 "${source}" 和 "${target}" 之间的最短历史&时空联系路径。
 要求：
 - 最短路径：中间桥接人物0-5个。若两人有直接历史交集，则必须直接相连(0个中间人)。
+- 优先度：桥接人物请优先从已知人物池(${sampleNames || "无"})中选择。
 - 命名规范：使用公认的标准中文全名。
 - relationshipToPrevious：20字以内极简概括两人真实历史交集。
 
