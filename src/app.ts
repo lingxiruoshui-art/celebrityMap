@@ -113,16 +113,23 @@ const getAdminPassword = (c: any) => {
 export async function callAI(c: any, db: DatabaseAdapter, prompt: string, responseFormat: "text" | "json" = "text", schema?: any, onStreamPulse?: () => Promise<void>): Promise<string> {
   const provider = await getConfig(db, "active_model_provider", "gemini");
   
-  // Set up an interval to send heartbeats to the frontend every 8 seconds to prevent Cloudflare from dropping the connection
-  let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  // Set up an active async heartbeat loop. In Cloudflare Workers, setInterval 
+  // can sometimes be suspended during long I/O fetch waits. An explicit async 
+  // loop keeps the isolate event loop actively pulsing the SSE connection.
+  let isFetching = true;
+  let heartbeatPromise: Promise<void> | null = null;
   if (onStreamPulse) {
-      heartbeatTimer = setInterval(() => {
-          onStreamPulse().catch(console.error);
-      }, 8000);
+      heartbeatPromise = (async () => {
+          while (isFetching) {
+              await new Promise(r => setTimeout(r, 8000));
+              if (!isFetching) break;
+              try { await onStreamPulse(); } catch(e) { console.error("Pulse error", e); }
+          }
+      })();
   }
 
   const cleanup = () => {
-      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      isFetching = false;
   };
   
   if (provider === "aliyun") {
@@ -252,6 +259,58 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
   }
 }
 
+export async function fetchMetadataFromWiki(name: string) {
+  const headers = { "User-Agent": "HistoricalArchiveApp/1.0 (zhiduanchangyu@gmail.com)" };
+  try {
+    const searchRes = await fetch(`https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(name)}&language=zh&format=json`, { headers });
+    const searchData = await searchRes.json() as any;
+    const entity = searchData.search?.[0];
+    
+    if (entity) {
+      const entityId = entity.id;
+      const entityRes = await fetch(`https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${entityId}&props=claims|descriptions|labels&languages=zh|en&format=json`, { headers });
+      const entityData = await entityRes.json() as any;
+      const item = entityData.entities[entityId];
+      
+      const zhLabel = item.labels?.zh?.value;
+      const description = item.descriptions?.zh?.value || item.descriptions?.en?.value || entity.description || "";
+      const claims = item.claims || {};
+      let imageUrl = "";
+      
+      if (claims.P18 && claims.P18.length > 0) {
+        const imageName = claims.P18[0].mainsnak?.datavalue?.value;
+        if (imageName) {
+          const encodedImageName = encodeURIComponent(imageName.replace(/ /g, '_'));
+          imageUrl = `https://commons.wikimedia.org/wiki/Special:FilePath/${encodedImageName}?width=500`;
+        }
+      }
+      
+      return {
+        normalizedName: zhLabel || entity.label || name,
+        description,
+        imageUrl: imageUrl || null
+      };
+    }
+    
+    // Fallback to Wikipedia search for snippet if Wikidata yields nothing
+    const wikiRes = await fetch(`https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(name)}&format=json`, { headers });
+    const wikiData = await wikiRes.json() as any;
+    const wikiItem = wikiData.query?.search?.[0];
+    if (wikiItem) {
+        return {
+            normalizedName: wikiItem.title,
+            description: (wikiItem.snippet || "").replace(/<[^>]*>?/gm, ''),
+            imageUrl: null
+        };
+    }
+
+    return { normalizedName: name, description: "", imageUrl: null };
+  } catch (e) {
+    console.error("Wiki/Wikidata fetch error:", e);
+    return { normalizedName: name, description: "", imageUrl: null };
+  }
+}
+
 async function getPortraitUrl(c: any, name: string): Promise<string | null> {
   const imagesBucket = c.env?.IMAGES;
   const localPath = `/api/portraits/${encodeURIComponent(name.toLowerCase())}.jpg`;
@@ -278,14 +337,15 @@ app.get("/health", (c) => c.json({ status: "ok" }));
 
 async function fetchAndStoreImage(c: any, filename: string) {
   const imagesBucket = c.env?.IMAGES;
-  if (!imagesBucket) return null;
-
-  const name = decodeURIComponent(filename.replace(/\\.jpg$/i, ''));
+  
+  const nameString = String(filename || "");
+  const name = decodeURIComponent(nameString.replace(/\.jpg$/i, ''));
   const headers = { "User-Agent": "HistoricalArchiveApp/1.0" };
   
   try {
     let finalUrl = "";
     
+    // ... search logic ...
     const searchWikidata = async (lang: string) => {
       const res = await fetch(`https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(name)}&language=${lang}&format=json`, { headers });
       const data = await res.json() as any;
@@ -297,10 +357,12 @@ async function fetchAndStoreImage(c: any, filename: string) {
     if (entity) {
       const entityRes = await fetch(`https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${entity.id}&props=claims&format=json`, { headers });
       const entityData = await entityRes.json() as any;
-      const claims = entityData.entities[entity.id].claims;
-      if (claims.P18 && claims.P18.length > 0) {
-        const imageName = claims.P18[0].mainsnak.datavalue.value;
-        finalUrl = `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(imageName.replace(/ /g, '_'))}?width=500`;
+      const item = entityData.entities[entity.id];
+      if (item && item.claims && item.claims.P18 && item.claims.P18.length > 0) {
+        const imageName = item.claims.P18[0].mainsnak?.datavalue?.value;
+        if (imageName) {
+          finalUrl = `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(imageName.replace(/ /g, '_'))}?width=500`;
+        }
       }
     }
 
@@ -327,8 +389,12 @@ async function fetchAndStoreImage(c: any, filename: string) {
       if (imageRes.ok) {
         const contentType = imageRes.headers.get("content-type") || "image/jpeg";
         const buffer = await imageRes.arrayBuffer();
-        const key = `portraits/${filename}`;
-        await imagesBucket.put(key, buffer, { httpMetadata: { contentType: contentType } });
+        
+        if (imagesBucket) {
+           const key = `portraits/${filename}`;
+           await imagesBucket.put(key, buffer, { httpMetadata: { contentType: contentType } });
+        }
+        
         return { body: buffer, contentType };
       }
     }
@@ -342,13 +408,28 @@ app.get("/portraits/:filename", async (c) => {
   const imagesBucket = c.env?.IMAGES;
   const filename = c.req.param("filename");
   
-  if (!imagesBucket) {
-      return c.json({ error: "R2 Image Storage not configured" }, 404);
-  }
-  
-  let object = await imagesBucket.get(`portraits/${filename}`);
-  
-  if (!object) {
+  if (imagesBucket) {
+    let object = await imagesBucket.get(`portraits/${filename}`);
+    
+    if (!object) {
+      const result = await fetchAndStoreImage(c, filename);
+      if (result) {
+        const headers = new Headers();
+        headers.set("Content-Type", result.contentType);
+        headers.set("Cache-Control", "public, max-age=31536000, immutable");
+        return new Response(result.body as any, { headers });
+      }
+      return c.json({ error: "Image not found" }, 404);
+    }
+    
+    const headers = new Headers();
+    object.writeHttpMetadata(headers);
+    headers.set("etag", object.httpEtag);
+    headers.set("Cache-Control", "public, max-age=31536000, immutable");
+    
+    return new Response(object.body as any, { headers });
+  } else {
+    // If no R2 bucket (e.g. in AI Studio preview), just fetch and stream
     const result = await fetchAndStoreImage(c, filename);
     if (result) {
       const headers = new Headers();
@@ -356,15 +437,8 @@ app.get("/portraits/:filename", async (c) => {
       headers.set("Cache-Control", "public, max-age=31536000, immutable");
       return new Response(result.body as any, { headers });
     }
-    return c.json({ error: "Image not found" }, 404);
+    return c.json({ error: "Image not found (No R2)" }, 404);
   }
-  
-  const headers = new Headers();
-  object.writeHttpMetadata(headers);
-  headers.set("etag", object.httpEtag);
-  headers.set("Cache-Control", "public, max-age=31536000, immutable");
-  
-  return new Response(object.body as any, { headers });
 });
 
 app.post("/admin/verify", async (c) => {
@@ -502,11 +576,27 @@ app.post("/save-archive", async (c) => {
         JSON.stringify(data.achievements || []), portraitUrl, JSON.stringify(data.relationships || []), data.latitude || 0, data.longitude || 0
     ) as { id: number };
 
+    let connCount = 0;
     if (data.relationships && Array.isArray(data.relationships)) {
         for (const rel of data.relationships) {
             const matched = await db.prepare("SELECT id FROM people WHERE name = ?").get(rel.personName) as any;
-            if (matched) await addRelationship(db, inserted.id, matched.id, rel.relationshipType);
+            if (matched) {
+                await addRelationship(db, inserted.id, matched.id, rel.relationshipType);
+                connCount++;
+            }
         }
+    }
+    
+    const previousMentions = await db.prepare(`SELECT id, name, raw_relationships FROM people WHERE id != ? AND raw_relationships LIKE ?`).all(inserted.id, `%${name}%`) as any[];
+    for (const p of previousMentions) {
+        try {
+            const rels = JSON.parse(p.raw_relationships || "[]");
+            const matchingRel = rels.find((r: any) => r.personName === name);
+            if (matchingRel) {
+                await addRelationship(db, p.id, inserted.id, matchingRel.relationshipType);
+                connCount++;
+            }
+        } catch(e) {}
     }
     return c.json({ id: inserted.id, isNew: true, isFull: true });
   } catch (e: any) {
@@ -619,9 +709,7 @@ app.get("/archiver/random-pair", async (c) => {
   return c.json({ sourceName: people[0].name, targetName: people[1].name });
 });
 
-app.post("/archiver/admin-pick-pair", async (c) => {
-  const db = await getDb(c);
-  
+async function pickPair(db: DatabaseAdapter) {
   const people = await db.prepare("SELECT name, raw_relationships FROM people").all() as any[];
   const archivedNames = people.map(p => p.name);
   const archivedSet = new Set(archivedNames);
@@ -640,7 +728,7 @@ app.post("/archiver/admin-pick-pair", async (c) => {
   // Priority 1: 2 from pool
   if (uniquePoolUnarchived.length >= 2) {
       const picked = shuffle([...uniquePoolUnarchived]).slice(0, 2);
-      return c.json({ sourceName: picked[0], targetName: picked[1], strategy: "pool" });
+      return { sourceName: picked[0], targetName: picked[1], strategy: "pool" };
   }
 
   // 2. Get available from relationships
@@ -662,25 +750,73 @@ app.post("/archiver/admin-pick-pair", async (c) => {
   // Priority 2: Use unarchived from pool and rels
   if (combinedUnarchived.length >= 2) {
       const picked = shuffle([...combinedUnarchived]).slice(0, 2);
-      return c.json({ sourceName: picked[0], targetName: picked[1], strategy: "combined" });
+      return { sourceName: picked[0], targetName: picked[1], strategy: "combined" };
   } else if (combinedUnarchived.length === 1) {
       // 1 unarchived + 1 archived
       if (archivedNames.length > 0) {
           const archived = shuffle([...archivedNames])[0];
-          return c.json({ sourceName: combinedUnarchived[0], targetName: archived, strategy: "one-unarch-one-arch" });
+          return { sourceName: combinedUnarchived[0], targetName: archived, strategy: "one-unarch-one-arch" };
       } else {
-          // Only 1 person total (unarchived), but no archived to pair with
-          // This shouldn't happen if we have people with relationships, but safety check
-          return c.json({ sourceName: combinedUnarchived[0], targetName: "", isEmpty: true });
+          return { sourceName: combinedUnarchived[0], targetName: "", isEmpty: true };
       }
   }
   
   // Fallback: Empty state
-  return c.json({ 
+  return { 
      sourceName: "",
      targetName: "",
      isEmpty: true
+  };
+}
+
+app.post("/archiver/admin-pick-pair", async (c) => {
+  if (c.req.header("x-admin-password") !== getAdminPassword(c)) return c.json({ error: "Unauthorized" }, 401);
+  const db = await getDb(c);
+  return c.json(await pickPair(db));
+});
+
+app.post("/archiver/admin-pick-target", async (c) => {
+  const db = await getDb(c);
+  
+  const people = await db.prepare("SELECT name, raw_relationships FROM people").all() as any[];
+  const archivedNames = people.map(p => p.name);
+  const archivedSet = new Set(archivedNames);
+  
+  // 1. Get available from pool
+  const poolUnarchived: string[] = [];
+  for (const cat of CATEGORIES) {
+      FIGURE_POOL[cat]?.forEach((n: string) => { 
+          if (!archivedSet.has(n)) poolUnarchived.push(n); 
+      });
+  }
+  const uniquePoolUnarchived = Array.from(new Set(poolUnarchived));
+
+  if (uniquePoolUnarchived.length > 0) {
+      const targetName = uniquePoolUnarchived[Math.floor(Math.random() * uniquePoolUnarchived.length)];
+      return c.json({ targetName, strategy: "pool" });
+  }
+
+  // 2. Get available from relationships
+  const connectedUnarchived = new Set<string>();
+  people.forEach(p => {
+    try {
+      JSON.parse(p.raw_relationships || "[]").forEach((r: any) => {
+        if (r.personName && !archivedSet.has(r.personName)) {
+           connectedUnarchived.add(r.personName);
+        }
+      });
+    } catch(e) {}
   });
+
+  const uniqueRelsUnarchived = Array.from(connectedUnarchived);
+
+  if (uniqueRelsUnarchived.length > 0) {
+      const targetName = uniqueRelsUnarchived[Math.floor(Math.random() * uniqueRelsUnarchived.length)];
+      return c.json({ targetName, strategy: "relationships" });
+  }
+
+  // 3. Fallback: Empty state
+  return c.json({ targetName: "", isEmpty: true });
 });
 
 // Backward compatibility
@@ -736,62 +872,84 @@ app.post("/archiver/generate-target", async (c) => {
 
 app.post("/archive-figure", async (c) => {
   const db = await getDb(c);
-  const { personName, stream } = await c.req.json();
+  const { personName, stream: isStream } = await c.req.json();
   let targetName = personName;
 
   const samplePeople = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 20").all() as any[];
   const sampleNames = samplePeople.map(p => p.name).join("、");
 
-  if (!targetName) {
-      return c.json({ error: "Missing target" }, 400);
-  }
-
-  if (stream) {
+  if (isStream) {
       const pass = c.req.header("x-admin-password");
       const isAdmin = pass === getAdminPassword(c);
 
       return streamSSE(c, async (stream) => {
           const send = async (data: any) => await stream.writeSSE({ data: JSON.stringify(data) });
           try {
-              await send({ type: 'info', msg: `确定抓取目标: ${targetName}` });
-              await send({ type: 'info', msg: `正在利用 AI 深度检索并编织 ${targetName} 的历史时空数据...` });
-              
-              const prompt = `你是一位研究历史人物的传记专家。请为 "${targetName}" 撰写传记。
-              要求返回 JSON:
-              {
-                "keyword": "格言",
-                "lifespan": "出生日期-去世日期",
-                "birthplace": "出生地点",
-                "biography": "分段呈现，语言正规且诙谐幽默，直接进入主题。",
-                "achievements": ["成就1", "成就2"],
-                "category": "从[${CATEGORIES.join(",")}]选一",
-                "latitude": 纬度,
-                "longitude": 经度,
-                "relationships": [{"personName": "关联人名", "relationshipType": "请用20-30字描述关联"}]
+              if (!targetName) {
+                  await send({ type: 'info', msg: `未指定人物，正在检索图谱以寻找合适目标...` });
+                  const existingSet = new Set(samplePeople.map(p => p.name));
+                  const unarchivedInPool: string[] = [];
+                  for (const cat of CATEGORIES) {
+                      FIGURE_POOL[cat]?.forEach(n => { if (!existingSet.has(n)) unarchivedInPool.push(n); });
+                  }
+                  if (unarchivedInPool.length > 0) {
+                      targetName = unarchivedInPool[Math.floor(Math.random() * unarchivedInPool.length)];
+                      await send({ type: 'info', msg: `从预设池中随机选中: ${targetName}` });
+                  } else {
+                      await send({ type: 'info', msg: `预设池已满，正在进行 AI 随机发散...` });
+                      const prompt = `请从世界历史中选取一位极其著名、具有重大全球影响力且通常被视为正面的真实历史人物。要求不包含在已知列表中：[${sampleNames} ...]`;
+                      const resultText = await callAI(c, db, prompt, "text");
+                      targetName = (resultText || "").trim().replace(/[「」""'']/g, "");
+                      await send({ type: 'info', msg: `AI 随机发散选中: ${targetName}` });
+                  }
               }
-              重要：请尝试建立与已知时空节点的联系（如：${sampleNames} 等）。请使用标准权威的中文译名。`;
 
-              let resultText = await callAI(c, db, prompt, "json", undefined, async () => {
+              if (!targetName) throw new Error("无法确定目标");
+
+              await send({ type: 'info', msg: `正在从 Wikidata/Wikipedia 唤醒 ${targetName} 的记忆...`, data: { name: targetName } });
+              const meta = await fetchMetadataFromWiki(targetName);
+              targetName = meta.normalizedName;
+
+              await send({ type: 'info', msg: `确定抓取目标: ${targetName}`, data: { normalizedName: targetName, metaFound: !!meta.description } });
+              if (meta.description) {
+                  await send({ type: 'info', msg: `识别到身份线索: ${meta.description}` });
+              }
+              await send({ type: 'info', msg: `正在利用 AI 深度检索并编织 ${targetName} 的历史时空数据...`, data: { categories: CATEGORIES } });
+              
+              const prompt = ARCHIVE_PROMPT(targetName, CATEGORIES, sampleNames, meta.description);
+
+              await send({ type: 'ai-req', msg: 'AI 代理请求发送', data: { prompt: prompt.substring(0, 300) + "..." } });
+              let resultText = await callAI(c, db, prompt, "json", ARCHIVE_SCHEMA, async () => {
                   await send({ type: 'heartbeat', msg: 'AI 仍在思考中...' });
               });
+              await send({ type: 'ai-res', msg: 'AI 响应解码成功', data: { rawText: resultText.substring(0, 200) + "..." } });
+
               let data: any = {};
               try {
-                  let rawData = JSON.parse(resultText || "{}");
-                  data = Array.isArray(rawData) && rawData.length > 0 ? rawData[0] : rawData;
+                  data = JSON.parse(resultText || "{}");
               } catch (e) {
-                  data = { category: "其他", biography: "资料解析失败", achievements: [], relationships: [] };
+                  data = { category: "其他", biography: "资料解析失败", achievements: [], relationships: [], standardChineseName: targetName };
               }
 
-              await send({ type: 'info', msg: `正在获取 ${targetName} 的历史肖像...` });
-              const portraitUrl = await getPortraitUrl(c, targetName);
+              if (!data.accepted && !isAdmin) {
+                 await send({ type: 'error', msg: `抱歉，${targetName} 可能不符合入库标准（${data.reason || "非真实历史人物"}）` });
+                 return;
+              }
 
-              await send({ type: 'info', msg: `正在将 ${targetName} 录入时空档案馆...` });
+              // Use the standard Chinese name as the canonical record name
+              const finalName = data.standardChineseName || targetName;
+
+              await send({ type: 'info', msg: `正在获取 ${finalName} 的历史肖像...` });
+              const portraitUrlRaw = meta.imageUrl || `https://image.pollinations.ai/prompt/${encodeURIComponent("Historical portrait of " + finalName + ", realistic oil painting style, highly detailed")}`;
               
-              const existing = await db.prepare("SELECT id FROM people WHERE name = ?").get(targetName) as any;
-              let personId: number;
+              const portraitUrl = `/api/portraits/${encodeURIComponent(finalName.toLowerCase())}.jpg`;
+
+              await send({ type: 'info', msg: `正在将 ${finalName} 录入时空档案馆...` });
+              
+              const existing = await db.prepare("SELECT id FROM people WHERE name = ?").get(finalName) as any;
               
               if (existing) {
-                  await send({ type: 'info', msg: `${targetName} 已存在，正在更新资料...` });
+                  await send({ type: 'info', msg: `${finalName} 已存在，正在更新资料...` });
               }
               
               const stmt = db.prepare(`
@@ -803,13 +961,27 @@ app.post("/archive-figure", async (c) => {
                   RETURNING id
               `);
               const inserted = await stmt.get(
-                  targetName, data.category || "其他", data.keyword || "", data.lifespan || "", data.birthplace || "", data.biography || "",
+                  finalName, data.category || "其他", data.keyword || "", data.lifespan || "", data.birthplace || "", data.biography || "",
                   JSON.stringify(data.achievements || []), portraitUrl, JSON.stringify(data.relationships || []), data.latitude || 0, data.longitude || 0
               ) as { id: number };
-              personId = inserted.id;
+              const personId = inserted.id;
 
+              // Try to store the image if we have a bucket
+              if (c.env?.IMAGES && portraitUrlRaw) {
+                  try {
+                    const imgRes = await fetch(portraitUrlRaw);
+                    if (imgRes.ok) {
+                        const buffer = await imgRes.arrayBuffer();
+                        await c.env.IMAGES.put(`portraits/${encodeURIComponent(finalName.toLowerCase())}.jpg`, buffer, {
+                            httpMetadata: { contentType: imgRes.headers.get("content-type") || "image/jpeg" }
+                        });
+                    }
+                  } catch(e) {}
+              }
+
+              let connCount = 0;
+              // 1. 主动连接：检测该人物声明的关系，是否在数据库中已存在
               if (data.relationships && Array.isArray(data.relationships)) {
-                  let connCount = 0;
                   for (const rel of data.relationships) {
                       const matched = await db.prepare("SELECT id FROM people WHERE name = ?").get(rel.personName) as any;
                       if (matched) {
@@ -817,9 +989,24 @@ app.post("/archive-figure", async (c) => {
                           connCount++;
                       }
                   }
-                  if (connCount > 0) await send({ type: 'info', msg: `成功建立 ${connCount} 条时空连接。` });
-                  else await send({ type: 'info', msg: `未发现即时时空连接，已保留关联索引供后续追溯。` });
               }
+
+              // 2. 被动追溯：检测库中已有的人物，是否曾经将关系连向了当前这名新入库人物
+              const previousMentions = await db.prepare(`SELECT id, name, raw_relationships FROM people WHERE id != ? AND (raw_relationships LIKE ? OR raw_relationships LIKE ?)`).all(personId, `%${finalName}%`, `%${targetName}%`) as any[];
+              for (const p of previousMentions) {
+                  try {
+                      const rels = JSON.parse(p.raw_relationships || "[]");
+                      const matchingRel = rels.find((r: any) => r.personName === finalName || r.personName === targetName);
+                      if (matchingRel) {
+                          await addRelationship(db, p.id, personId, matchingRel.relationshipType);
+                          connCount++;
+                      }
+                  } catch(e) {}
+              }
+
+              if (connCount > 0) await send({ type: 'info', msg: `成功匹配并建立 ${connCount} 条时空连接。` });
+              else await send({ type: 'info', msg: `未发现即时时空连接，已保留关联索引供后续追溯。` });
+
 
               await send({ type: 'result', personId });
           } catch (e: any) {
@@ -1003,7 +1190,7 @@ app.post("/explore/ai-proxy", async (c) => {
          try { await stream.writeSSE({ data: JSON.stringify({ type: msg === 'heartbeat' ? 'ping' : 'msg', text: msg }) }); } catch(e){}
        };
        try {
-           const result = await callAI(c, db, prompt, responseFormat, schema, originalPulse);
+           const result = await callAI(c, db, prompt, responseFormat, schema, () => originalPulse('heartbeat'));
            await stream.writeSSE({ data: JSON.stringify({ type: 'done', result }) });
        } catch (err: any) {
            await stream.writeSSE({ data: JSON.stringify({ type: 'error', error: err.message }) });
@@ -1012,34 +1199,6 @@ app.post("/explore/ai-proxy", async (c) => {
   } catch (err: any) {
      return c.json({ error: err.message }, 500);
   }
-});
-
-app.post("/explore/ping", async (c) => {
-  const db = await getDb(c);
-  // Updates the lastHeartbeat of the running task as requested by frontend handshake
-  let currentStr = "null";
-  if (c.env && c.env.EXPLORE_KV) {
-      currentStr = await c.env.EXPLORE_KV.get("explore_state") || "null";
-  } else {
-      currentStr = await getConfig(db, "explore_state", "null");
-  }
-  
-  if (currentStr !== "null") {
-      try {
-          const current = JSON.parse(currentStr);
-          if (current.status === 'running') {
-              current.lastHeartbeat = Date.now();
-              const stateStr = JSON.stringify(current);
-              if (c.env && c.env.EXPLORE_KV) {
-                  await c.env.EXPLORE_KV.put("explore_state", stateStr);
-              } else {
-                  await setConfig(db, "explore_state", stateStr);
-              }
-              return c.json({ success: true, pulsed: true });
-          }
-      } catch (e) {}
-  }
-  return c.json({ success: true, pulsed: false });
 });
 
 app.post("/explore/start", async (c) => {
@@ -1099,7 +1258,7 @@ app.post("/explore/start", async (c) => {
       const taskWithStream = runExplorationTask(
           db, source, target, callAI, getConfig, setConfig, addRelationship, 
           ARCHIVE_PROMPT, ARCHIVE_SCHEMA, PATH_PROMPT, PATH_SCHEMA, VALIDATION_PROMPT, VALIDATION_SCHEMA, 
-          c, !!isAdmin,
+          fetchMetadataFromWiki, c, !!isAdmin,
           originalPulse
       );
 
@@ -1160,4 +1319,57 @@ app.post("/explore/reset", async (c) => {
       await setConfig(db, "explore_state", "null");
   }
   return c.json({ success: true });
+});
+
+// Added cron endpoint
+app.post("/cron", async (c) => {
+    const secret = c.req.query("secret");
+    if (secret !== "update_celeb") {
+        return c.json({ error: "Unauthorized" }, 401);
+    }
+    
+    const db = await getDb(c);
+    const { sourceName, targetName, isEmpty } = await pickPair(db);
+    
+    if (isEmpty || !sourceName || !targetName) {
+        return c.json({ status: "no target found", isEmpty });
+    }
+
+    // Set initial state
+    const initialState = {
+        status: 'running', 
+        source: sourceName, 
+        target: targetName, 
+        logs: [], 
+        steps: [], 
+        path: null, 
+        error: null, 
+        newArrivals: [],
+        lastHeartbeat: Date.now()
+    };
+    const stateStr = JSON.stringify(initialState);
+    if (c.env && c.env.EXPLORE_KV) {
+        await c.env.EXPLORE_KV.put("explore_state", stateStr);
+    } else {
+        await setConfig(db, "explore_state", stateStr);
+    }
+
+    // Trigger task in background
+    const task = runExplorationTask(
+        db, sourceName, targetName, callAI, getConfig, setConfig, addRelationship, 
+        ARCHIVE_PROMPT, ARCHIVE_SCHEMA, PATH_PROMPT, PATH_SCHEMA, VALIDATION_PROMPT, VALIDATION_SCHEMA, 
+        fetchMetadataFromWiki, c, true,
+        async (msg) => { console.log(`[Cron Explore Pulse] ${msg}`); }
+    );
+    
+    console.log(`[Cron] Started task for ${sourceName} -> ${targetName}`);
+
+    if (c.executionCtx && typeof c.executionCtx.waitUntil === 'function') {
+        c.executionCtx.waitUntil(task);
+    } else {
+        // Fallback for non-CF environment (like local/AI Studio dev)
+        task.catch(console.error);
+    }
+    
+    return c.json({ status: "triggered cron", source: sourceName, target: targetName });
 });

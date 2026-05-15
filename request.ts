@@ -1,4 +1,4 @@
-import { VALIDATION_PROMPT, VALIDATION_SCHEMA } from "./src/services/geminiService";
+import { VALIDATION_PROMPT, VALIDATION_SCHEMA } from "./src/services/aiService";
 
 async function test() {
   const res = await fetch("http://localhost:3000/api/ai/proxy", {

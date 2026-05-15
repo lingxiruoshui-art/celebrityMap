@@ -28,6 +28,7 @@ export async function runExplorationTask(
   PATH_SCHEMA: any,
   VALIDATION_PROMPT: any,
   VALIDATION_SCHEMA: any,
+  fetchMetadataFromWiki: any,
   c: any,
   isAdmin: boolean,
   onPulse?: (msg: string) => Promise<void>
@@ -155,7 +156,11 @@ export async function runExplorationTask(
       timeoutMs: number = 120000,
       skipImmediateSave: boolean = false
     ) => {
-      addLog(`AI 代理请求发送`, "ai-req", { prompt, responseFormat, schema });
+      addLog(`AI 代理请求发送`, "ai-req", { 
+        prompt_snippet: prompt.substring(0, 300) + "...", 
+        responseFormat, 
+        schema_keys: schema ? Object.keys(schema.properties || {}) : undefined 
+      });
       if (!skipImmediateSave) await saveState();
       try {
         let text: string;
@@ -174,7 +179,10 @@ export async function runExplorationTask(
               await saveState("AI推理维持心跳");
           });
         }
-        addLog("AI 响应解码成功", "ai-res", { rawText: text.substring(0, 100) + "..." });
+        addLog("AI 响应解码成功", "ai-res", { 
+          rawTextSnippet: text.substring(0, 200) + "...",
+          totalLength: text.length
+        });
         return text;
       } catch (e: any) {
         addLog("AI 服务响应失败", "error", e.message);
@@ -359,13 +367,19 @@ export async function runExplorationTask(
       "医学家",
       "其他历史名人",
     ];
+    const nameMap = new Map<string, string>();
     const missingNames = [];
     for (const step of chain) {
       if (!step.name) continue;
       const p = (await db
         .prepare("SELECT id FROM people WHERE name = ?")
         .get(step.name)) as any;
-      if (!p) missingNames.push(step.name);
+      if (!p) {
+          missingNames.push(step.name);
+      } else {
+          nameMap.set(step.name, step.name);
+          nameToId.set(step.name, p.id);
+      }
     }
 
     if (missingNames.length > 0) {
@@ -373,8 +387,14 @@ export async function runExplorationTask(
         addStep(`正在获取「${name}」的历史资料...`);
         await saveState();
 
+        const meta = await fetchMetadataFromWiki(name);
+        if (meta.description) {
+            addStep(`识别到身份线索: ${meta.description}`);
+            await saveState();
+        }
+
         const archiveText = await callAIProxy(
-          ARCHIVE_PROMPT(name, categories, sampleNames),
+          ARCHIVE_PROMPT(meta.normalizedName, categories, sampleNames, meta.description),
           "json",
           ARCHIVE_SCHEMA,
           120000,
@@ -393,17 +413,35 @@ export async function runExplorationTask(
         if (!personData.biography && personData.result)
           personData = personData.result;
 
+        const finalName = personData.standardChineseName || name;
+        nameMap.set(name, finalName);
+        
+        const portraitUrlRaw = meta.imageUrl || `https://image.pollinations.ai/prompt/${encodeURIComponent("Historical portrait of " + finalName + ", realistic oil painting style, highly detailed")}`;
+        const portraitUrl = `/api/portraits/${encodeURIComponent(finalName.toLowerCase())}.jpg`;
+
+        if (c.env && c.env.IMAGES && portraitUrlRaw) {
+            try {
+              const imgRes = await fetch(portraitUrlRaw);
+              if (imgRes.ok) {
+                  const buffer = await imgRes.arrayBuffer();
+                  await c.env.IMAGES.put(`portraits/${encodeURIComponent(finalName.toLowerCase())}.jpg`, buffer, {
+                      httpMetadata: { contentType: imgRes.headers.get("content-type") || "image/jpeg" }
+                  });
+              }
+            } catch(e) {}
+        }
+
         const res = await db
           .prepare(
             `
-               INSERT INTO people (name, category, keyword, biography, achievements, raw_relationships, lifespan, birthplace, latitude, longitude)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(name) DO UPDATE SET keyword=excluded.keyword, biography=excluded.biography
+               INSERT INTO people (name, category, keyword, biography, achievements, raw_relationships, lifespan, birthplace, latitude, longitude, image_url)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(name) DO UPDATE SET keyword=excluded.keyword, biography=excluded.biography, image_url=excluded.image_url
                RETURNING id
             `,
           )
           .get(
-            name,
+            finalName,
             personData.category || "未知",
             personData.keyword || "",
             personData.biography || "",
@@ -413,19 +451,41 @@ export async function runExplorationTask(
             personData.birthplace || "",
             personData.latitude || 0,
             personData.longitude || 0,
+            portraitUrl
           );
         
-        // Update local maps for the next steps
         let newId = (res as any)?.id;
         if (!newId) {
-            const getRes = await db.prepare("SELECT id FROM people WHERE name = ? COLLATE NOCASE").get(name) as any;
+            const getRes = await db.prepare("SELECT id FROM people WHERE name = ? COLLATE NOCASE").get(finalName) as any;
             newId = getRes?.id;
         }
         if (newId) {
-            nameToId.set(name, Number(newId));
+            nameToId.set(finalName, Number(newId));
+            
+            // 1. 主动连接：检测该人物声明的关系，是否在数据库中已存在
+            if (personData.relationships && Array.isArray(personData.relationships)) {
+                for (const rel of personData.relationships) {
+                    const matched = await db.prepare("SELECT id FROM people WHERE name = ?").get(rel.personName) as any;
+                    if (matched) {
+                        await addRelationship(db, newId, matched.id, rel.relationshipType);
+                    }
+                }
+            }
+
+            // 2. 被动追溯：检测库中已有的人物，是否曾经将关系连向了当前这名新入库人物
+            const previousMentions = await db.prepare(`SELECT id, name, raw_relationships FROM people WHERE id != ? AND (raw_relationships LIKE ? OR raw_relationships LIKE ?)`).all(newId, `%${finalName}%`, `%${name}%`) as any[];
+            for (const p of previousMentions) {
+                try {
+                    const rels = JSON.parse(p.raw_relationships || "[]");
+                    const matchingRel = rels.find((r: any) => r.personName === finalName || r.personName === name);
+                    if (matchingRel) {
+                        await addRelationship(db, p.id, newId, matchingRel.relationshipType);
+                    }
+                } catch(e) {}
+            }
         }
-        state.newArrivals.push(name);
-        updateLastStep("success", `成功同步「${name}」`);
+        state.newArrivals.push(finalName);
+        updateLastStep("success", `成功同步「${finalName}」`);
         await saveState();
       }
     }
@@ -433,15 +493,17 @@ export async function runExplorationTask(
     for (let i = 0; i < chain.length; i++) {
         const step = chain[i];
         if (!step.name) continue;
+        const currentMappedName = nameMap.get(step.name) || step.name;
 
         if (i > 0) {
-          const p1Id = nameToId.get(chain[i - 1].name);
-          const p2Id = nameToId.get(step.name);
+          const prevMappedName = nameMap.get(chain[i - 1].name) || chain[i - 1].name;
+          const p1Id = nameToId.get(prevMappedName);
+          const p2Id = nameToId.get(currentMappedName);
           if (p1Id && p2Id) {
             await addRelationship(db, p1Id, p2Id, step.relationshipToPrevious);
           }
         }
-        finalPath.push({ name: step.name, type: step.relationshipToPrevious });
+        finalPath.push({ name: currentMappedName, type: step.relationshipToPrevious });
     }
     
     state.path = finalPath;

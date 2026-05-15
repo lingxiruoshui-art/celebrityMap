@@ -11,26 +11,35 @@ export function getGemini(apiKeyOverride?: string): GoogleGenAI {
   return ai;
 }
 
-export const ARCHIVE_PROMPT = (name: string, categories: string[], sampleNames?: string) => `
+export const ARCHIVE_PROMPT = (name: string, categories: string[], sampleNames?: string, bioSnippet?: string) => `
 你是一位研究历史人物的传记专家。请为人物 "${name}" 撰写一份既有历史厚度又风趣幽默的传记。
+${bioSnippet ? `参考背景资料：${bioSnippet}` : ""}
+
+要求：
+- accepted：仅限真实已故历史人物为 true，其余(虚构、在世、非人类实体等)一律为 false。
+- reason：极简描述其历史身份(限10字内)。${bioSnippet ? `请优先直接提取使用参考背景资料。` : `请根据历史事实总结。`}
+- standardChineseName：该人物最权威、最广泛公认的学术标准中文全名（外国人名请使用标准译名，中国古人请使用姓名而非号或字）。
 
 请严格返回以下格式的 JSON 对象：
 {
+  "accepted": true/false,
+  "reason": "历史身份简述",
+  "standardChineseName": "标准中文全名",
   "keyword": "该人物最经典、最具代表性的一句人生格言",
   "lifespan": "如公元前571年-公元前471年或1879年-1955年",
   "birthplace": "出生地",
-  "category": "从以下选择最合适的：[${categories.join("、")}]",
-  "biography": "正规且诙谐幽默的传记。分3-4段。禁止使用大家好等开场白。",
+  "category": "${bioSnippet ? `参考背景资料（如有）或从以下选择：[${categories.join("、")}]` : `从以下选择最合适的：[${categories.join("、")}]`}",
+  "biography": "正规且诙谐幽默的传记。分3-4段，不少于300字。禁止使用大家好等开场白。",
   "achievements": ["成就1", "成就2"],
   "relationships": [
-    {"personName": "标准中文译名", "relationshipType": "20-30字关系描述"}
+    {"personName": "标准中文全名", "relationshipType": "20-30字关系描述"}
   ],
   "latitude": 纬度数字,
   "longitude": 经度数字
 }
 
 特别要求：
-1. relationships 中的人物必须是实名历史人物。为了保持时空网络的连通性，请优先尝试关联那些能够显著增加该人物历史交叉度的知名人物${sampleNames ? `（例如：${sampleNames} 等）` : ""}。
+1. relationships 中的3~5人物必须是实名历史人物。历史上与该人有过强烈的交集（任何形式的）。
 2. 请务必使用广泛公认的学术标准中文译名，以确保数据一致性，避免重复录入。
 3. 所有返回内容必须使用简体中文。
 `;
@@ -38,12 +47,15 @@ export const ARCHIVE_PROMPT = (name: string, categories: string[], sampleNames?:
 export const ARCHIVE_SCHEMA: Schema = {
   type: Type.OBJECT,
   properties: {
+    accepted: { type: Type.BOOLEAN },
+    reason: { type: Type.STRING },
+    standardChineseName: { type: Type.STRING },
     keyword: { type: Type.STRING },
     lifespan: { type: Type.STRING },
     birthplace: { type: Type.STRING },
+    category: { type: Type.STRING },
     biography: { type: Type.STRING },
     achievements: { type: Type.ARRAY, items: { type: Type.STRING } },
-    category: { type: Type.STRING },
     latitude: { type: Type.NUMBER },
     longitude: { type: Type.NUMBER },
     relationships: {
@@ -58,7 +70,7 @@ export const ARCHIVE_SCHEMA: Schema = {
       }
     }
   },
-  required: ["keyword", "lifespan", "birthplace", "biography", "achievements", "category", "latitude", "longitude", "relationships"]
+  required: ["accepted", "reason", "standardChineseName", "keyword", "lifespan", "birthplace", "biography", "achievements", "category", "latitude", "longitude", "relationships"]
 };
 
 export const PATH_PROMPT = (source: string, target: string, sampleNames?: string) => `找出 "${source}" 和 "${target}" 之间的最短历史&时空联系路径。
@@ -92,7 +104,6 @@ export const VALIDATION_PROMPT = (names: string[], sampleNames?: string) => `辨
 请严格返回 JSON 对象，包含 results 数组，对应每个输入的人物。
 注意：
 - accepted：仅限真实已故历史人物为 true，其余(虚构、在世、非人类实体等)一律为 false。
-- normalizedName：该人物公认的标准中文全名。参考现有风格：${sampleNames || "无"}。
 - reason：极简描述其历史身份(限10字内)。
 
 必须直接返回合法的 JSON，不要有多余的提示说明，要求极速响应。`;
