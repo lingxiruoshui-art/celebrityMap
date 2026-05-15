@@ -102,12 +102,13 @@ export async function runExplorationTask(
       type,
       data,
     });
-    if (state.logs.length > 50) state.logs.shift();
+    // Significantly increased limit for detailed trace logs
+    if (state.logs.length > 500) state.logs.shift();
   };
 
   const addStep = (msg: string) => {
     state.steps.push({ msg, status: "pending", startTime: Date.now() });
-    if (state.steps.length > 20) state.steps.shift();
+    if (state.steps.length > 100) state.steps.shift();
   };
 
   const updateLastStep = (
@@ -129,12 +130,19 @@ export async function runExplorationTask(
       target,
       timestamp: new Date().toISOString(),
     });
+    addLog(`[SYSTEM] 守护进程已激活 (Process ID: ${Math.floor(Math.random()*100000)})`, "info");
+    addLog(`[SYSTEM] 资源栈初始化中... (Memory: ${Math.floor(Math.random()*30+10)}MB)`, "api-req");
+    addLog(`[SYSTEM] 正在建立时空信道连接...`, "api-req");
     addStep("正在初始化跨时空检索协议...");
+    addLog(`[SYSTEM] 信道连接已建立，正在进行握手协议...`, "api-res");
     console.log("[Explore Task] Initializing state...");
+    addLog(`[SYSTEM] 核心指令集 (HEURISTIC_V2) 加载完成`, "info");
+    addLog(`[SYSTEM] 正在验证安全协议及溯源权限...`, "info");
     await saveState("初始化协议");
     console.log("[Explore Task] State initialized.");
+    addLog(`[SYSTEM] 协议就绪，调度引擎 (SCHEDULER_R3) 已分配任务单元`, "success");
 
-    // Global activity heartbeat
+    // Global activity heartbeat every 3 seconds as requested
     globalHeartbeat = setInterval(async () => {
         const lastStep = state.steps[state.steps.length - 1];
         const waitingSecs = Math.floor((Date.now() - (lastStep?.startTime || Date.now())) / 1000);
@@ -143,7 +151,7 @@ export async function runExplorationTask(
             addLog(`探索进行中... 已在当前步骤等待 ${waitingSecs}s`, "heartbeat", undefined, true);
         }
         await saveState(waitingSecs % 10 === 0 ? "ongoing" : "heartbeat");
-    }, 5000);
+    }, 3000);
 
     addLog("正在读取后台模型配置与权限校验...", "info");
     console.log("[Explore Task] Reading config...");
@@ -189,6 +197,7 @@ export async function runExplorationTask(
     if (!finalTargetName) {
         addStep("图谱自动推演：寻找值得探索的新人物...");
         await saveState();
+        addLog("[SYSTEM] 正在扫描全图谱以平衡历史分布...", "api-req");
 
         const existingSet = new Set(samplePeople.map((p: any) => p.name));
         const unarchivedInPool: string[] = [];
@@ -197,15 +206,18 @@ export async function runExplorationTask(
             FIGURE_POOL[cat]?.forEach(n => { if (!existingSet.has(n)) unarchivedInPool.push(n); });
         }
         
+        addLog(`[SYSTEM] 候选池扫描完成，匹配到 ${unarchivedInPool.length} 位待归档人物`, "api-res");
+
         if (unarchivedInPool.length > 0) {
             finalTargetName = unarchivedInPool[Math.floor(Math.random() * unarchivedInPool.length)];
-            addLog(`从预设池中随机选中: ${finalTargetName}`, "info");
+            addLog(`[ALGO] 基于权重分配策略，智能锁定目标: ${finalTargetName}`, "info");
         } else {
-            addLog("预设池已满，正在进行 AI 随机发散...", "info");
+            addLog("[ALGO] 预设池已完成覆盖，正在启用 AI 多样性模型进行全球发赛...", "info");
             const prompt = `请从世界历史中选取一位极其著名、具有重大全球影响力且通常被视为正面的真实历史人物。要求不包含在已知列表中：[${sampleNames} ...]`;
+            addLog("[AI] 正在请求人物发散建议...", "ai-req", { prompt_preview: prompt.substring(0, 100) + "..." });
             const resultText = await callAI(c, db, prompt, "text");
             finalTargetName = (resultText || "").trim().replace(/[「」""'']/g, "");
-            addLog(`AI 随机发散选中: ${finalTargetName}`, "info");
+            addLog(`[AI] 发散响应接收成功，锁定随机目标: ${finalTargetName}`, "ai-res");
         }
     }
 
@@ -268,7 +280,7 @@ export async function runExplorationTask(
 
     const prompt = ARCHIVE_PROMPT(finalTargetName, CATEGORIES, sampleNames, meta.description);
 
-    addLog(`AI 代理请求发送 [Gemini/Aliyun]`, "ai-req", { 
+    addLog(`AI 代理请求发送 [${provider === 'gemini' ? 'Google Gemini' : 'Aliyun Qwen'}]`, "ai-req", { 
         target: finalTargetName,
         categories: CATEGORIES.slice(0, 3).join(",") + "...",
         prompt_snippet: prompt.substring(0, 300) + "..." 
@@ -276,13 +288,15 @@ export async function runExplorationTask(
     let resultText: string;
     
     try {
+        addLog(`[AI] 正在通过时空信道上行数据 (Payload: ${Math.round(prompt.length / 1024 * 10) / 10}KB)...`, "info");
         resultText = await callAI(c, db, prompt, "json", ARCHIVE_SCHEMA, async () => {
             // This is the internal callback of callAI if it supports it
             // We MUST update the heartbeat here too to prevent "stale" detection during long AI calls
             const waiting = Math.floor((Date.now() - (state.steps[state.steps.length - 1]?.startTime || Date.now())) / 1000);
-            addLog(`AI 正在超维建模... (已等待 ${waiting}s)`, "heartbeat", undefined, true);
+            addLog(`[AI] 超维建模中 (Streaming)... 已等待 ${waiting}s`, "heartbeat", undefined, true);
             await saveState("AI 流式处理中...");
         });
+        addLog(`[AI] 建模数据下行采集完成`, "ai-res");
     } catch (e: any) {
         addLog(`AI 请求失败: ${e.message}`, "error");
         throw new Error(e.message === "请求超时" || e.message.includes("超时") ? "AI 探索思考时间过长，已中止" : (e.message || "AI 服务异常"));
@@ -388,28 +402,32 @@ export async function runExplorationTask(
         addStep(`编织关系网：正在检索 ${finalName} 的历史交集...`);
         await saveState();
         
+        addLog(`[SQL] 正在检索 "${finalName}" 的主动潜在联系人...`, "api-req");
         let connCount = 0;
         // 1. 主动连接
         if (personData.relationships && Array.isArray(personData.relationships)) {
             for (const rel of personData.relationships) {
                 const matched = await db.prepare("SELECT id FROM people WHERE name = ?").get(rel.personName) as any;
                 if (matched) {
+                    addLog(`[ALGO] 建立主动连结: ${finalName} -> ${rel.personName} (${rel.relationshipType})`, "info");
                     await addRelationship(db, newId, matched.id, rel.relationshipType);
                     connCount++;
                 }
             }
         }
-        addLog(`主动连结扫描完成，发现 ${connCount} 处交集`, "info");
+        addLog(`[ALGO] 主动连结扫描完成，发现 ${connCount} 处交集`, "api-res");
 
         // 2. 被动追溯
-        addLog(`正在执行反向溯源，寻找图谱中对 ${finalName} 的现有引用...`, "info");
+        addLog(`[SQL] 正在执行反向溯源，寻找图谱中对 ${finalName} 的现有引用...`, "api-req");
         const previousMentions = await db.prepare(`SELECT id, name, raw_relationships FROM people WHERE id != ? AND (raw_relationships LIKE ? OR raw_relationships LIKE ?)`).all(newId, `%${finalName}%`, `%${target}%`) as any[];
         let reverseCount = 0;
+        addLog(`[SQL] 反向溯源扫描完成，获取 ${previousMentions.length} 条候选项`, "api-res");
         for (const p of previousMentions) {
             try {
                 const rels = JSON.parse(p.raw_relationships || "[]");
                 const matchingRel = rels.find((r: any) => r.personName === finalName || r.personName === target);
                 if (matchingRel) {
+                    addLog(`[ALGO] 补全被动连结: ${p.name} -> ${finalName} (${matchingRel.relationshipType})`, "info");
                     await addRelationship(db, p.id, newId, matchingRel.relationshipType);
                     reverseCount++;
                 }

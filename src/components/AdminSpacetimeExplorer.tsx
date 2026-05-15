@@ -312,7 +312,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
        }
        
        if (isActive) {
-           timer = setTimeout(checkStatus, pollStatusRef.current ? 800 : 1500); 
+           timer = setTimeout(checkStatus, 3000); 
        }
     };
     checkStatus();
