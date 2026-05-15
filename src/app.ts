@@ -1306,10 +1306,14 @@ app.post("/explore/start", async (c) => {
           originalPulse
       );
 
+      if (c.executionCtx && c.executionCtx.waitUntil) {
+          c.executionCtx.waitUntil(taskWithStream.catch((e: any) => console.error("Background task error:", e)));
+      }
+
       try {
           await taskWithStream;
       } catch (err: any) {
-          console.error("Background task error:", err);
+          console.error("Task execution error:", err);
       } finally {
           try {
               await stream.writeSSE({ data: JSON.stringify({ type: 'done' }) });
@@ -1459,14 +1463,15 @@ app.post("/cron", async (c) => {
         async (msg) => { console.log(`[Cron Explore Pulse] ${msg}`); }
     );
     
-    console.log(`[Cron] Started task for ${targetName}`);
-
-    try {
-        await task;
-    } catch (e) {
-        console.error("[Cron Task Error]", e);
+    if (c.executionCtx && c.executionCtx.waitUntil) {
+        c.executionCtx.waitUntil(task.catch(e => console.error("[Cron Task Error]", e)));
+    } else {
+        // Fallback for Node.js environments
+        task.catch(e => console.error("[Cron Task Error]", e));
     }
     
+    console.log(`[Cron] Started task for ${targetName}`);
+
     return c.json({ 
         status: "success", 
         message: "后台明确确认：已成功收到 worker 触发的消息并启动背景任务", 
