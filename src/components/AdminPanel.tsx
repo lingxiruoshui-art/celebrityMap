@@ -262,7 +262,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
         headers: adminHeaders
       });
       if (res.ok) {
-        const data = await res.json();
+        const data = await res.json() as any;
         if (data.addedCount > 0) {
           showNotification('success', `已成功为 [${name}] 扩展 ${data.addedCount} 条联系`);
           fetchArchive();
@@ -270,7 +270,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
           showNotification('info', `未能在现有库中找到与 [${name}] 相关的新联系`);
         }
       } else {
-        const data = await res.json();
+        const data = await res.json() as any;
         showNotification('error', data.error || '扩展失败');
       }
     } catch (e) {

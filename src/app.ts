@@ -393,7 +393,7 @@ async function fetchAndStoreImage(c: any, filename: string) {
   try {
     let finalUrl = "";
     
-    // ... search logic ...
+    // Search in Wikipedia/Wikidata
     const searchWikidata = async (lang: string) => {
       const res = await fetch(`https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(name)}&language=${lang}&format=json`, { headers });
       const data = await res.json() as any;
@@ -439,8 +439,9 @@ async function fetchAndStoreImage(c: any, filename: string) {
         const buffer = await imageRes.arrayBuffer();
         
         if (imagesBucket) {
-           const key = `portraits/${filename}`;
-           await imagesBucket.put(key, buffer, { httpMetadata: { contentType: contentType } });
+           // We derive the canonical key here
+           const canonicalKey = `portraits/${encodeURIComponent(name.toLowerCase())}.jpg`;
+           await imagesBucket.put(canonicalKey, buffer, { httpMetadata: { contentType: contentType } });
         }
         
         return { body: buffer, contentType };
@@ -454,13 +455,16 @@ async function fetchAndStoreImage(c: any, filename: string) {
 
 app.get("/portraits/:filename", async (c) => {
   const imagesBucket = c.env?.IMAGES;
-  const filename = c.req.param("filename");
+  const rawFilename = c.req.param("filename");
+  // Hono param is decoded, so we re-normalize it for R2 search
+  const namePart = rawFilename.replace(/\.jpg$/i, '');
+  const r2Key = `portraits/${encodeURIComponent(namePart.toLowerCase())}.jpg`;
   
   if (imagesBucket) {
-    let object = await imagesBucket.get(`portraits/${filename}`);
+    let object = await imagesBucket.get(r2Key);
     
     if (!object) {
-      const result = await fetchAndStoreImage(c, filename);
+      const result = await fetchAndStoreImage(c, rawFilename);
       if (result) {
         const headers = new Headers();
         headers.set("Content-Type", result.contentType);
@@ -478,7 +482,7 @@ app.get("/portraits/:filename", async (c) => {
     return new Response(object.body as any, { headers });
   } else {
     // If no R2 bucket (e.g. in AI Studio preview), just fetch and stream
-    const result = await fetchAndStoreImage(c, filename);
+    const result = await fetchAndStoreImage(c, rawFilename);
     if (result) {
       const headers = new Headers();
       headers.set("Content-Type", result.contentType);
@@ -539,6 +543,18 @@ app.delete("/admin/people/:id", async (c) => {
   if (c.req.header("x-admin-password") !== getAdminPassword(c)) return c.json({ error: "Unauthorized" }, 401);
   const db = await getDb(c);
   const id = c.req.param("id");
+  
+  // Get person info for R2 deletion
+  const person = await db.prepare("SELECT name FROM people WHERE id = ?").get(id) as any;
+  if (person && c.env?.IMAGES) {
+    try {
+      const key = `portraits/${encodeURIComponent(person.name.toLowerCase())}.jpg`;
+      await c.env.IMAGES.delete(key);
+    } catch (e) {
+      console.error(`Failed to delete portrait from R2 for ${person.name}:`, e);
+    }
+  }
+
   await db.prepare("DELETE FROM relationships WHERE person1_id = ? OR person2_id = ?").run(id, id);
   await db.prepare("DELETE FROM people WHERE id = ?").run(id);
   return c.json({ success: true });
@@ -549,7 +565,22 @@ app.post("/admin/people/batch-delete", async (c) => {
   const db = await getDb(c);
   const { ids } = await c.req.json();
   if (!Array.isArray(ids) || ids.length === 0) return c.json({ error: "No ids provided" }, 400);
+  
   const placeholders = ids.map(() => "?").join(",");
+  
+  // Get people names for R2 deletion
+  const people = await db.prepare(`SELECT name FROM people WHERE id IN (${placeholders})`).all(...ids) as any[];
+  if (c.env?.IMAGES) {
+    for (const person of people) {
+      try {
+        const key = `portraits/${encodeURIComponent(person.name.toLowerCase())}.jpg`;
+        await c.env.IMAGES.delete(key);
+      } catch (e) {
+        console.error(`Failed to delete portrait from R2 for ${person.name}:`, e);
+      }
+    }
+  }
+
   await db.prepare(`DELETE FROM relationships WHERE person1_id IN (${placeholders}) OR person2_id IN (${placeholders})`).run(...ids, ...ids);
   await db.prepare(`DELETE FROM people WHERE id IN (${placeholders})`).run(...ids);
   return c.json({ success: true });
@@ -1236,12 +1267,13 @@ app.post("/explore/start", async (c) => {
   }
   
   // Set initial state synchronously so immediately following reads see it
+  // Ensure logs and steps are completely fresh
   const initialState = {
       status: 'running', 
       target, 
       taskId: Date.now(),
-      logs: [], 
-      steps: [], 
+      logs: [{ timestamp: new Date().toLocaleTimeString(), msg: `初始化任务: [${target || '随机发散探索'}]`, type: 'info' }], 
+      steps: [{ msg: "探索序列启动中...", status: "pending", startTime: Date.now() }], 
       path: null, 
       error: null, 
       newArrivals: [],
