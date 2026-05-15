@@ -42,7 +42,8 @@ export async function runExplorationTask(
     state.lastHeartbeat = Date.now();
     state.pulse = (state.pulse || 0) + 1;
     if (onPulse) {
-      await onPulse(reason || "heartbeat");
+      // Do not await onPulse to prevent streaming backpressure from hanging the task
+      onPulse(reason || "heartbeat").catch(e => console.error("Pulse error:", e));
     }
     
     let currentRaw = "null";
@@ -77,7 +78,16 @@ export async function runExplorationTask(
     }
   };
 
-  const addLog = (msg: string, type: string = "ui", data?: any) => {
+  const addLog = (msg: string, type: string = "ui", data?: any, overwrite: boolean = false) => {
+    if (overwrite && state.logs.length > 0) {
+      const last = state.logs[state.logs.length - 1];
+      if (last.type === type) {
+        last.msg = msg;
+        last.timestamp = new Date().toLocaleTimeString();
+        if (data) last.data = data;
+        return;
+      }
+    }
     state.logs.push({
       timestamp: new Date().toLocaleTimeString(),
       msg,
@@ -104,14 +114,27 @@ export async function runExplorationTask(
     }
   };
 
+  let globalHeartbeat: any;
   try {
     addLog("启动时空档案入库协议", "api", {
       target,
       timestamp: new Date().toISOString(),
     });
     addStep("正在初始化跨时空检索协议...");
-    await saveState();
+    await saveState("初始化协议");
 
+    // Global activity heartbeat
+    globalHeartbeat = setInterval(async () => {
+        const lastStep = state.steps[state.steps.length - 1];
+        const waitingSecs = Math.floor((Date.now() - (lastStep?.startTime || Date.now())) / 1000);
+        // Only log if we've been waiting for more than 2 seconds
+        if (waitingSecs > 1) {
+            addLog(`档案编织进行中... 已在当前步骤等待 ${waitingSecs}s`, "heartbeat", undefined, true);
+        }
+        await saveState("正在后台深度处理");
+    }, 8000);
+
+    addLog("正在读取后台模型配置与权限校验...", "info");
     const provider = await getConfig(db, "active_model_provider", "gemini");
     const modelId =
       provider === "gemini"
@@ -123,6 +146,7 @@ export async function runExplorationTask(
     }
 
     // Prepare samples for diversity
+    addLog("正在通过 SQL 推算历史人物多样性样本...", "info");
     const samplePeople = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 20").all() as any[];
     const sampleNames = samplePeople.map((p: any) => p.name).join("、");
 
@@ -155,14 +179,7 @@ export async function runExplorationTask(
     state.target = finalTargetName;
     updateLastStep("success", `锁定目标: ${finalTargetName}`);
     addStep(`探索检索：正在寻找 ${finalTargetName} 的全网数字足迹...`);
-    addLog(`扫描中：正在从 Wikidata/Wikipedia 提取 ${finalTargetName} 的核心时空特征...`, "info", { query: finalTargetName });
-    
-    // Heartbeat for wiki fetch (optional but helpful if it's slow)
-    const wikiHeartbeat = setInterval(async () => {
-        const waitingSecs = Math.floor((Date.now() - (state.steps[state.steps.length-1]?.startTime || Date.now())) / 1000);
-        addLog(`连接全网数据库中，正在跨维检索人物词条... (已等待 ${waitingSecs}s)`, "info");
-        await saveState("Wiki 检索中");
-    }, 10000);
+    addLog(`准备跨维检索：正在初始化 Wikidata 引擎以提取 ${finalTargetName} 的特征...`, "info", { query: finalTargetName });
 
     const metaPromise = fetchMetadataFromWiki(finalTargetName);
     // Wikidata timeout set to 30s as requested
@@ -176,7 +193,7 @@ export async function runExplorationTask(
         addLog(`Wiki唤醒异常: ${err.message}`, "error", { target: finalTargetName });
         throw new Error(`无法从全网数据库识别 ${finalTargetName}: ${err.message}`);
     } finally {
-        clearInterval(wikiHeartbeat);
+        // We keep the globalHeartbeat running for now, or we can clear it and restart in next phase
     }
     
     if (!wikiMeta || !wikiMeta.imageUrl) {
@@ -211,13 +228,6 @@ export async function runExplorationTask(
     });
     let resultText: string;
     
-    // Heartbeat for long AI wait
-    const aiHeartbeat = setInterval(async () => {
-        const waitingSecs = Math.floor((Date.now() - (state.steps[state.steps.length-1]?.startTime || Date.now())) / 1000);
-        addLog(`AI 正在进行深度时空测算，请耐心等待... (已等待 ${waitingSecs}s)`, "info");
-        await saveState("AI 思考中");
-    }, 10000);
-
     try {
         resultText = await callAI(c, db, prompt, "json", ARCHIVE_SCHEMA, async () => {
             // This is the internal callback of callAI if it supports it
@@ -227,7 +237,7 @@ export async function runExplorationTask(
         addLog(`AI 请求失败: ${e.message}`, "error");
         throw new Error(e.message === "请求超时" || e.message.includes("超时") ? "AI 探索思考时间过长，已中止" : (e.message || "AI 服务异常"));
     } finally {
-        clearInterval(aiHeartbeat);
+        // aiHeartbeat was removed, we use the globalHeartbeat
     }
 
     addLog("AI 响应解码成功", "ai-res", { 
@@ -367,9 +377,11 @@ export async function runExplorationTask(
     
     state.status = "success";
     state.path = [{ name: finalName, type: "入库成功" }];
+    clearInterval(globalHeartbeat);
     await saveState();
 
   } catch (e: any) {
+    if (globalHeartbeat) clearInterval(globalHeartbeat);
     if (e.message === "AbortError") return;
     state.status = "error";
     state.error = e.message;

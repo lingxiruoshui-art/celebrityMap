@@ -11,7 +11,7 @@ export interface SpacetimeExplorerHandle {
 interface SpacetimeExplorerProps {
   onClose: () => void;
   onRefreshArchive: () => void;
-  onSelectPerson: (id: number) => void;
+  onSelectPerson: (id: number, name?: string) => void;
   onPathFound?: (path: Step[] | null) => void;
   isInline?: boolean;
   isPane?: boolean;
@@ -21,6 +21,7 @@ interface SpacetimeExplorerProps {
   hideInputs?: boolean;
   hideHeader?: boolean;
   isAdmin?: boolean;
+  allowAdminControls?: boolean;
   showLogs?: boolean;
   peopleNames?: string[];
 }
@@ -141,7 +142,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   const [newArrivals, setNewArrivals] = useState<string[]>([]);
   const [error, setError] = useState<React.ReactNode | string | null>(null);
   const [isCollapsed, setIsCollapsed] = useState(() => hideHeader ? false : true);
-  const [detailedLogs, setDetailedLogs] = useState<{timestamp: string, msg: string, data?: any, type: 'info' | 'ai-req' | 'ai-res' | 'error'}[]>([]);
+  const [detailedLogs, setDetailedLogs] = useState<{timestamp: string, msg: string, data?: any, type: string}[]>([]);
   const [searchSteps, setSearchSteps] = useState<{msg: string, status: 'pending' | 'success' | 'error', startTime?: number}[]>([]);
   const [showResults, setShowResults] = useState(false);
   const [metadata, setMetadata] = useState<{
@@ -247,9 +248,9 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                }
                if (data.status === 'running') {
                    if (allowAdminControls) {
-                       setSource(data.target || "");
+                       if (data.target && source !== data.target) setSource(data.target);
                    } else {
-                       setTarget(data.target || "");
+                       if (data.target && target !== data.target) setTarget(data.target);
                    }
                    lastStreamPulseRef.current = Date.now();
                    setIsLoading(true);
@@ -272,6 +273,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                        setIsLoading(false);
                        pollStatusRef.current = false;
                    } else if (data.status === 'success') {
+                       if (data.target && allowAdminControls) setSource(data.target);
                        if (!showResults && !hasLoadedResultRef.current) {
                            setPath(data.path || []);
                            setNewArrivals(data.newArrivals ? data.newArrivals : []);
@@ -610,12 +612,16 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                               onChange={(e) => setSource(e.target.value)}
                               onFocus={() => setIsSourceFocused(true)}
                               onBlur={() => setTimeout(() => setIsSourceFocused(false), 200)}
-                              placeholder="输入人名如：朱元璋"
+                              placeholder={isLoading ? "正在编织时空网络..." : "输入人名如：朱元璋"}
                               disabled={isLoading}
-                              className="w-full pl-8 pr-10 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[12px] focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 focus:bg-white outline-none transition-all font-bold placeholder:text-slate-300 shadow-sm disabled:opacity-50"
+                              className={`w-full pl-8 pr-10 py-2 border rounded-xl text-[12px] focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 outline-none transition-all font-bold placeholder:text-slate-300 shadow-sm ${isLoading ? 'bg-indigo-50/50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200'}`}
                               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                             />
-                            <User className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
+                            {isLoading ? (
+                              <Loader2 className="absolute left-3 top-2.5 w-3.5 h-3.5 text-indigo-500 animate-spin" />
+                            ) : (
+                              <User className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
+                            )}
                             <button 
                               onClick={handlePickRandomPair}
                               disabled={isPickingRandom || isLoading || !hasInitialCheckDone}
@@ -894,10 +900,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                         
                         <motion.div 
                           whileHover={{ x: 3 }}
-                          onClick={() => {
-                            // Find person in storage or just select by name logic could go here
-                            onSelectPerson(0); // Placeholder
-                          }}
+                          onClick={() => onSelectPerson(-1, item.name)}
                           className="flex items-center gap-2.5 bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-sm hover:border-indigo-400 hover:shadow-lg hover:shadow-indigo-500/10 transition-all group cursor-pointer"
                         >
                           <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 border border-slate-100 ${newArrivals.includes(item.name) ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-slate-50 text-indigo-600'}`}>
@@ -966,12 +969,14 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                       <div key={i} className="animate-in fade-in slide-in-from-left-1 duration-200">
                         <div className="flex items-baseline gap-2.5">
                           <span className="font-bold text-slate-300 tabular-nums shrink-0 whitespace-nowrap">[{log.timestamp}]</span>
-                          <span className={`font-black uppercase tracking-tighter text-[8px] px-1 py-0 rounded shrink-0 ${
+                          <span className={`font-black uppercase tracking-tighter text-[8px] px-1 py-0 rounded shrink-0 flex items-center gap-1 ${
                             log.type === 'error' ? 'text-red-500' :
                             log.type === 'ai-req' || log.type === 'ai-res' ? 'text-amber-500' :
                             log.type === 'api' ? 'text-indigo-500' : 
+                            log.type === 'heartbeat' ? 'text-emerald-500' :
                             'text-slate-400'
                           }`}>
+                            {log.type === 'heartbeat' && <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse"></span>}
                             {log.type === 'api' ? 'SERVER' : (log.type || "").replace('-', ' ')}
                           </span>
                           <div className="flex-1 min-w-0">

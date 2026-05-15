@@ -180,6 +180,31 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
     }
   }, []);
 
+  // Polling for config and archive
+  useEffect(() => {
+    if (!isAuthorized) return;
+
+    const fetchStatus = async () => {
+      try {
+        const res = await fetch("/api/explore/status", { headers: adminHeaders });
+        if (res.ok) {
+          const data = await res.json();
+          setIsLoading(data && data.status === 'running');
+        }
+      } catch (e) {}
+    };
+
+    const interval = setInterval(() => {
+      fetchConfig();
+      fetchStatus();
+      if (activeTab === "archive") {
+        fetchArchive();
+      }
+    }, 5000); // Poll every 5 seconds
+
+    return () => clearInterval(interval);
+  }, [isAuthorized, activeTab]);
+
   useEffect(() => {
     setCurrentPage(1);
   }, [searchQuery, sortField, sortOrder]);
@@ -487,10 +512,12 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
           <nav className="p-2 md:p-3 flex flex-row md:flex-col gap-1.5 space-y-0 md:space-y-1.5 overflow-x-auto custom-scrollbar shrink-0 bg-white md:bg-transparent">
             <button 
               onClick={() => setActiveTab("archive_plus")}
-              className={`flex items-center gap-2 md:gap-2.5 px-3 py-2 md:px-3 text-xs md:text-[13px] font-bold transition-all whitespace-nowrap rounded-lg md:rounded-xl ${activeTab === 'archive_plus' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100' : 'text-slate-500 hover:bg-white hover:text-slate-800 border border-transparent hover:border-slate-200'}`}
+              className={`flex items-center justify-between gap-2 md:gap-2.5 px-3 py-2 md:px-3 text-xs md:text-[13px] font-bold transition-all whitespace-nowrap rounded-lg md:rounded-xl ${activeTab === 'archive_plus' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100' : 'text-slate-500 hover:bg-white hover:text-slate-800 border border-transparent hover:border-slate-200'}`}
             >
-              <PlusCircle className="w-3.5 h-3.5 shrink-0" />
-              <span>时空入库</span>
+              <div className="flex items-center gap-2">
+                <PlusCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>时空入库</span>
+              </div>
             </button>
             <button 
               onClick={() => setActiveTab("archive")}
@@ -731,7 +758,14 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                     allowAdminControls={true}
                     onClose={() => {}}
                     onRefreshArchive={fetchArchive}
-                    onSelectPerson={() => {}}
+                    onSelectPerson={(id, name) => {
+                      if (id > 0) {
+                        onPreviewPerson?.(id);
+                      } else if (name) {
+                        const p = people.find(person => person.name === name);
+                        if (p) onPreviewPerson?.(p.id);
+                      }
+                    }}
                     peopleNames={people.map(p => p.name)}
                   />
                 </div>

@@ -1236,8 +1236,8 @@ app.post("/cron", async (c) => {
     const initialState = {
         status: 'running', 
         target: targetName, 
-        logs: [], 
-        steps: [], 
+        logs: [{ timestamp: new Date().toLocaleTimeString(), msg: "系统周期性巡检：触发自动档案补完协议", type: "info" }], 
+        steps: [{ msg: "周期性检索启动中...", status: "pending", startTime: Date.now() }], 
         path: null, 
         error: null, 
         newArrivals: [],
