@@ -147,8 +147,6 @@ export async function runExplorationTask(
 
     addLog("正在读取后台模型配置与权限校验...", "info");
     console.log("[Explore Task] Reading config...");
-    addLog(`[SYSTEM] 正在验证时空模型权限 (Provider: ${provider || 'pending'})...`, "api");
-    
     const getConfigWithTimeout = async (key: string, def?: any) => {
         try {
             addLog(`[SQL] 正在读取系统配置项: ${key}`, "api-req");
@@ -166,6 +164,7 @@ export async function runExplorationTask(
     };
 
     const provider = await getConfigWithTimeout("active_model_provider", "gemini");
+    addLog(`[SYSTEM] 正在验证时空模型权限 (Provider: ${provider || 'pending'})...`, "api");
     const modelId =
       provider === "gemini"
         ? await getConfigWithTimeout("gemini_model_id")
