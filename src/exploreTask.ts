@@ -314,7 +314,11 @@ export async function runExplorationTask(
         if (Array.isArray(personData) && personData.length > 0) personData = personData[0];
         if (!personData.biography && personData.result) personData = personData.result;
     } catch (e) {
-        throw new Error(`AI 生成人物 ${finalTargetName} 的传记无法解析`);
+        throw new Error(`AI 生成人物 ${finalTargetName} 的传记数据格式有误`);
+    }
+
+    if (!personData || Object.keys(personData).length === 0 || (!personData.standardChineseName && !personData.biography)) {
+        throw new Error(`AI 返回了空的或无效的数据，可能触发了内容过滤或流意外中断。`);
     }
 
     if (!isAdmin) {

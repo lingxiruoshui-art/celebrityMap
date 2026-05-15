@@ -177,16 +177,18 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
       const reader = res.body.getReader();
       const decoder = new TextDecoder("utf-8");
       let fullContent = "";
-      
+      let buffer = "";
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || "";
         for (const line of lines) {
-          if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('data: ') && !trimmed.includes('[DONE]')) {
             try {
-              const data = JSON.parse(line.substring(6));
+              const data = JSON.parse(trimmed.substring(6));
               const delta = data.choices[0]?.delta?.content || "";
               fullContent += delta;
             } catch (e) {
@@ -195,9 +197,19 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
           }
         }
       }
+      if (buffer.trim().startsWith('data: ') && !buffer.includes('[DONE]')) {
+        try {
+          const data = JSON.parse(buffer.trim().substring(6));
+          fullContent += data.choices[0]?.delta?.content || "";
+        } catch(e) {}
+      }
       
       clearTimeout(timeoutId);
       cleanup();
+      
+      if (!fullContent) {
+        throw new Error("API 未返回任何有效内容，可能触发了安全拦截。");
+      }
       
       const duration = Date.now() - startTime;
       console.log(`Aliyun call took ${duration}ms`);
@@ -1368,11 +1380,10 @@ app.post("/cron", async (c) => {
     
     console.log(`[Cron] Started task for ${targetName}`);
 
-    if (c.executionCtx && typeof c.executionCtx.waitUntil === 'function') {
-        c.executionCtx.waitUntil(task);
-    } else {
-        // Fallback for non-CF environment (like local/AI Studio dev)
-        task.catch(console.error);
+    try {
+        await task;
+    } catch (e) {
+        console.error("[Cron Task Error]", e);
     }
     
     return c.json({ 

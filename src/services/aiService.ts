@@ -13,18 +13,21 @@ export function getGemini(apiKeyOverride?: string): GoogleGenAI {
 
 export const ARCHIVE_PROMPT = (name: string, categories: string[], sampleNames?: string, bioSnippet?: string) => `
 你是一位研究历史人物的传记专家。请为人物 "${name}" 撰写一份既有历史厚度又风趣幽默的传记。
-${bioSnippet ? `参考背景资料：${bioSnippet}` : ""}
+${bioSnippet ? `参考背景资料（身份线索）：${bioSnippet}\n\n注意：该人物的身份已通过背景资料确认，无须再次验证或标准化姓名。` : ""}
 
 要求：
 ${bioSnippet ? "" : `- accepted：仅限真实已故历史人物为 true，其余(虚构、在世、非人类实体等)一律为 false。
-- reason：极简描述其历史身份(限10字内)。`}
-- standardChineseName：该人物最权威、最广泛公认的学术标准中文全名（外国人名请使用标准译名，中国古人请使用姓名而非号或字）。
+- reason：极简描述其历史身份(限10字内)。
+- standardChineseName：该人物最权威、最广泛公认的学术标准中文全名（外国人名请使用标准译名，中国古人请使用姓名而非号或字）。`}
+- keyword：该人物最经典、最具代表性的一句人生格言短语
+- lifespan：如公元前571年-公元前471年或1879年-1955年
+- birthplace：出生地
 
 请严格返回以下格式的 JSON 对象：
 {
 ${bioSnippet ? "" : `  "accepted": true/false,
-  "reason": "历史身份简述",`}
-  "standardChineseName": "标准中文全名",
+  "reason": "历史身份简述",
+  "standardChineseName": "标准中文全名",`}
   "keyword": "该人物最经典、最具代表性的一句人生格言",
   "lifespan": "如公元前571年-公元前471年或1879年-1955年",
   "birthplace": "出生地",
@@ -50,8 +53,8 @@ export const ARCHIVE_SCHEMA = (hasBio: boolean): Schema => ({
     ...(!hasBio ? {
       accepted: { type: Type.BOOLEAN },
       reason: { type: Type.STRING },
+      standardChineseName: { type: Type.STRING },
     } : {}),
-    standardChineseName: { type: Type.STRING },
     keyword: { type: Type.STRING },
     lifespan: { type: Type.STRING },
     birthplace: { type: Type.STRING },
