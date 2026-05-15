@@ -164,6 +164,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   const publicSearchAbortControllerRef = useRef<AbortController | null>(null);
   const lastStreamPulseRef = useRef<number>(Date.now());
   const lastActivityRef = useRef<number>(Date.now());
+  const activeSearchTaskIdRef = useRef<number | null>(null);
   const [lastActivityTime, setLastActivityTime] = useState<number | null>(null);
   const [pulseActive, setPulseActive] = useState(true);
 
@@ -242,6 +243,13 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
            }
 
            if (data) {
+               if (activeSearchTaskIdRef.current && data.taskId && data.taskId !== activeSearchTaskIdRef.current) {
+                   if (isActive) timer = setTimeout(checkStatus, 3000);
+                   return;
+               }
+               if (!activeSearchTaskIdRef.current && data.taskId) {
+                   activeSearchTaskIdRef.current = data.taskId;
+               }
                if (data.lastHeartbeat) {
                    lastActivityRef.current = data.lastHeartbeat;
                    setLastActivityTime(data.lastHeartbeat);
@@ -422,6 +430,9 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
       setSearchSteps([{ msg: "正在启动时空入库协议...", status: "pending", startTime: Date.now() }]);
       setDetailedLogs([]);
       
+      const startTaskId = Date.now();
+      activeSearchTaskIdRef.current = startTaskId;
+      
       try {
         const headers: any = { "Content-Type": "application/json" };
         if (isAdmin) headers["x-admin-password"] = localStorage.getItem("admin_password") || "";
@@ -431,7 +442,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
         const res = await fetch("/api/explore/start", {
           method: "POST",
           headers,
-          body: JSON.stringify({ target: finalTargetForAI, isAdmin: true })
+          body: JSON.stringify({ target: finalTargetForAI, isAdmin: true, clientTaskId: startTaskId })
         });
         
         pollStatusRef.current = true;
