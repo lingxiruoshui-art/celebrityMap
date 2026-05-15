@@ -147,16 +147,20 @@ export async function runExplorationTask(
 
     addLog("正在读取后台模型配置与权限校验...", "info");
     console.log("[Explore Task] Reading config...");
-    addLog("正在验证时空模型权限...", "info");
+    addLog(`[SYSTEM] 正在验证时空模型权限 (Provider: ${provider || 'pending'})...`, "api");
     
     const getConfigWithTimeout = async (key: string, def?: any) => {
         try {
-            return await Promise.race([
+            addLog(`[SQL] 正在读取系统配置项: ${key}`, "api-req");
+            const val = await Promise.race([
                 getConfig(db, key, def),
                 new Promise<any>((_, reject) => setTimeout(() => reject(new Error(`读取配置 [${key}] 超时`)), 10000))
             ]);
+            addLog(`[SQL] 配置项 [${key}] 读取成功`, "api-res");
+            return val;
         } catch (e: any) {
             console.error(`[Explore Task] Config fetch failed for ${key}:`, e);
+            addLog(`[SQL] 配置项 [${key}] 读取超时或失败，采用默认值`, "warn");
             return def;
         }
     };
@@ -174,9 +178,10 @@ export async function runExplorationTask(
 
     // Prepare samples for diversity
     console.log("[Explore Task] Fetching samples...");
-    addLog("正在通过 SQL 推算历史人物多样性样本...", "info");
+    addLog("[SQL] 正在执行历史人物多样性采样 (LIMIT 20)...", "api-req");
     const samplePeople = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 20").all() as any[];
     console.log(`[Explore Task] Samples found: ${samplePeople.length}`);
+    addLog(`[SQL] 采样完成，共获取 ${samplePeople.length} 条先验特征`, "api-res");
     const sampleNames = samplePeople.map((p: any) => p.name).join("、");
 
     let finalTargetName = target;
@@ -209,6 +214,7 @@ export async function runExplorationTask(
     updateLastStep("success", `锁定目标: ${finalTargetName}`);
     addStep(`探索检索：正在寻找 ${finalTargetName} 的全网数字足迹...`);
     addLog(`准备跨维检索：正在初始化 Wikidata 引擎以提取 ${finalTargetName} 的特征...`, "info", { query: finalTargetName });
+    addLog(`[WIKI] 正在构建 SPARQL/Action API 请求: ${finalTargetName}`, "api-req");
 
     const metaPromise = fetchMetadataFromWiki(finalTargetName);
     // Wikidata timeout set to 45s to be safe
@@ -217,7 +223,7 @@ export async function runExplorationTask(
         // Explicitly pulse and log while waiting for Wiki
         const wikiPulse = setInterval(() => {
             const waiting = Math.floor((Date.now() - (state.steps[state.steps.length - 1]?.startTime || Date.now())) / 1000);
-            addLog(`Wikidata 深度检索中... (已等待 ${waiting}s)`, "heartbeat", undefined, true);
+            addLog(`[WIKI] Wikidata 深度检索中... 已持续 ${waiting}s`, "heartbeat", undefined, true);
             saveState("Wiki 检索中...");
         }, 8000);
 
@@ -227,6 +233,7 @@ export async function runExplorationTask(
         ]);
         
         clearInterval(wikiPulse);
+        addLog(`[WIKI] 响应接收成功 (Metadata Found: ${!!wikiMeta})`, "api-res");
     } catch (err: any) {
         addLog(`Wiki唤醒异常: ${err.message}`, "error", { target: finalTargetName });
         throw new Error(`无法从全网数据库识别 ${finalTargetName}: ${err.message}`);
@@ -245,7 +252,10 @@ export async function runExplorationTask(
 
     updateLastStep("success", `特征提取成功: ${finalTargetName}`);
     if (meta.description) {
-        addLog(`Wiki识别到身份线索: ${meta.description.substring(0, 100)}${meta.description.length > 100 ? '...' : ''}`, "info");
+        addLog(`[WIKI] 成功匹配标准化身份线索: ${meta.description.substring(0, 100)}${meta.description.length > 100 ? '...' : ''}`, "info");
+    }
+    if (meta.imageUrl) {
+        addLog(`[WIKI] 已定位历史数字肖像映射: ${meta.imageUrl.substring(0, 50)}...`, "info");
     }
 
     addStep(`深度分析：AI 正在构建 ${finalTargetName} 的核心时空档案...`);
@@ -361,7 +371,8 @@ export async function runExplorationTask(
         portraitUrl
       );
     
-    addLog(`数据库归档任务已提交`, "info", { 
+    addLog(`[SQL] 写入档案至 "people" 集合...`, "api-req");
+    addLog(`[SQL] 归档任务执行成功`, "api-res", { 
         name: finalName, 
         category: personData.category,
         bio_snippet: (personData.biography || "").substring(0, 100) + "..."
