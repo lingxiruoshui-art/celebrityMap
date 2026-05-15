@@ -54,17 +54,15 @@ export async function runExplorationTask(
             currentRaw = await getConfig(db, "explore_state", "null");
         }
         
-        if (currentRaw === "null") {
-            throw new Error("AbortError");
-        }
-
-        const current = JSON.parse(currentRaw);
-        if (current.status === "error" && current.error === "探索已中止") {
-            throw new Error("AbortError");
-        }
-        
-        if (current.status === 'running' && current.target !== state.target) {
-            throw new Error("AbortError");
+        if (currentRaw !== "null") {
+            const current = JSON.parse(currentRaw);
+            if (current.status === "error" && current.error === "探索已中止") {
+                throw new Error("AbortError");
+            }
+            
+            if (current.status === 'running' && current.target !== state.target) {
+                throw new Error("AbortError");
+            }
         }
 
         const stateStr = JSON.stringify(state);
