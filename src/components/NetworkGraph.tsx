@@ -62,7 +62,7 @@ export default function NetworkGraph({
           person2: selectedRelationship.target.name
         })
       });
-      const data = await res.json();
+      const data = await res.json() as any;
       
       if (!res.ok) {
         let errorMsg = data.error || "请求失败";

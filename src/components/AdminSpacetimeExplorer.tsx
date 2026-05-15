@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef } from "react";
 import { X, Search, ChevronRight, User, Loader2, Sparkles, AlertCircle, Zap, ChevronDown, ChevronUp, StopCircle, RefreshCw, Save, CheckCircle } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { getGemini, ARCHIVE_PROMPT, ARCHIVE_SCHEMA, PATH_PROMPT, PATH_SCHEMA, VALIDATION_PROMPT, VALIDATION_SCHEMA } from "../services/aiService";
+import { getGemini, ARCHIVE_PROMPT, ARCHIVE_SCHEMA } from "../services/aiService";
 
 export interface SpacetimeExplorerHandle {
   start: (overrideSource?: string, overrideTarget?: string) => void;
@@ -229,7 +229,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                return;
            }
 
-           const data = await res.json();
+           const data = await res.json() as any;
            
            if (!isActive) return;
            setHasInitialCheckDone(true);
@@ -360,12 +360,18 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   const [isPickingRandom, setIsPickingRandom] = useState(false);
 
   const handlePickRandomPair = async () => {
+    if (isLoading || pollStatusRef.current) return;
     setIsPickingRandom(true);
     setError(null);
     try {
-      if (allowAdminControls) {
-        const res = await fetch("/api/archiver/admin-pick-target", { method: "POST" });
-        const data = await res.json();
+      if (allowAdminControls || isAdmin) {
+        const headers: any = { "Content-Type": "application/json" };
+        if (isAdmin) headers["x-admin-password"] = localStorage.getItem("admin_password") || "";
+        const res = await fetch("/api/archiver/admin-pick-target", { 
+          method: "POST",
+          headers
+        });
+        const data = await res.json() as any;
         if (data.isEmpty) {
           setSource("");
           setTarget("");
@@ -379,26 +385,9 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
           setSource(data.targetName || "");
           setTarget("");
         }
-      } else if (isAdmin) {
-        const res = await fetch("/api/archiver/admin-pick-pair", { method: "POST" });
-        const data = await res.json();
-        
-        if (data.isEmpty) {
-          setSource("");
-          setTarget("");
-          setError(
-            <div className="flex flex-col gap-1 items-center">
-              <p className="font-bold">✨ 所有预置及关联人物均已录入</p>
-              <p className="text-[10px] opacity-70">系统已穷尽所有已知线索。请手动填入新的人物开启探索。</p>
-            </div>
-          );
-        } else {
-          setSource(data.sourceName || "");
-          setTarget(data.targetName || "");
-        }
       } else {
         const res = await fetch("/api/archiver/random-pair");
-        const data = await res.json();
+        const data = await res.json() as any;
         if (data.sourceName && data.targetName) {
           setSource(data.sourceName);
           setTarget(data.targetName);
@@ -415,8 +404,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   const handleSearch = async (overrideSource?: string, overrideTarget?: string) => {
     const finalSource = overrideSource || source;
     
-    if (allowAdminControls) {
-      if (!finalSource.trim()) return;
+    if (isAdmin) {
       setIsCollapsed(false);
       setIsLoading(true);
       setError(null);
@@ -429,16 +417,16 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
         const headers: any = { "Content-Type": "application/json" };
         if (isAdmin) headers["x-admin-password"] = localStorage.getItem("admin_password") || "";
         
+        const finalTargetForAI = overrideTarget || target || overrideSource || source;
+
         const res = await fetch("/api/explore/start", {
           method: "POST",
           headers,
-          body: JSON.stringify({ target: finalSource, isAdmin: true })
+          body: JSON.stringify({ target: finalTargetForAI, isAdmin: true })
         });
         
-        // Polling via `/explore/status` will handle updating the UI.
         pollStatusRef.current = true;
 
-        // Consume the stream in the background to keep the Cloudflare worker connection alive
         if (res.body) {
            const reader = res.body.getReader();
            (async () => {
@@ -477,137 +465,90 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     setNewArrivals([]);
     setSearchSteps([]);
     setDetailedLogs([]);
-    setError(null);
     setSourceOptions([]);
     setTargetOptions([]);
 
-    if (!isAdmin) {
-      setSearchSteps([{ msg: "正在检索时空档案库...", status: "pending", startTime: Date.now() }]);
-      
-      if (publicSearchAbortControllerRef.current) {
-          publicSearchAbortControllerRef.current.abort();
-      }
-      const abortController = new AbortController();
-      publicSearchAbortControllerRef.current = abortController;
-
-      try {
-        const res = await fetch("/api/public/explore", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal: abortController.signal,
-          body: JSON.stringify({ source: finalSource, target: finalTarget })
-        });
-        
-        const contentType = res.headers.get("content-type");
-        if (!res.ok || !contentType || !contentType.includes("application/json")) {
-            const text = await res.text();
-            console.error("Public explore error:", text);
-            throw new Error(`搜索失败: ${res.status}`);
-        }
-
-        const data = await res.json();
-        
-        if (!res.ok) {
-          if (data.error && (data.error.includes("探索正在进行中") || data.error.includes("重置状态"))) {
-            setError(
-              <div className="flex flex-col gap-2">
-                <p>{data.error || "探索正在进行中"}</p>
-                <button 
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    clearResults(true);
-                  }}
-                  className="mt-2 text-[11px] font-bold py-1.5 px-3 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors w-fit border border-indigo-200"
-                >
-                  立即强制重置状态
-                </button>
-              </div>
-            );
-            setSearchSteps([{ msg: "时空探索协议正在执行中", status: "error" }]);
-            setIsLoading(false);
-            return;
-          }
-           throw new Error(data.error || "搜索失败");
-        }
-
-        if (data.needsSelection) {
-           setError("发现多个匹配项，请重新选择准确的人物名");
-           if (data.sourceOptions && data.sourceOptions.length > 0) setSourceOptions(data.sourceOptions);
-           if (data.targetOptions && data.targetOptions.length > 0) setTargetOptions(data.targetOptions);
-           setSearchSteps([{ msg: "需要进一步确认人物身份", status: "error" }]);
-           setIsLoading(false);
-           return;
-        }
-
-        if (data.status === 'success') {
-           setSearchSteps([
-              { msg: "已从现有网络中找到时空连通路径", status: "success" }
-           ]);
-           setSource(data.sourceName);
-           setTarget(data.targetName);
-           setPath(data.path);
-           setShowResults(true);
-           hasLoadedResultRef.current = true;
-           if (onPathFound) onPathFound(data.path);
-        } else {
-           throw new Error(data.error || "搜索失败");
-        }
-      } catch (err: any) {
-         if (err.name === 'AbortError') {
-             // Handle gracefully
-         } else {
-             setError(err.message);
-             setSearchSteps([{ msg: err.message, status: "error" }]);
-         }
-      } finally {
-         pollStatusRef.current = false;
-         hasAutoExpandedRunningRef.current = false;
-         setIsLoading(false);
-      }
-      return;
-    }
-
-    setSearchSteps([{ msg: "正在初始化跨时空检索协议...", status: "pending", startTime: Date.now() }]);
-    pollStatusRef.current = true;
+    setSearchSteps([{ msg: "正在检索时空档案库...", status: "pending", startTime: Date.now() }]);
     
+    if (publicSearchAbortControllerRef.current) {
+        publicSearchAbortControllerRef.current.abort();
+    }
+    const abortController = new AbortController();
+    publicSearchAbortControllerRef.current = abortController;
+
     try {
-      const res = await fetch("/api/explore/start", {
+      const res = await fetch("/api/public/explore", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source: finalSource, target: finalTarget, isAdmin })
+        signal: abortController.signal,
+        body: JSON.stringify({ source: finalSource, target: finalTarget })
       });
       
       const contentType = res.headers.get("content-type");
-      if (!res.ok || !contentType || !(contentType.includes("application/json") || contentType.includes("text/event-stream"))) {
+      if (!res.ok || !contentType || !contentType.includes("application/json")) {
           const text = await res.text();
-          console.error("Start explore error:", text);
-          throw new Error(`无法启动探索: ${res.status}`);
+          console.error("Public explore error:", text);
+          throw new Error(`搜索失败: ${res.status}`);
       }
+
+      const data = await res.json() as any;
       
-      if (contentType.includes("text/event-stream")) {
-        // Read stream in background to keep it alive
-        const reader = res.body?.getReader();
-        if (reader) {
-          (async () => {
-             try {
-               while (true) {
-                 const { done } = await reader.read();
-                 if (done) break;
-                 lastStreamPulseRef.current = Date.now();
-                 lastActivityRef.current = Date.now();
-                 setPulseActive(true);
-               }
-             } catch (e) {}
-          })();
+      if (!res.ok) {
+        if (data.error && (data.error.includes("探索正在进行中") || data.error.includes("重置状态"))) {
+          setError(
+            <div className="flex flex-col gap-2">
+              <p>{data.error || "探索正在进行中"}</p>
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  clearResults(true);
+                }}
+                className="mt-2 text-[11px] font-bold py-1.5 px-3 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors w-fit border border-indigo-200"
+              >
+                立即强制重置状态
+              </button>
+            </div>
+          );
+          setSearchSteps([{ msg: "时空探索协议正在执行中", status: "error" }]);
+          setIsLoading(false);
+          return;
         }
+         throw new Error(data.error || "搜索失败");
+      }
+
+      if (data.needsSelection) {
+         setError("发现多个匹配项，请重新选择准确的人物名");
+         if (data.sourceOptions && data.sourceOptions.length > 0) setSourceOptions(data.sourceOptions);
+         if (data.targetOptions && data.targetOptions.length > 0) setTargetOptions(data.targetOptions);
+         setSearchSteps([{ msg: "需要进一步确认人物身份", status: "error" }]);
+         setIsLoading(false);
+         return;
+      }
+
+      if (data.status === 'success') {
+         setSearchSteps([
+            { msg: "已从现有网络中找到时空连通路径", status: "success" }
+         ]);
+         setSource(data.sourceName);
+         setTarget(data.targetName);
+         setPath(data.path);
+         setShowResults(true);
+         hasLoadedResultRef.current = true;
+         if (onPathFound) onPathFound(data.path);
       } else {
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error);
+         throw new Error(data.error || "搜索失败");
       }
     } catch (err: any) {
-      setError(err.message || "探索过程中发生未知错误。");
-      setIsLoading(false);
-      pollStatusRef.current = false;
+       if (err.name === 'AbortError') {
+           // Handle gracefully
+       } else {
+           setError(err.message);
+           setSearchSteps([{ msg: err.message, status: "error" }]);
+       }
+    } finally {
+       pollStatusRef.current = false;
+       hasAutoExpandedRunningRef.current = false;
+       setIsLoading(false);
     }
   };
 
@@ -615,7 +556,12 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
      if (autoStart && initialSource && initialTarget) {
        handleSearch();
      } else if (isAdmin && !initialSource && !initialTarget) {
-       handlePickRandomPair();
+       // We wait a tiny bit to give checkStatus a chance to detect an existing cron task
+       setTimeout(() => {
+         if (!pollStatusRef.current && !isLoading) {
+           handlePickRandomPair();
+         }
+       }, 500);
      }
   }, []); // Only on mount
 

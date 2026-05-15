@@ -108,7 +108,7 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
       }
       const contentType = res.headers.get("content-type");
       if (contentType && contentType.includes("application/json")) {
-        const data = await res.json();
+        const data = await res.json() as any;
         setPeople(data.people);
       } else {
         console.error("Fetch archive returned non-JSON", await res.text());

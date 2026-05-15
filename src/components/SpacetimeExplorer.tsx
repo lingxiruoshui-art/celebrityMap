@@ -100,7 +100,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
         signal: abortController.signal,
         body: JSON.stringify({ source: finalSource, target: finalTarget })
       });
-      const data = await res.json();
+      const data = await res.json() as any;
       
       if (!res.ok) {
          throw new Error(data.error || "搜索失败");
@@ -134,7 +134,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     try {
       setIsLoading(true);
       const res = await fetch("/api/archiver/random-pair");
-      const data = await res.json();
+      const data = await res.json() as any;
       if (data.sourceName && data.targetName) {
         setSource(data.sourceName);
         setTarget(data.targetName);

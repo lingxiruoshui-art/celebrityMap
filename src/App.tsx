@@ -86,7 +86,7 @@ export default function App() {
           throw new Error("服务器返回了非 JSON 格式的响应，可能是由于路由配置错误或服务器异常。");
       }
 
-      const json = await res.json();
+      const json = await res.json() as any;
       setData(json);
       if (json.people.length > 0 && selectedPersonId === null) {
         setSelectedPersonId(json.people[json.people.length - 1].id);

@@ -3,7 +3,7 @@ import { streamSSE } from "hono/streaming";
 import { GoogleGenAI } from "@google/genai";
 import { D1DatabaseAdapter, DatabaseAdapter } from "./db.ts";
 import { CATEGORIES, FIGURE_POOL } from "./figuresPool.ts";
-import { ARCHIVE_PROMPT, ARCHIVE_SCHEMA, PATH_PROMPT, PATH_SCHEMA, VALIDATION_PROMPT, VALIDATION_SCHEMA } from "./services/aiService.ts";
+import { ARCHIVE_PROMPT, ARCHIVE_SCHEMA } from "./services/aiService.ts";
 import { runExplorationTask } from "./exploreTask.ts";
 
 const root = new Hono<{ 
@@ -651,54 +651,7 @@ app.post("/pathfind", async (c) => {
 });
 
 app.post("/archiver/chat", async (c) => {
-  const db = await getDb(c);
-  try {
-    const { person1, person2 } = await c.req.json();
-    
-    if (!person1 || !person2) {
-      return c.json({ error: "Missing person1 or person2" }, 400);
-    }
-
-    const prompt = `请发挥你的想象力，设计一段2个回合共4句话的极简对话。对话双方是历史/现实人物：【${person1}】和【${person2}】。
-要求：每一句长度控制在1~20个字（极简精炼），确保表达出人物神韵。
-人物应保留其经典气质与语言特征，形象鲜明可辨。对白风格有趣且带有跨时空碰撞感，可以是幽默、哲思、讽刺或感人。
-
-请严格返回以下JSON格式：
-{
-  "messages": [
-    { "speaker": "${person1}", "text": "第1句..." },
-    { "speaker": "${person2}", "text": "第2句..." },
-    { "speaker": "${person1}", "text": "第3句..." },
-    { "speaker": "${person2}", "text": "第4句..." }
-  ]
-}`;
-
-    const schema = {
-      type: "object",
-      properties: {
-        messages: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              speaker: { type: "string" },
-              text: { type: "string" }
-            },
-            required: ["speaker", "text"]
-          }
-        }
-      },
-      required: ["messages"]
-    };
-
-    const responseText = await callAI(c, db, prompt, "json", schema);
-    const parsed = JSON.parse(responseText);
-    
-    return c.json({ messages: parsed.messages || [] });
-  } catch (error: any) {
-    console.error("Chat generation failed:", error);
-    return c.json({ error: "对话生成失败", details: error.message || String(error) }, 500);
-  }
+  return c.json({ error: "此功能已下线" }, 410);
 });
 
 app.get("/archiver/random-pair", async (c) => {
@@ -762,55 +715,12 @@ app.post("/archiver/admin-pick-target", async (c) => {
   return c.json(await pickTarget(db));
 });
 
-// Backward compatibility
 app.post("/archiver/pick-target", async (c) => {
-  const db = await getDb(c);
-  const existing = (await db.prepare("SELECT name FROM people").all() as any[]).map(p => p.name);
-  if (existing.length === 0) return c.json({ error: "No people in database to start from" });
-  const existingSet = new Set(existing);
-
-  const sourceName = existing[Math.floor(Math.random() * existing.length)];
-  let targetName = "";
-
-  const unarchivedInPool: string[] = [];
-  for (const cat of CATEGORIES) {
-      FIGURE_POOL[cat]?.forEach(n => { if (!existingSet.has(n)) unarchivedInPool.push(n); });
-  }
-
-  if (unarchivedInPool.length > 0) {
-      targetName = unarchivedInPool[Math.floor(Math.random() * unarchivedInPool.length)];
-  } else {
-      const wanted = new Set<string>();
-      const peopleRels = await db.prepare("SELECT raw_relationships FROM people").all() as any[];
-      peopleRels.forEach(p => {
-          try {
-              JSON.parse(p.raw_relationships || "[]").forEach((r: any) => { if (r.personName && !existingSet.has(r.personName)) wanted.add(r.personName); });
-          } catch(e) {}
-      });
-
-      if (wanted.size > 0) {
-          const wantedArray = Array.from(wanted);
-          targetName = wantedArray[Math.floor(Math.random() * wantedArray.length)];
-      }
-  }
-
-  return c.json({ sourceName, targetName });
+  return c.json({ error: "此功能已下线" }, 410);
 });
 
 app.post("/archiver/generate-target", async (c) => {
-  const db = await getDb(c);
-  const { sourceName } = await c.req.json();
-  const samplePeople = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 20").all() as any[];
-  const sampleNames = samplePeople.map(p => p.name).join("、");
-  
-  try {
-      const prompt = `请从世界历史中选取一位极其著名、具有重大全球影响力且通常被视为正面的真实历史人物。要求不包含在已知列表中：[${sampleNames} ...]，且与 "${sourceName || ''}" 有潜在的历史交集或对比性。`;
-      const resultText = await callAI(c, db, prompt, "text");
-      const targetName = (resultText || "").trim().replace(/[「」""'']/g, "");
-      return c.json({ targetName });
-  } catch (e: any) {
-      return c.json({ error: e.message }, 500);
-  }
+  return c.json({ error: "此功能已下线" }, 410);
 });
 
 app.post("/archive-figure", async (c) => {
@@ -1123,25 +1033,7 @@ app.post("/public/explore", async (c) => {
 });
 
 app.post("/explore/ai-proxy", async (c) => {
-  const db = await getDb(c);
-  const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
-  if (!isAdmin) return c.json({ error: "Unauthorized" }, 401);
-  const { prompt, responseFormat, schema } = await c.req.json();
-  try {
-     return streamSSE(c, async (stream) => {
-       const originalPulse = async (msg: string) => {
-         try { await stream.writeSSE({ data: JSON.stringify({ type: msg === 'heartbeat' ? 'ping' : 'msg', text: msg }) }); } catch(e){}
-       };
-       try {
-           const result = await callAI(c, db, prompt, responseFormat, schema, () => originalPulse('heartbeat'));
-           await stream.writeSSE({ data: JSON.stringify({ type: 'done', result }) });
-       } catch (err: any) {
-           await stream.writeSSE({ data: JSON.stringify({ type: 'error', error: err.message }) });
-       }
-     });
-  } catch (err: any) {
-     return c.json({ error: err.message }, 500);
-  }
+  return c.json({ error: "此功能已下线" }, 410);
 });
 
 app.post("/explore/start", async (c) => {
