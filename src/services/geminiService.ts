@@ -64,7 +64,6 @@ export const ARCHIVE_SCHEMA: Schema = {
 export const PATH_PROMPT = (source: string, target: string, sampleNames?: string) => `找出 "${source}" 和 "${target}" 之间的最短历史&时空联系路径。
 要求：
 - 最短路径：中间桥接人物0-5个。若两人有直接历史交集，则必须直接相连(0个中间人)。
-- 优先度：优先通过世界知名历史人物(${sampleNames || "无"})联系。
 - 命名规范：使用公认的标准中文全名。
 - relationshipToPrevious：20字以内极简概括两人真实历史交集。
 
@@ -92,7 +91,6 @@ export const VALIDATION_PROMPT = (names: string[], sampleNames?: string) => `辨
 请严格返回 JSON 对象，包含 results 数组，对应每个输入的人物。
 注意：
 - accepted：仅限真实已故历史人物为 true，其余(虚构、在世、非人类实体等)一律为 false。
-- normalizedName：该人物公认的标准中文全名。参考现有风格：${sampleNames || "无"}。
 - reason：极简描述其历史身份(限10字内)。
 
 必须直接返回合法的 JSON，不要有多余的提示说明，要求极速响应。`;
