@@ -193,7 +193,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   }, [isLoading]);
 
   useEffect(() => {
-    if (!isAdmin || allowAdminControls) {
+    if (!isAdmin) {
       setHasInitialCheckDone(true);
       return;
     }
@@ -244,9 +244,12 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                    lastActivityRef.current = data.lastHeartbeat;
                }
                if (data.status === 'running') {
-                   setSource(data.source);
+                   if (allowAdminControls) {
+                       setSource(data.target || "");
+                   } else {
+                       setTarget(data.target || "");
+                   }
                    lastStreamPulseRef.current = Date.now();
-                   setTarget(data.target);
                    setIsLoading(true);
                    setError(null);
                    setShowResults(false);
@@ -426,72 +429,26 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
         const headers: any = { "Content-Type": "application/json" };
         if (isAdmin) headers["x-admin-password"] = localStorage.getItem("admin_password") || "";
         
-        const res = await fetch("/api/archive-figure", {
+        const res = await fetch("/api/explore/start", {
           method: "POST",
           headers,
-          body: JSON.stringify({ personName: finalSource, stream: true })
+          body: JSON.stringify({ target: finalSource, isAdmin: true })
         });
         
-        if (!res.body) throw new Error("No response body");
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
+        // Polling via `/explore/status` will handle updating the UI.
+        pollStatusRef.current = true;
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          
-          const lines = buffer.split('\n\n');
-          buffer = lines.pop() || '';
-          
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-               lastActivityRef.current = Date.now();
+        // Consume the stream in the background to keep the Cloudflare worker connection alive
+        if (res.body) {
+           const reader = res.body.getReader();
+           (async () => {
                try {
-                const data = JSON.parse(line.slice(6));
-                if (data.type === 'error') {
-                   throw new Error(data.msg || data.error);
-                } else if (data.type === 'info' || data.type === 'ai-req' || data.type === 'ai-res') {
-                   setDetailedLogs(prev => [...prev, {
-                     timestamp: new Date().toLocaleTimeString(),
-                     msg: data.msg,
-                     data: data.data,
-                     type: data.type as any
-                   }]);
-                   if (data.type === 'info') {
-                     setSearchSteps(prev => {
-                       const next = [...prev];
-                       const last = next[next.length - 1];
-                       if (last && last.status === "pending") {
-                         last.status = "success";
-                         next.push({ msg: data.msg, status: "pending", startTime: Date.now() });
-                       }
-                       return next;
-                     });
+                   while (true) {
+                       const {done} = await reader.read();
+                       if (done) break;
                    }
-                } else if (data.type === 'result') {
-                   const finalMsg = data.msg || (allowAdminControls ? "入库协议执行成功" : "探索成功");
-                   setDetailedLogs(prev => [...prev, {
-                     timestamp: new Date().toLocaleTimeString(),
-                     msg: finalMsg,
-                     type: 'info'
-                   }]);
-                   setSearchSteps(prev => {
-                     const next = [...prev];
-                     const last = next[next.length - 1];
-                     if (last && last.status === "pending") last.status = "success";
-                     next.push({ msg: finalMsg, status: "success", startTime: Date.now() });
-                     return next;
-                   });
-                   setIsLoading(false);
-                   if (onRefreshArchive) onRefreshArchive();
-                } else if (data.type === 'usage-update') {
-                   // handled elsewhere
-                }
-              } catch(e) {}
-            }
-          }
+               } catch(e) {}
+           })();
         }
       } catch (err: any) {
         setError(err.message || "探索过程中发生未知错误。");

@@ -629,7 +629,7 @@ export default function App() {
         </div>
       </footer>
 
-      {isAdminOpen && (
+      <div className={isAdminOpen ? 'block absolute inset-0 z-[100] bg-white h-full overflow-hidden' : 'hidden'}>
         <AdminPanel
           onClose={() => {
             setIsAdminOpen(false);
@@ -637,7 +637,7 @@ export default function App() {
           }}
           onAuthorized={() => setIsAuthorized(true)}
         />
-      )}
+      </div>
 
       {/* Image Zoom Overlay */}
       {zoomedImage && (

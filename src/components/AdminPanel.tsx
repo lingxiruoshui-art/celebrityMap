@@ -557,8 +557,7 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
           </div>
 
           <div className={`flex-1 ${activeTab === 'archive_plus' ? 'overflow-hidden flex flex-col p-4 sm:p-6 pb-2 sm:pb-2 pt-2 sm:pt-4' : 'overflow-y-auto p-5'} bg-slate-50/30`}>
-          {activeTab === "archive" && (
-            <div className="space-y-6 animate-in fade-in duration-500 pb-8">
+          <div className={activeTab === "archive" ? "space-y-6 animate-in fade-in duration-500 pb-8" : "hidden"}>
               
               <div className="flex justify-end pr-2">
                 <div className="relative w-full max-w-sm group">
@@ -706,10 +705,8 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
                 </div>
               )}
             </div>
-          )}
 
-          {activeTab === "archive_plus" && (
-            <div className="h-full flex flex-col animate-in fade-in duration-500 overflow-hidden pb-8">
+          <div className={activeTab === "archive_plus" ? "h-full flex flex-col animate-in fade-in duration-500 overflow-hidden pb-8" : "hidden"}>
               <div className="flex-1 flex flex-col bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden mt-1">
                 <div className="flex-1 min-h-0 bg-white rounded-2xl overflow-hidden">
                   <AdminSpacetimeExplorer 
@@ -730,10 +727,8 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
                 </div>
               </div>
             </div>
-          )}
 
-          {activeTab === "config" && (
-            <div className="max-w-5xl mx-auto space-y-4 animate-in fade-in duration-500 pb-8 uppercase tracking-tight">
+              <div className={activeTab === "config" ? "max-w-5xl mx-auto space-y-4 animate-in fade-in duration-500 pb-8 uppercase tracking-tight" : "hidden"}>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* Google Gemini Card */}
                 <div className={`bg-white p-4 rounded-2xl border-2 transition-all shadow-sm flex flex-col h-full ${config.active_model_provider === 'gemini' ? 'border-indigo-500 ring-4 ring-indigo-50/50' : 'border-slate-100 hover:border-slate-200'}`}>
@@ -846,7 +841,7 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
                 </div>
               </div>
             </div>
-          )}
+          </div>
         </div>
       </div>
       
@@ -860,7 +855,6 @@ export default function AdminPanel({ onClose, onAuthorized }: AdminPanelProps) {
         isLoading={isLoading}
       />
     </div>
-  </div>
   );
 }
 

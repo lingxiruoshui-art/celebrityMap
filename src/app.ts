@@ -142,7 +142,7 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
 
     const startTime = Date.now();
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 120000); // 120s timeout
+    const timeoutId = setTimeout(() => controller.abort(), 300000); // 300s timeout
 
     try {
       const res = await fetch("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", {
@@ -196,7 +196,7 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
     } catch (err: any) {
       clearTimeout(timeoutId);
       cleanup();
-      if (err.name === 'AbortError') throw new Error("AI 调用超时 (120s)");
+      if (err.name === 'AbortError') throw new Error("AI 调用超时 (300s)");
       throw err;
     }
   } else {
@@ -219,7 +219,7 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
 
       let timeoutId: any;
       const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error("Timeout")), 120000);
+        timeoutId = setTimeout(() => reject(new Error("Timeout")), 300000);
       });
 
       const result = await Promise.race([generatePromise, timeoutPromise]) as any;
@@ -709,7 +709,7 @@ app.get("/archiver/random-pair", async (c) => {
   return c.json({ sourceName: people[0].name, targetName: people[1].name });
 });
 
-async function pickPair(db: DatabaseAdapter) {
+async function pickTarget(db: DatabaseAdapter) {
   const people = await db.prepare("SELECT name, raw_relationships FROM people").all() as any[];
   const archivedNames = people.map(p => p.name);
   const archivedSet = new Set(archivedNames);
@@ -725,10 +725,10 @@ async function pickPair(db: DatabaseAdapter) {
   }
   const uniquePoolUnarchived = Array.from(new Set(poolUnarchived));
 
-  // Priority 1: 2 from pool
-  if (uniquePoolUnarchived.length >= 2) {
-      const picked = shuffle([...uniquePoolUnarchived]).slice(0, 2);
-      return { sourceName: picked[0], targetName: picked[1], strategy: "pool" };
+  // Priority 1: 1 from pool
+  if (uniquePoolUnarchived.length >= 1) {
+      const picked = shuffle([...uniquePoolUnarchived])[0];
+      return { targetName: picked, strategy: "pool" };
   }
 
   // 2. Get available from relationships
@@ -744,79 +744,22 @@ async function pickPair(db: DatabaseAdapter) {
   });
   const uniqueRelsUnarchived = Array.from(connectedUnarchived);
 
-  // Combine (Pool + Rels)
-  const combinedUnarchived = Array.from(new Set([...uniquePoolUnarchived, ...uniqueRelsUnarchived]));
-  
-  // Priority 2: Use unarchived from pool and rels
-  if (combinedUnarchived.length >= 2) {
-      const picked = shuffle([...combinedUnarchived]).slice(0, 2);
-      return { sourceName: picked[0], targetName: picked[1], strategy: "combined" };
-  } else if (combinedUnarchived.length === 1) {
-      // 1 unarchived + 1 archived
-      if (archivedNames.length > 0) {
-          const archived = shuffle([...archivedNames])[0];
-          return { sourceName: combinedUnarchived[0], targetName: archived, strategy: "one-unarch-one-arch" };
-      } else {
-          return { sourceName: combinedUnarchived[0], targetName: "", isEmpty: true };
-      }
+  if (uniqueRelsUnarchived.length >= 1) {
+      const picked = shuffle([...uniqueRelsUnarchived])[0];
+      return { targetName: picked, strategy: "relationships" };
   }
   
   // Fallback: Empty state
   return { 
-     sourceName: "",
      targetName: "",
      isEmpty: true
   };
 }
 
-app.post("/archiver/admin-pick-pair", async (c) => {
+app.post("/archiver/admin-pick-target", async (c) => {
   if (c.req.header("x-admin-password") !== getAdminPassword(c)) return c.json({ error: "Unauthorized" }, 401);
   const db = await getDb(c);
-  return c.json(await pickPair(db));
-});
-
-app.post("/archiver/admin-pick-target", async (c) => {
-  const db = await getDb(c);
-  
-  const people = await db.prepare("SELECT name, raw_relationships FROM people").all() as any[];
-  const archivedNames = people.map(p => p.name);
-  const archivedSet = new Set(archivedNames);
-  
-  // 1. Get available from pool
-  const poolUnarchived: string[] = [];
-  for (const cat of CATEGORIES) {
-      FIGURE_POOL[cat]?.forEach((n: string) => { 
-          if (!archivedSet.has(n)) poolUnarchived.push(n); 
-      });
-  }
-  const uniquePoolUnarchived = Array.from(new Set(poolUnarchived));
-
-  if (uniquePoolUnarchived.length > 0) {
-      const targetName = uniquePoolUnarchived[Math.floor(Math.random() * uniquePoolUnarchived.length)];
-      return c.json({ targetName, strategy: "pool" });
-  }
-
-  // 2. Get available from relationships
-  const connectedUnarchived = new Set<string>();
-  people.forEach(p => {
-    try {
-      JSON.parse(p.raw_relationships || "[]").forEach((r: any) => {
-        if (r.personName && !archivedSet.has(r.personName)) {
-           connectedUnarchived.add(r.personName);
-        }
-      });
-    } catch(e) {}
-  });
-
-  const uniqueRelsUnarchived = Array.from(connectedUnarchived);
-
-  if (uniqueRelsUnarchived.length > 0) {
-      const targetName = uniqueRelsUnarchived[Math.floor(Math.random() * uniqueRelsUnarchived.length)];
-      return c.json({ targetName, strategy: "relationships" });
-  }
-
-  // 3. Fallback: Empty state
-  return c.json({ targetName: "", isEmpty: true });
+  return c.json(await pickTarget(db));
 });
 
 // Backward compatibility
@@ -1066,9 +1009,9 @@ app.get("/explore/status", async (c) => {
   
   if (data && data.status === 'running') {
       const diff = data.lastHeartbeat ? (Date.now() - data.lastHeartbeat) : Infinity;
-      if (diff > 120000) { // 120 seconds
+      if (diff > 300000) { // 300 seconds
           data.status = 'error';
-          data.error = '探索任务被系统认定为已脱机（持续 >120s 无响应）。可能由于大模型 API 限流或响应过慢导致请求彻底熔断。请检查 API 状态后重试。';
+          data.error = '探索任务被系统认定为已脱机（持续 >300s 无响应）。可能由于大模型 API 限流或响应过慢导致请求彻底熔断。请检查 API 状态后重试。';
           const newState = JSON.stringify(data);
           if (c.env && c.env.EXPLORE_KV) {
               await c.env.EXPLORE_KV.put("explore_state", newState);
@@ -1203,7 +1146,7 @@ app.post("/explore/ai-proxy", async (c) => {
 
 app.post("/explore/start", async (c) => {
   const db = await getDb(c);
-  const { source, target, isAdmin } = await c.req.json();
+  const { target, isAdmin } = await c.req.json();
   let currentStr = "null";
   if (c.env && c.env.EXPLORE_KV) {
       currentStr = await c.env.EXPLORE_KV.get("explore_state") || "null";
@@ -1226,7 +1169,6 @@ app.post("/explore/start", async (c) => {
   // Set initial state synchronously so immediately following reads see it
   const initialState = {
       status: 'running', 
-      source, 
       target, 
       logs: [], 
       steps: [], 
@@ -1256,8 +1198,8 @@ app.post("/explore/start", async (c) => {
 
       // Create a background promise that tracks the task
       const taskWithStream = runExplorationTask(
-          db, source, target, callAI, getConfig, setConfig, addRelationship, 
-          ARCHIVE_PROMPT, ARCHIVE_SCHEMA, PATH_PROMPT, PATH_SCHEMA, VALIDATION_PROMPT, VALIDATION_SCHEMA, 
+          db, target, callAI, getConfig, setConfig, addRelationship, 
+          ARCHIVE_PROMPT, ARCHIVE_SCHEMA, 
           fetchMetadataFromWiki, c, !!isAdmin,
           originalPulse
       );
@@ -1323,22 +1265,22 @@ app.post("/explore/reset", async (c) => {
 
 // Added cron endpoint
 app.post("/cron", async (c) => {
+    console.trace("[Cron Worker] 后台成功收到 worker 触发的消息，准备启动自动探索任务");
     const secret = c.req.query("secret");
     if (secret !== "update_celeb") {
         return c.json({ error: "Unauthorized" }, 401);
     }
     
     const db = await getDb(c);
-    const { sourceName, targetName, isEmpty } = await pickPair(db);
+    const { targetName, isEmpty } = await pickTarget(db);
     
-    if (isEmpty || !sourceName || !targetName) {
-        return c.json({ status: "no target found", isEmpty });
+    if (isEmpty || !targetName) {
+        return c.json({ status: "no target found", isEmpty, message: "成功收到消息，但已无更多人物可探索" });
     }
 
     // Set initial state
     const initialState = {
         status: 'running', 
-        source: sourceName, 
         target: targetName, 
         logs: [], 
         steps: [], 
@@ -1356,13 +1298,12 @@ app.post("/cron", async (c) => {
 
     // Trigger task in background
     const task = runExplorationTask(
-        db, sourceName, targetName, callAI, getConfig, setConfig, addRelationship, 
-        ARCHIVE_PROMPT, ARCHIVE_SCHEMA, PATH_PROMPT, PATH_SCHEMA, VALIDATION_PROMPT, VALIDATION_SCHEMA, 
-        fetchMetadataFromWiki, c, true,
+        db, targetName, callAI, getConfig, setConfig, addRelationship, 
+        ARCHIVE_PROMPT, ARCHIVE_SCHEMA, fetchMetadataFromWiki, c, true,
         async (msg) => { console.log(`[Cron Explore Pulse] ${msg}`); }
     );
     
-    console.log(`[Cron] Started task for ${sourceName} -> ${targetName}`);
+    console.log(`[Cron] Started task for ${targetName}`);
 
     if (c.executionCtx && typeof c.executionCtx.waitUntil === 'function') {
         c.executionCtx.waitUntil(task);
@@ -1371,5 +1312,9 @@ app.post("/cron", async (c) => {
         task.catch(console.error);
     }
     
-    return c.json({ status: "triggered cron", source: sourceName, target: targetName });
+    return c.json({ 
+        status: "success", 
+        message: "后台明确确认：已成功收到 worker 触发的消息并启动背景任务", 
+        target: targetName 
+    });
 });

@@ -5,7 +5,6 @@ export interface ExploreState {
   status: "idle" | "running" | "success" | "error";
   lastHeartbeat?: number;
   pulse?: number;
-  source: string;
   target: string;
   logs: { timestamp: string; msg: string; type: string; data?: any }[];
   steps: { msg: string; status: string; startTime?: number }[];
@@ -16,7 +15,6 @@ export interface ExploreState {
 
 export async function runExplorationTask(
   db: DatabaseAdapter,
-  source: string,
   target: string,
   callAI: any,
   getConfig: any,
@@ -24,10 +22,6 @@ export async function runExplorationTask(
   addRelationship: any,
   ARCHIVE_PROMPT: any,
   ARCHIVE_SCHEMA: any,
-  PATH_PROMPT: any,
-  PATH_SCHEMA: any,
-  VALIDATION_PROMPT: any,
-  VALIDATION_SCHEMA: any,
   fetchMetadataFromWiki: any,
   c: any,
   isAdmin: boolean,
@@ -35,7 +29,6 @@ export async function runExplorationTask(
 ) {
   let state: ExploreState = {
     status: "running",
-    source,
     target,
     pulse: 0,
     logs: [],
@@ -51,7 +44,7 @@ export async function runExplorationTask(
     if (onPulse) {
       await onPulse(reason || "heartbeat");
     }
-    // Check if aborted or reset by user
+    
     let currentRaw = "null";
     if (c.env && c.env.EXPLORE_KV) {
         currentRaw = await c.env.EXPLORE_KV.get("explore_state") || "null";
@@ -60,7 +53,6 @@ export async function runExplorationTask(
     }
     
     if (currentRaw === "null") {
-        // State was cleared (reset), stop this task
         throw new Error("AbortError");
     }
 
@@ -69,8 +61,7 @@ export async function runExplorationTask(
         throw new Error("AbortError");
     }
     
-    // Check if it is a different task (different source/target)
-    if (current.status === 'running' && (current.source !== state.source || current.target !== state.target)) {
+    if (current.status === 'running' && current.target !== state.target) {
         throw new Error("AbortError");
     }
 
@@ -93,7 +84,6 @@ export async function runExplorationTask(
       type,
       data,
     });
-    // Keep logs lean to prevent massive state objects
     if (state.logs.length > 50) state.logs.shift();
   };
 
@@ -115,23 +105,12 @@ export async function runExplorationTask(
   };
 
   try {
-    addLog("启动时空探索协议会话", "api", {
-      source,
+    addLog("启动时空档案入库协议", "api", {
       target,
       timestamp: new Date().toISOString(),
     });
     addStep("正在初始化跨时空检索协议...");
     await saveState();
-
-    addLog("请求馆藏核心元数据", "api");
-    const peopleCountRow = await db.prepare("SELECT COUNT(*) as count FROM people").get() as { count: number };
-    const peopleCount = peopleCountRow.count;
-    
-    state.lastHeartbeat = Date.now();
-    // 随机抽取少量样本作为 AI 提示词参考，优先从 FIGURE_POOL 里选
-    const allKnownFigures = Object.values(FIGURE_POOL).flat();
-    const shuffledFigures = [...allKnownFigures].sort(() => 0.5 - Math.random());
-    const sampleNames = shuffledFigures.slice(0, 15).join("、");
 
     const provider = await getConfig(db, "active_model_provider", "gemini");
     const modelId =
@@ -140,390 +119,189 @@ export async function runExplorationTask(
         : await getConfig(db, "aliyun_model_id");
 
     if (!modelId) {
-      throw new Error(
-        `请先在后台配置 ${provider === "gemini" ? "Gemini" : "Aliyun"} 模型 ID`,
-      );
-    }
-    updateLastStep("success");
-
-    addStep(`正在识别人物身份: ${source} 与 ${target}...`);
-    await saveState();
-
-    const callAIProxy = async (
-      prompt: string,
-      responseFormat: "text" | "json" = "json",
-      schema?: any,
-      timeoutMs: number = 120000,
-      skipImmediateSave: boolean = false
-    ) => {
-      addLog(`AI 代理请求发送`, "ai-req", { 
-        prompt_snippet: prompt.substring(0, 300) + "...", 
-        responseFormat, 
-        schema_keys: schema ? Object.keys(schema.properties || {}) : undefined 
-      });
-      if (!skipImmediateSave) await saveState();
-      try {
-        let text: string;
-        if (timeoutMs) {
-          const timeoutPromise = new Promise<never>((_, reject) => {
-            setTimeout(() => reject(new Error("请求超时")), timeoutMs);
-          });
-          text = await Promise.race([
-            callAI(c, db, prompt, responseFormat, schema, async () => {
-              await saveState("AI推理维持心跳");
-            }),
-            timeoutPromise
-          ]);
-        } else {
-          text = await callAI(c, db, prompt, responseFormat, schema, async () => {
-              await saveState("AI推理维持心跳");
-          });
-        }
-        addLog("AI 响应解码成功", "ai-res", { 
-          rawTextSnippet: text.substring(0, 200) + "...",
-          totalLength: text.length
-        });
-        return text;
-      } catch (e: any) {
-        addLog("AI 服务响应失败", "error", e.message);
-        throw new Error(e.message === "请求超时" ? "AI 探索思考时间过长，已中断" : (e.message || "AI 服务异常"));
-      }
-    };
-
-    const missingValidationNames: string[] = [];
-    const srcInDb = (await db.prepare("SELECT name FROM people WHERE name = ?").get(source)) as any;
-    if (!srcInDb) missingValidationNames.push(source);
-    
-    const tgtInDb = (await db.prepare("SELECT name FROM people WHERE name = ?").get(target)) as any;
-    if (!tgtInDb && source !== target) missingValidationNames.push(target);
-
-    let srcValid: any = { accepted: true, normalizedName: srcInDb?.name || source };
-    let tgtValid: any = { accepted: true, normalizedName: tgtInDb?.name || target };
-
-    if (missingValidationNames.length > 0) {
-      const text = await callAIProxy(
-        VALIDATION_PROMPT(missingValidationNames, sampleNames),
-        "json",
-        VALIDATION_SCHEMA,
-        120000
-      );
-      let parsed: any = {};
-      try {
-        let rawParsed = JSON.parse(text || "{}");
-        parsed = rawParsed;
-      } catch (e) {
-        throw new Error("AI 响应解析失败");
-      }
-      
-      let results = [];
-      if (parsed.results) {
-          results = parsed.results;
-      } else if (parsed.result && parsed.result.results) {
-          results = parsed.result.results;
-      } else if (Array.isArray(parsed)) {
-          results = parsed;
-      }
-
-      if (results && results.length > 0) {
-        for (let i = 0; i < results.length; i++) {
-          const res = results[i];
-          const queryName = i < missingValidationNames.length ? missingValidationNames[i] : (res.name || "");
-          
-          if (res.name === source || queryName === source || (source.includes(res.name) && res.name.length > 1)) srcValid = res;
-          else if (res.name === target || queryName === target || (target.includes(res.name) && res.name.length > 1)) tgtValid = res;
-        }
-      } else {
-        throw new Error("系统未能识别该人物");
-      }
+      throw new Error(`请先在后台配置 ${provider === "gemini" ? "Gemini" : "Aliyun"} 模型 ID`);
     }
 
-    if (!srcValid.accepted)
-      throw new Error(`起点人物无效: ${srcValid.reason || "原因未知"}`);
-    if (!tgtValid.accepted)
-      throw new Error(`终点人物无效: ${tgtValid.reason || "原因未知"}`);
+    // Prepare samples for diversity
+    const samplePeople = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 20").all() as any[];
+    const sampleNames = samplePeople.map((p: any) => p.name).join("、");
 
-    const normalizedSource = srcValid.normalizedName || source;
-    const normalizedTarget = tgtValid.normalizedName || target;
-    state.source = normalizedSource;
-    state.target = normalizedTarget;
-    updateLastStep(
-      "success",
-      `识别成功: ${normalizedSource} 与 ${normalizedTarget}`,
-    );
-    addStep("正在同步时空档案索引...");
-    await saveState();
+    let finalTargetName = target;
 
-    // Optimize: Load metadata separately to avoid heavy joins
-    const peopleData = await db.prepare("SELECT id, name FROM people").all() as { id: number, name: string }[];
-    const idToName = new Map<number, string>();
-    const nameToId = new Map<string, number>();
-    for (const p of peopleData) {
-      idToName.set(p.id, p.name);
-      nameToId.set(p.name, p.id);
-    }
-
-    const allRels = await db.prepare("SELECT person1_id, person2_id, relationship_type as type FROM relationships").all() as any[];
-    
-    updateLastStep("success", `已同步 ${peopleData.length} 位人物与 ${allRels.length} 条时空连接`);
-    addStep("正在通过现有索引进行 BFS 路径拓扑扫描...");
-    await saveState();
-    
-    const adj = new Map<number, { targetId: number, type: string }[]>();
-    for (const r of allRels) {
-      if (!adj.has(r.person1_id)) adj.set(r.person1_id, []);
-      if (!adj.has(r.person2_id)) adj.set(r.person2_id, []);
-      adj.get(r.person1_id)!.push({ targetId: r.person2_id, type: r.type });
-      adj.get(r.person2_id)!.push({ targetId: r.person1_id, type: r.type });
-    }
-
-    const startId = nameToId.get(normalizedSource);
-    const endId = nameToId.get(normalizedTarget);
-
-    let directPath = null;
-    if (startId !== undefined && endId !== undefined) {
-      let q = [{ id: startId, path: [{ name: normalizedSource }] as any[] }];
-      let visited = new Set([startId]);
-      let limit = 1000;
-      let head = 0;
-      
-      while (head < q.length && limit-- > 0) {
-        let curr = q[head++];
-        if (curr.id === endId) {
-          directPath = curr.path;
-          break;
-        }
-        const neighbors = adj.get(curr.id) || [];
-        for (let n of neighbors) {
-          if (!visited.has(n.targetId)) {
-            visited.add(n.targetId);
-            q.push({
-              id: n.targetId,
-              path: [...curr.path, { name: idToName.get(n.targetId)!, type: n.type }],
-            });
-          }
-        }
-      }
-    }
-
-    if (directPath) {
-      updateLastStep("success", "在现有馆藏中找到直接路径！");
-      state.path = directPath;
-      state.status = "success";
-      await saveState();
-      return;
-    }
-
-    updateLastStep("success", "现有馆藏中无直接路径，启动 AI 逻辑推理...");
-    addStep("AI 专家正在解析时空引力场...");
-    await saveState();
-
-    const bridgeStartTime = Date.now();
-    const bridgeText = await callAIProxy(
-      PATH_PROMPT(normalizedSource, normalizedTarget, sampleNames),
-      "json",
-      PATH_SCHEMA,
-      undefined, // Default timeout or use specific
-      false
-    );
-    
-    const bridgeDuration = Math.round((Date.now() - bridgeStartTime) / 1000);
-    addLog(`已获取 AI 连通路径 (耗时: ${bridgeDuration}s)`, "info", { result: bridgeText });
-    updateLastStep("success", `AI 已打通时空链路 (耗时 ${bridgeDuration}s)`);
-    addStep("正在反向验证并加固路径节点...");
-    await saveState();
-    let bridgeData: any = { chain: [] };
-    try {
-      let rawBridge = JSON.parse(bridgeText || "{}");
-      bridgeData =
-        Array.isArray(rawBridge) && rawBridge.length > 0
-          ? rawBridge[0]
-          : rawBridge;
-    } catch (e) {
-      throw new Error("AI 返回了无法解析的关系数据，请稍后重试。");
-    }
-
-    let chain =
-      bridgeData.chain || (bridgeData.result && bridgeData.result.chain) || [];
-    if (chain.length < 2)
-      throw new Error("AI 未能建立有效联系，请尝试更换人物或重新搜索。");
-    updateLastStep("success");
-    await saveState();
-
-    const finalPath: any[] = [];
-    const categories = [
-      "哲学家",
-      "艺术家",
-      "科学家/数学家",
-      "发明家",
-      "政治家/君主",
-      "军事家",
-      "思想家/教育家",
-      "文学家/作家",
-      "诗人",
-      "音乐家/作曲家",
-      "歌手/演艺明星",
-      "探险家/航海家",
-      "商业精英/企业家",
-      "医学家",
-      "其他历史名人",
-    ];
-    const nameMap = new Map<string, string>();
-    const missingNames = [];
-    for (const step of chain) {
-      if (!step.name) continue;
-      const p = (await db
-        .prepare("SELECT id FROM people WHERE name = ?")
-        .get(step.name)) as any;
-      if (!p) {
-          missingNames.push(step.name);
-      } else {
-          nameMap.set(step.name, step.name);
-          nameToId.set(step.name, p.id);
-      }
-    }
-
-    if (missingNames.length > 0) {
-      for (const name of missingNames) {
-        addStep(`正在获取「${name}」的历史资料...`);
+    // AI random selection if no target is specified
+    if (!finalTargetName) {
+        addStep("图谱自动推演：寻找值得探索的新人物...");
         await saveState();
 
-        const meta = await fetchMetadataFromWiki(name);
-        if (meta.description) {
-            addStep(`识别到身份线索: ${meta.description}`);
-            await saveState();
+        const existingSet = new Set(samplePeople.map((p: any) => p.name));
+        const unarchivedInPool: string[] = [];
+        const CATEGORIES = ["哲学家","艺术家","科学家/数学家","发明家","政治家/君主","军事家","思想家/教育家","文学家/作家","诗人","音乐家/作曲家","歌手/演艺明星","探险家/航海家","商业精英/企业家","医学家","其他历史名人"];
+        for (const cat of CATEGORIES) {
+            FIGURE_POOL[cat]?.forEach(n => { if (!existingSet.has(n)) unarchivedInPool.push(n); });
         }
+        
+        if (unarchivedInPool.length > 0) {
+            finalTargetName = unarchivedInPool[Math.floor(Math.random() * unarchivedInPool.length)];
+            addLog(`从预设池中随机选中: ${finalTargetName}`, "info");
+        } else {
+            addLog("预设池已满，正在进行 AI 随机发散...", "info");
+            const prompt = `请从世界历史中选取一位极其著名、具有重大全球影响力且通常被视为正面的真实历史人物。要求不包含在已知列表中：[${sampleNames} ...]`;
+            const resultText = await callAI(c, db, prompt, "text");
+            finalTargetName = (resultText || "").trim().replace(/[「」""'']/g, "");
+            addLog(`AI 随机发散选中: ${finalTargetName}`, "info");
+        }
+    }
 
-        const archiveText = await callAIProxy(
-          ARCHIVE_PROMPT(meta.normalizedName, categories, sampleNames, meta.description),
-          "json",
-          ARCHIVE_SCHEMA,
-          120000,
-          true // skipImmediateSave
-        );
-        let personData: any = {};
+    state.target = finalTargetName;
+    updateLastStep("success", `锁定目标: ${finalTargetName}`);
+    addStep(`正在从 Wikidata/Wikipedia 唤醒 ${finalTargetName} 的记忆...`);
+    await saveState();
+
+    const meta = await fetchMetadataFromWiki(finalTargetName);
+    finalTargetName = meta.normalizedName;
+    state.target = finalTargetName;
+
+    updateLastStep("success", `确定抓取目标: ${finalTargetName}`);
+    if (meta.description) {
+        addLog(`识别到身份线索: ${meta.description}`, "info");
+    }
+
+    addStep(`正在利用 AI 深度检索并编织 ${finalTargetName} 的历史时空数据...`);
+    await saveState();
+
+    const CATEGORIES = [
+      "哲学家", "艺术家", "科学家/数学家", "发明家", "政治家/君主",
+      "军事家", "思想家/教育家", "文学家/作家", "诗人", "音乐家/作曲家",
+      "歌手/演艺明星", "探险家/航海家", "商业精英/企业家", "医学家", "其他历史名人"
+    ];
+
+    const prompt = ARCHIVE_PROMPT(finalTargetName, CATEGORIES, sampleNames, meta.description);
+
+    addLog(`AI 代理请求发送`, "ai-req", { prompt_snippet: prompt.substring(0, 300) + "..." });
+    let resultText: string;
+    try {
+        resultText = await callAI(c, db, prompt, "json", ARCHIVE_SCHEMA, async () => {
+            await saveState("AI 仍在思考中...");
+        });
+    } catch (e: any) {
+        throw new Error(e.message === "请求超时" ? "AI 探索思考时间过长，已中断" : (e.message || "AI 服务异常"));
+    }
+
+    addLog("AI 响应解码成功", "ai-res", { rawTextSnippet: resultText.substring(0, 200) + "..." });
+
+    let personData: any = {};
+    try {
+        personData = JSON.parse(resultText || "{}");
+        if (Array.isArray(personData) && personData.length > 0) personData = personData[0];
+        if (!personData.biography && personData.result) personData = personData.result;
+    } catch (e) {
+        throw new Error(`AI 生成人物 ${finalTargetName} 的传记无法解析`);
+    }
+
+    if (!personData.accepted && !isAdmin) {
+        throw new Error(`抱歉，${finalTargetName} 可能不符合入库标准（${personData.reason || "非真实历史人物"}）`);
+    }
+
+    const finalName = personData.standardChineseName || finalTargetName;
+    state.target = finalName;
+    updateLastStep("success", `数据已萃取，人物标准名: ${finalName}`);
+    
+    addStep(`提取并生成 ${finalName} 的历史肖像...`);
+    await saveState();
+
+    const portraitUrlRaw = meta.imageUrl || `https://image.pollinations.ai/prompt/${encodeURIComponent("Historical portrait of " + finalName + ", realistic oil painting style, highly detailed")}`;
+    const portraitUrl = `/api/portraits/${encodeURIComponent(finalName.toLowerCase())}.jpg`;
+
+    if (c.env && c.env.IMAGES && portraitUrlRaw) {
         try {
-          let rawPerson = JSON.parse(archiveText || "{}");
-          personData =
-            Array.isArray(rawPerson) && rawPerson.length > 0
-              ? rawPerson[0]
-              : rawPerson;
-        } catch (e) {
-          throw new Error(`AI 生成人物 ${name} 的传记无法解析`);
+          const imgRes = await fetch(portraitUrlRaw);
+          if (imgRes.ok) {
+              const buffer = await imgRes.arrayBuffer();
+              await c.env.IMAGES.put(`portraits/${encodeURIComponent(finalName.toLowerCase())}.jpg`, buffer, {
+                  httpMetadata: { contentType: imgRes.headers.get("content-type") || "image/jpeg" }
+              });
+          }
+        } catch(e) {
+           console.warn("Failed to cache image:", e);
         }
-        if (!personData.biography && personData.result)
-          personData = personData.result;
+    }
 
-        const finalName = personData.standardChineseName || name;
-        nameMap.set(name, finalName);
-        
-        const portraitUrlRaw = meta.imageUrl || `https://image.pollinations.ai/prompt/${encodeURIComponent("Historical portrait of " + finalName + ", realistic oil painting style, highly detailed")}`;
-        const portraitUrl = `/api/portraits/${encodeURIComponent(finalName.toLowerCase())}.jpg`;
+    updateLastStep("success", "肖像获取完成");
+    addStep(`归档处理：将 ${finalName} 接入时空连续体...`);
+    await saveState();
 
-        if (c.env && c.env.IMAGES && portraitUrlRaw) {
-            try {
-              const imgRes = await fetch(portraitUrlRaw);
-              if (imgRes.ok) {
-                  const buffer = await imgRes.arrayBuffer();
-                  await c.env.IMAGES.put(`portraits/${encodeURIComponent(finalName.toLowerCase())}.jpg`, buffer, {
-                      httpMetadata: { contentType: imgRes.headers.get("content-type") || "image/jpeg" }
-                  });
-              }
-            } catch(e) {}
-        }
+    const res = await db
+      .prepare(
+        `
+           INSERT INTO people (name, category, keyword, biography, achievements, raw_relationships, lifespan, birthplace, latitude, longitude, image_url)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(name) DO UPDATE SET 
+             category=excluded.category, keyword=excluded.keyword, biography=excluded.biography, image_url=excluded.image_url,
+             achievements=excluded.achievements, raw_relationships=excluded.raw_relationships, lifespan=excluded.lifespan, birthplace=excluded.birthplace,
+             latitude=excluded.latitude, longitude=excluded.longitude
+           RETURNING id
+        `,
+      )
+      .get(
+        finalName,
+        personData.category || "未知",
+        personData.keyword || "",
+        personData.biography || "",
+        JSON.stringify(personData.achievements || []),
+        JSON.stringify(personData.relationships || []),
+        personData.lifespan || "",
+        personData.birthplace || "",
+        personData.latitude || 0,
+        personData.longitude || 0,
+        portraitUrl
+      );
+    
+    let newId = (res as any)?.id;
+    if (!newId) {
+        const getRes = await db.prepare("SELECT id FROM people WHERE name = ? COLLATE NOCASE").get(finalName) as any;
+        newId = getRes?.id;
+    }
 
-        const res = await db
-          .prepare(
-            `
-               INSERT INTO people (name, category, keyword, biography, achievements, raw_relationships, lifespan, birthplace, latitude, longitude, image_url)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(name) DO UPDATE SET keyword=excluded.keyword, biography=excluded.biography, image_url=excluded.image_url
-               RETURNING id
-            `,
-          )
-          .get(
-            finalName,
-            personData.category || "未知",
-            personData.keyword || "",
-            personData.biography || "",
-            JSON.stringify(personData.achievements || []),
-            JSON.stringify(personData.relationships || []),
-            personData.lifespan || "",
-            personData.birthplace || "",
-            personData.latitude || 0,
-            personData.longitude || 0,
-            portraitUrl
-          );
-        
-        let newId = (res as any)?.id;
-        if (!newId) {
-            const getRes = await db.prepare("SELECT id FROM people WHERE name = ? COLLATE NOCASE").get(finalName) as any;
-            newId = getRes?.id;
-        }
-        if (newId) {
-            nameToId.set(finalName, Number(newId));
-            
-            // 1. 主动连接：检测该人物声明的关系，是否在数据库中已存在
-            if (personData.relationships && Array.isArray(personData.relationships)) {
-                for (const rel of personData.relationships) {
-                    const matched = await db.prepare("SELECT id FROM people WHERE name = ?").get(rel.personName) as any;
-                    if (matched) {
-                        await addRelationship(db, newId, matched.id, rel.relationshipType);
-                    }
+    if (newId) {
+        // 1. 主动连接
+        if (personData.relationships && Array.isArray(personData.relationships)) {
+            for (const rel of personData.relationships) {
+                const matched = await db.prepare("SELECT id FROM people WHERE name = ?").get(rel.personName) as any;
+                if (matched) {
+                    await addRelationship(db, newId, matched.id, rel.relationshipType);
                 }
             }
-
-            // 2. 被动追溯：检测库中已有的人物，是否曾经将关系连向了当前这名新入库人物
-            const previousMentions = await db.prepare(`SELECT id, name, raw_relationships FROM people WHERE id != ? AND (raw_relationships LIKE ? OR raw_relationships LIKE ?)`).all(newId, `%${finalName}%`, `%${name}%`) as any[];
-            for (const p of previousMentions) {
-                try {
-                    const rels = JSON.parse(p.raw_relationships || "[]");
-                    const matchingRel = rels.find((r: any) => r.personName === finalName || r.personName === name);
-                    if (matchingRel) {
-                        await addRelationship(db, p.id, newId, matchingRel.relationshipType);
-                    }
-                } catch(e) {}
-            }
         }
-        state.newArrivals.push(finalName);
-        updateLastStep("success", `成功同步「${finalName}」`);
-        await saveState();
-      }
-    }
 
-    for (let i = 0; i < chain.length; i++) {
-        const step = chain[i];
-        if (!step.name) continue;
-        const currentMappedName = nameMap.get(step.name) || step.name;
-
-        if (i > 0) {
-          const prevMappedName = nameMap.get(chain[i - 1].name) || chain[i - 1].name;
-          const p1Id = nameToId.get(prevMappedName);
-          const p2Id = nameToId.get(currentMappedName);
-          if (p1Id && p2Id) {
-            await addRelationship(db, p1Id, p2Id, step.relationshipToPrevious);
-          }
+        // 2. 被动追溯
+        const previousMentions = await db.prepare(`SELECT id, name, raw_relationships FROM people WHERE id != ? AND (raw_relationships LIKE ? OR raw_relationships LIKE ?)`).all(newId, `%${finalName}%`, `%${target}%`) as any[];
+        for (const p of previousMentions) {
+            try {
+                const rels = JSON.parse(p.raw_relationships || "[]");
+                const matchingRel = rels.find((r: any) => r.personName === finalName || r.personName === target);
+                if (matchingRel) {
+                    await addRelationship(db, p.id, newId, matchingRel.relationshipType);
+                }
+            } catch(e) {}
         }
-        finalPath.push({ name: currentMappedName, type: step.relationshipToPrevious });
     }
     
-    state.path = finalPath;
+    state.newArrivals.push(finalName);
+    updateLastStep("success", `时空节点建立成功：${finalName}`);
+    
     state.status = "success";
+    state.path = [{ name: finalName, type: "入库成功" }];
     await saveState();
 
-    if (!isAdmin) {
-      const date = new Date(new Date().getTime() + 8 * 3600 * 1000)
-        .toISOString()
-        .split("T")[0];
-      await db
-        .prepare(
-          `INSERT INTO guest_usage (ip, date, count) VALUES ('GLOBAL_GUEST', ?, 1) ON CONFLICT(ip, date) DO UPDATE SET count = count + 1`,
-        )
-        .run(date);
-    }
   } catch (e: any) {
     if (e.message === "AbortError") return;
     state.status = "error";
     state.error = e.message;
+    
+    // Add logs so the UI can properly surface the issue instead of silently failing
+    updateLastStep("error", `执行错误: ${e.message}`);
+    addLog(`执行过程发生错误: ${e.message}`, "error", { message: e.message, stack: e.stack });
+
     try {
       await saveState();
     } catch (saveErr) {
@@ -531,3 +309,4 @@ export async function runExplorationTask(
     }
   }
 }
+
