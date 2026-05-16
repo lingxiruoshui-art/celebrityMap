@@ -4,7 +4,7 @@ import { GoogleGenAI } from "@google/genai";
 import { D1DatabaseAdapter, DatabaseAdapter } from "./db.ts";
 import { CATEGORIES, FIGURE_POOL } from "./figuresPool.ts";
 import { ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA, EXPAND_CONNECTIONS_PROMPT, EXPAND_CONNECTIONS_SCHEMA } from "./services/aiService.ts";
-import { runExplorationTask } from "./exploreTask.ts";
+import { initExplorationState, advanceExplorationStep } from "./exploreStep.ts";
 
 const root = new Hono<{ 
   Bindings: { 
@@ -1432,6 +1432,23 @@ app.post("/explore/ai-proxy", async (c) => {
   }
 });
 
+app.post("/explore/step", async (c) => {
+  const db = await getDb(c);
+  const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
+  
+  if (!isAdmin && await getConfig(db, "demo_mode") === "true") {
+      return c.json({ error: "只读模式，如需演示归档，请访问项目GitHub" }, 403);
+  }
+  
+  const newState = await advanceExplorationStep(
+      db, callAI, getConfig, setConfig, addRelationship,
+      ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA,
+      fetchMetadataFromWiki, c, !!isAdmin
+  );
+  
+  return c.json(newState);
+});
+
 app.post("/explore/start", async (c) => {
   const db = await getDb(c);
   const { target, isAdmin, clientTaskId, source: reqSource } = await c.req.json();
@@ -1449,62 +1466,10 @@ app.post("/explore/start", async (c) => {
       }
   }
   
-  // Set initial state synchronously so immediately following reads see it
-  // Ensure logs and steps are completely fresh
   const newTaskId = clientTaskId || Date.now();
-  const initialState = {
-      status: 'running', 
-      target, 
-      source: reqSource || 'explorer',
-      taskId: newTaskId,
-      logs: [{ timestamp: new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }), msg: `初始化任务: [${target || '随机发散探索'}]`, type: 'info' }], 
-      steps: [{ msg: "探索序列启动中...", status: "pending", startTime: Date.now() }], 
-      path: null, 
-      error: null, 
-      newArrivals: [],
-      lastHeartbeat: Date.now()
-  };
-  const stateStr = JSON.stringify(initialState);
-  await setConfig(db, "explore_state", stateStr);
+  await initExplorationState(db, getConfig, setConfig, target, reqSource || 'explorer', newTaskId);
 
-  // Return directly to prevent Cloudflare timeout from terminating the response.
-  // The frontend will poll /api/explore/status to read logs and steps.
-  const originalPulse = async (msg: string) => {
-      // Background heartbeat logging only
-      if (msg !== 'heartbeat') console.log(`[Explore Pulse] ${msg}`);
-  };
-
-  // Create a background promise that tracks the task
-  const task = runExplorationTask(
-      db, target, callAI, getConfig, setConfig, addRelationship, 
-      ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA,
-      fetchMetadataFromWiki, c, !!isAdmin,
-      originalPulse,
-      newTaskId,
-      reqSource || 'explorer'
-  );
-
-  if (c.executionCtx && c.executionCtx.waitUntil) {
-      c.executionCtx.waitUntil(task.catch((e: any) => console.error("Background task error:", e)));
-  } else {
-      task.catch(e => console.error("Task Error", e));
-  }
-
-  return streamSSE(c, async (stream) => {
-      await stream.writeSSE({ data: JSON.stringify({ status: "started", message: "探索任务已在后台启动", taskId: newTaskId }) });
-      const heartbeatTimer = setInterval(() => {
-          stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(()=>{});
-      }, 8000);
-      try {
-          await task;
-          await stream.writeSSE({ data: JSON.stringify({ status: "completed" }) });
-      } catch (e: any) {
-          console.error("[Explore Task Error]", e);
-          await stream.writeSSE({ data: JSON.stringify({ status: "error", message: e.message }) });
-      } finally {
-          clearInterval(heartbeatTimer);
-      }
-  });
+  return c.json({ status: "started", message: "探索任务状态机已初始化", taskId: newTaskId });
 });
 
 app.post("/explore/stop", async (c) => {
@@ -1614,59 +1579,10 @@ app.post("/cron", async (c) => {
     // Update last trigger time
     await setConfig(db, "last_cron_trigger_time", String(now));
 
-    // Set initial state
     const newTaskId = Date.now();
-    const initialState = {
-        status: 'running', 
-        target: targetName, 
-        source: 'explorer',
-        taskId: newTaskId,
-        logs: [{ timestamp: new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }), msg: "系统周期性巡检：触发自动档案补完协议", type: "info" }], 
-        steps: [{ msg: "周期性检索启动中...", status: "pending", startTime: Date.now() }], 
-        path: null, 
-        error: null, 
-        newArrivals: [],
-        lastHeartbeat: Date.now()
-    };
-    const stateStr = JSON.stringify(initialState);
-    await setConfig(db, "explore_state", stateStr);
-
-    // Trigger task
-    const task = runExplorationTask(
-        db, targetName, callAI, getConfig, setConfig, addRelationship, 
-        ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA,
-        fetchMetadataFromWiki, c, true,
-        async (msg) => { console.log(`[Cron Explore Pulse] ${msg}`); },
-        newTaskId,
-        'explorer'
-    );
+    await initExplorationState(db, getConfig, setConfig, targetName, 'explorer', newTaskId);
     
-    console.log(`[Cron] Started streaming task for ${targetName}`);
+    console.log(`[Cron] Initialized state machine for ${targetName}`);
 
-    if (c.executionCtx && c.executionCtx.waitUntil) {
-        c.executionCtx.waitUntil(task.catch((e: any) => console.error("[Cron Task Error]", e)));
-    } else {
-        task.catch(e => console.error("Task Error", e));
-    }
-
-    // Return a stream immediately to keep the connection alive so Cloudflare doesn't terminate the isolate
-    return streamSSE(c, async (stream) => {
-        // Send initial acknowledgment so the cron worker knows it started
-        await stream.writeSSE({ data: JSON.stringify({ status: "started", message: "探索任务已启动", taskId: newTaskId, target: targetName }) });
-
-        // Keep the connection open while the task runs
-        const heartbeatTimer = setInterval(() => {
-            stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(()=>{});
-        }, 8000);
-
-        try {
-            await task;
-            await stream.writeSSE({ data: JSON.stringify({ status: "completed" }) });
-        } catch (e: any) {
-            console.error("[Cron Task Error]", e);
-            await stream.writeSSE({ data: JSON.stringify({ status: "error", message: e.message }) });
-        } finally {
-            clearInterval(heartbeatTimer);
-        }
-    });
+    return c.json({ status: "started", message: "探索状态机已启动", taskId: newTaskId, target: targetName });
 });

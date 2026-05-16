@@ -26,95 +26,60 @@ export default {
           headers: { "User-Agent": "Cloudflare-Cron-Worker" }
         });
         
-        console.log(`[Worker] 已发起触发请求, 准备读取响应流...`);
-        
+        const startResponseData = await response.json().catch(() => ({}));
+
+        if (startResponseData.status === "skipped" || startResponseData.isEmpty) {
+            console.warn(`[Worker] 任务跳过或无法开始:`, startResponseData.message);
+            return;
+        }
+
+        if (startResponseData.status === "started") {
+            console.log(`[Worker] 成功启动状态机:`, startResponseData.message);
+        }
+
         let finished = false;
         const targetHost = new URL(targetUrl).origin;
 
-        // Asynchronously consume the streaming response to keep the backend function alive
-        const consumeStream = async () => {
-            try {
-                const reader = response.body?.getReader();
-                if (!reader) {
-                    console.log(`[Worker] 响应无 body, 无法流式读取`);
-                    return;
-                }
-                const decoder = new TextDecoder("utf-8");
-                while (!finished) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    
-                    const chunkText = decoder.decode(value, { stream: true });
-                    const lines = chunkText.split('\n');
-                    for (const line of lines) {
-                        if (line.startsWith('data: ')) {
-                            try {
-                                const data = JSON.parse(line.slice(6));
-                                if (data.status === "skipped" || data.isEmpty) {
-                                    console.warn(`[Worker] 任务跳过或无法开始:`, data.message);
-                                    finished = true;
-                                } else if (data.status === "started") {
-                                    console.log(`[Worker] 成功触发任务:`, data.message);
-                                } else if (data.status === "completed") {
-                                    console.log(`[Worker] 后端长连接提示任务完成!`);
-                                    finished = true;
-                                } else if (data.status === "error") {
-                                    console.error(`[Worker] 后端长连接报告错误:`, data.message);
-                                    finished = true;
-                                }
-                            } catch(e) {}
-                        }
-                    }
-                }
-            } catch (err) {
-                console.error(`[Worker] 流读取异常:`, err.message);
-            }
-        };
-
-        consumeStream();
-
-        console.log(`[Worker] 开始每 5 秒轮询任务执行状态...`);
+        console.log(`[Worker] 开始逐步步进任务状态机...`);
 
         while (!finished) {
-           await new Promise(r => setTimeout(r, 5000));
-           if (finished) break; // Check again in case consumeStream finished it
-
            try {
-             const _v = Date.now();
-             console.log(`[Worker] 正在通过网络消息问询后端任务状态 (请求ID: ${_v})...`);
-             const stRes = await fetch(`${targetHost}/api/explore/status?_v=${_v}`, {
+             console.log(`[Worker] 发起请求: 驱动下一步骤...`);
+             const stepRes = await fetch(`${targetHost}/api/explore/step`, {
+                 method: "POST",
                  headers: {
                      "User-Agent": "Cloudflare-Cron-Worker",
                      "x-admin-password": secret
                  }
              });
              
-             if (!stRes.ok) {
-                 console.error(`[Worker] 答复异常: 轮询状态接口失败, 状态码: ${stRes.status}`);
-                 continue;
+             if (!stepRes.ok) {
+                 console.error(`[Worker] 步进接口失败, 状态码: ${stepRes.status}`);
+                 let text = await stepRes.text().catch(()=>"");
+                 console.error(`[Worker] 错误信息: ${text}`);
+                 break;
              }
-             const st = await stRes.json();
+             const st = await stepRes.json();
              
-             if (!st || st === null || st === "null") {
-                 console.log(`[Worker] 收到答复: 探索任务似乎已结束(无状态)。`);
+             if (!st || st === null || st.error) {
+                 console.log(`[Worker] 收到答复: 任务中断或出现错误:`, st?.error || "未知");
                  finished = true;
                  break;
              }
 
-             console.log(`[Worker] /api/explore/status =`, JSON.stringify(st).substring(0, 500));
+             console.log(`[Worker] /api/explore/step 结果: status=${st.status}, phase=${st.phase || 'N/A'}`);
 
-             if (st.status === "error" || st.status === "success" || st.status === "completed" || st.status === "stop" || st.status === "idle") {
-                 console.log(`[Worker] 收到最终答复: 任务最终状态发现! status: ${st.status}`);
+             if (st.status === "success" || st.status === "completed" || st.status === "stop" || st.status === "idle" || st.status === "error") {
+                 console.log(`[Worker] 收到最终答复: 任务完成! status: ${st.status}`);
                  finished = true;
                  break;
              }
              
-             // Still running
-             let currentStep = st.steps && st.steps.length > 0 ? st.steps[st.steps.length - 1].msg : '未知阶段';
-             console.log(`[Worker] 任务进行中 -> 当前操作: ${currentStep}, 目标: ${st.target || '未知'}`);
-             // Keep worker running and printing logs
+             // Still running, proceed immediately or wait a bit
+             // 状态机每次只做一小块，不会超时，所以我们可以立即开始下一步
            } catch(pollErr) {
-             console.error(`[Worker] 问询过程出错:`, pollErr.message);
+             console.error(`[Worker] 步进过程出错:`, pollErr.message);
+             break; // don't loop infinitely on hard network errors
            }
         }
         
