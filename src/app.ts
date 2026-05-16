@@ -1551,6 +1551,7 @@ app.post("/cron", async (c) => {
     console.log(`[Cron Worker] ${new Date(now).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })} 后台明确收到 worker 消息`);
     const secret = c.req.query("secret");
     const force = c.req.query("force") === "true";
+    const action = c.req.query("action"); // e.g. "step"
 
     const cronSecret = (c.env && c.env.CRON_SECRET) || "update_celeb";
     if (secret !== cronSecret) {
@@ -1568,11 +1569,27 @@ app.post("/cron", async (c) => {
     if (currentStr !== "null") {
         try {
             const current = JSON.parse(currentStr);
-            const isStale = current.status === 'running' && (!current.lastHeartbeat || (Date.now() - current.lastHeartbeat > 300000));
+            const isStale = current.status === 'running' && (!current.lastHeartbeat || (Date.now() - current.lastHeartbeat > 600000));
             
             if (current.status === 'running' && !isStale) {
-                console.log("[Cron Skip] 探索正在进行中，跳过本次触发");
-                return c.json({ status: "skipped", message: "探索正在进行中，跳过本次触发" });
+                if (action === "step") {
+                    console.log(`[Cron Step] 正在推进当前阶段 (${current.phase}) ...`);
+                    try {
+                        const state = await advanceExplorationStep(
+                            db, callAI, getConfig, setConfig, addRelationship,
+                            ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA,
+                            fetchMetadataFromWiki, c, true
+                        );
+                        console.log(`[Cron Step] 推进结束，新状态: ${state.status}, 新阶段: ${state.phase}`);
+                        return c.json({ status: state.status, phase: state.phase, target: state.target });
+                    } catch (e: any) {
+                        console.error("[Cron Step Error]", e);
+                        return c.json({ status: "error", error: e.message });
+                    }
+                } else {
+                    console.log("[Cron Skip] 探索正在进行中，且非 step 请求，跳过本次触发");
+                    return c.json({ status: "skipped", message: "探索正在进行中，跳过本次触发" });
+                }
             }
         } catch(e) {
             console.error("[Cron] 解析状态失败:", e);
@@ -1621,32 +1638,18 @@ app.post("/cron", async (c) => {
     const newTaskId = Date.now();
     await initExplorationState(db, getConfig, setConfig, targetName, 'explorer', newTaskId);
     
-    console.log(`[Cron] Initialized state machine for ${targetName}`);
+    console.log(`[Cron Init] 初始化状态机: ${targetName}。立即执行第一阶段...`);
 
-    return streamSSE(c, async (stream) => {
-        await stream.writeSSE({ data: JSON.stringify({ status: "started", message: "探索状态机已启动", taskId: newTaskId, target: targetName }) });
-        const heartbeatTimer = setInterval(() => {
-            stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(()=>{});
-        }, 5000);
-        
-        try {
-            let isDone = false;
-            while (!isDone) {
-                const state = await advanceExplorationStep(
-                    db, callAI, getConfig, setConfig, addRelationship,
-                    ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA,
-                    fetchMetadataFromWiki, c, true
-                );
-                if (state.status === "success" || state.status === "error" || state.status === "idle") {
-                    isDone = true;
-                }
-            }
-            await stream.writeSSE({ data: JSON.stringify({ status: "completed", target: targetName }) });
-        } catch (e: any) {
-            console.error("[Cron Explore Task Error]", e);
-            await stream.writeSSE({ data: JSON.stringify({ status: "error", target: targetName, message: e.message }) });
-        } finally {
-            clearInterval(heartbeatTimer);
-        }
-    });
+    try {
+        const state = await advanceExplorationStep(
+            db, callAI, getConfig, setConfig, addRelationship,
+            ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA,
+            fetchMetadataFromWiki, c, true
+        );
+        console.log(`[Cron Init] 第一阶段执行完毕。当前阶段: ${state.phase}`);
+        return c.json({ status: state.status, phase: state.phase, target: state.target });
+    } catch (e: any) {
+        console.error("[Cron Init Error]", e);
+        return c.json({ status: "error", error: e.message });
+    }
 });

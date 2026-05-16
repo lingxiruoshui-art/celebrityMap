@@ -17,136 +17,44 @@ export default {
 
     const deliver = async () => {
       try {
-        const url = new URL(targetUrl);
-        url.searchParams.set("secret", secret);
-        
-        console.log(`[Worker] 正在发送请求到: ${url.hostname}`);
-        const response = await fetch(url.toString(), { 
-          method: "POST",
-          headers: { "User-Agent": "Cloudflare-Cron-Worker" }
-        });
-        
         let finished = false;
-        const targetHost = new URL(targetUrl).origin;
-
-        const contentType = response.headers.get("content-type") || "";
-        if (contentType.includes("application/json")) {
-            const data = await response.json().catch(()=>({}));
-            console.log(`[Worker] 返回 JSON: ${JSON.stringify(data)}`);
-            return;
-        }
-
-        // Asynchronously consume the streaming response to keep the backend function alive
-        let buffer = "";
-        const consumeStream = async () => {
-            try {
-                const reader = response.body?.getReader();
-                if (!reader) {
-                    console.log(`[Worker] 响应无 body, 无法流式读取`);
-                    return;
-                }
-                const decoder = new TextDecoder("utf-8");
-                while (!finished) {
-                    const { done, value } = await reader.read();
-                    if (done) {
-                        console.log(`[Worker] 流读取完成 (done)`);
-                        break;
-                    }
-                    
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop() || "";
-                    
-                    for (const line of lines) {
-                        const trimmedLine = line.trim();
-                        if (!trimmedLine) continue;
-
-                        // Support multiple events joined in one line (e.g. data: {...}data: {...})
-                        // Standard SSE uses "data: " prefix.
-                        const rawEvents = trimmedLine.split('data:').filter(p => p.trim());
-                        
-                        for (const rawEvent of rawEvents) {
-                            try {
-                                const data = JSON.parse(rawEvent.trim());
-                                console.log(`[Worker SSE] 收到消息:`, JSON.stringify(data));
-                                if (data.status === "skipped" || data.isEmpty) {
-                                    console.warn(`[Worker] 任务跳过或无法开始:`, data.message || "条件未满足");
-                                    finished = true;
-                                } else if (data.status === "started") {
-                                    console.log(`[Worker] 成功触发任务:`, data.message || "探索已启动");
-                                } else if (data.status === "completed") {
-                                    console.log(`[Worker] 后端长连接提示任务完成!`);
-                                    finished = true;
-                                } else if (data.status === "error") {
-                                    console.error(`[Worker] 后端长连接报告错误:`, data.message || "未知错误");
-                                    finished = true;
-                                } else if (data.type === "ping") {
-                                    // Heartbeat - keep going
-                                    console.log(`[Worker SSE] 心跳 (ping)`);
-                                }
-                            } catch(e) {
-                                // If it's the last part of a line and it's truncated, wait for next chunk
-                                // But since we split by \n and pop the last line, this should mostly be full JSON
-                                console.log(`[Worker] 无法解析状态数据行: ${rawEvent.substring(0, 50)}...`);
-                            }
-                        }
-                    }
-                }
-            } catch (err) {
-                console.error(`[Worker] 流读取发生异常:`, err.message);
-            }
-        };
-
-        consumeStream();
-
-        console.log(`[Worker] 开始每 8 秒轮询任务执行状态...`);
-
+        const maxWaitTime = 14 * 60 * 1000; // 14 mins max wait
         const startTime = Date.now();
-        const MAX_WAIT = 15 * 60 * 1000; // 15 minutes max wait
-
-        while (!finished) {
-           await new Promise(r => setTimeout(r, 8000));
-           if (finished) break;
-           
-           if (Date.now() - startTime > MAX_WAIT) {
-               console.error(`[Worker] 超过最大等待时间 (15min)，强制停止。`);
-               finished = true;
-               break;
-           }
-           
-           try {
-             // Polling as a secondary check in case SSE disconnects
-             const statusUrl = new URL(`${targetHost}/api/explore/status`);
-             // We use the same secret for status if supported, otherwise just poll
-             const statusRes = await fetch(statusUrl.toString(), {
-                headers: { "x-admin-password": secret }
-             });
-             
-             if (statusRes.ok) {
-                 const statusData = await statusRes.json();
-                 if (!statusData) {
-                    console.log(`[Worker] 收到答复: 探索任务似乎已结束(无状态)。`);
+        
+        while (!finished && (Date.now() - startTime < maxWaitTime)) {
+            const url = new URL(targetUrl);
+            url.searchParams.set("secret", secret);
+            url.searchParams.set("action", "step");
+            
+            console.log(`[Worker] 正在发送请求 (推进阶段): ${url.hostname}`);
+            const response = await fetch(url.toString(), { 
+              method: "POST",
+              headers: { "User-Agent": "Cloudflare-Cron-Worker" }
+            });
+            
+            const contentType = response.headers.get("content-type") || "";
+            if (contentType.includes("application/json")) {
+                const data = await response.json().catch(()=>({}));
+                console.log(`[Worker] 返回 JSON (阶段结果): ${JSON.stringify(data).substring(0, 300)}`);
+                
+                if (data.status === "skipped" || data.status === "error" || data.status === "success" || data.status === "idle" || data.status === "no target found") {
+                    console.log(`[Worker] 流程判定为中止或完成。`);
                     finished = true;
-                    break;
-                 }
-                 
-                 console.log(`[Worker Poll] 最新状态: ${JSON.stringify(statusData).substring(0, 300)}`);
-                 
-                 if (statusData.status === "running") {
-                    console.log(`[Worker] 任务进行中 -> Phase: ${statusData.phase}, Target: ${statusData.target || '未知'}`);
-                 } else if (statusData.status === "success") {
-                    console.log(`[Worker] 轮询确认任务已成功完成!`);
+                } else if (data.status === "running") {
+                    console.log(`[Worker] 当前阶段 (${data.phase}) 完成，即将发起新请求推进下一阶段...`);
+                    await new Promise(r => setTimeout(r, 1000));
+                } else {
+                    console.log(`[Worker] 未知状态，停止。`);
                     finished = true;
-                 } else if (statusData.status === "error") {
-                    console.error(`[Worker] 轮询发现任务错误:`, statusData.error || "未知错误");
-                    finished = true;
-                 }
-             } else {
-                 console.warn(`[Worker Poll] 请求状态失败，状态码: ${statusRes.status}`);
-             }
-           } catch(pollErr) {
-             console.error(`[Worker] 轮询过程出错:`, pollErr.message);
-           }
+                }
+            } else {
+                console.log(`[Worker] 响应非 JSON 格式，无法解析，停止。status: ${response.status}`);
+                finished = true;
+            }
+        }
+        
+        if (!finished) {
+            console.warn(`[Worker] 达到 Worker 最大运行时长 (14min)，主动退出。若未完成则下次 Cron 继续。`);
         }
         
         console.log(`[Worker] 流程彻底结束，退出。`);
