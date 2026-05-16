@@ -551,7 +551,7 @@ app.get("/admin/config", async (c) => {
     aliyun_model_id: await getConfig(db, "aliyun_model_id"),
     cron_interval_enabled: await getConfig(db, "cron_interval_enabled", "false") === "true",
     cron_interval_hours: parseInt(await getConfig(db, "cron_interval_hours", "0")),
-    cron_interval_minutes: parseInt(await getConfig(db, "cron_interval_minutes", "15")),
+    cron_interval_minutes: parseInt(await getConfig(db, "cron_interval_minutes", "0")),
     last_cron_trigger_time: await getConfig(db, "last_cron_trigger_time", ""),
     last_cron_message_time: await getConfig(db, "last_cron_message_time", "")
   });
@@ -1552,7 +1552,7 @@ app.post("/cron", async (c) => {
     if (!force && intervalEnabled && lastTrigger) {
         const lastTime = parseInt(lastTrigger);
         const hours = parseInt(await getConfig(db, "cron_interval_hours", "0"));
-        const mins = parseInt(await getConfig(db, "cron_interval_minutes", "15"));
+        const mins = parseInt(await getConfig(db, "cron_interval_minutes", "0"));
         const intervalMs = (hours * 3600 + mins * 60) * 1000;
         
         if (now - lastTime < intervalMs) {

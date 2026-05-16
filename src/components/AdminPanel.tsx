@@ -1133,14 +1133,8 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                         onChange={(e) => setConfig({ ...config, cron_interval_hours: e.target.value })}
                         onBlur={(e) => {
                            let val = parseInt(e.target.value) || 0;
-                           let mins = parseInt(String(config.cron_interval_minutes)) || 0;
-                           if (val === 0 && mins < 15) {
-                               mins = 15;
-                               setConfig({ ...config, cron_interval_hours: val, cron_interval_minutes: mins });
-                               saveConfig("cron_interval_minutes", String(mins));
-                           } else {
-                               setConfig({ ...config, cron_interval_hours: val });
-                           }
+                           if (val < 0) val = 0;
+                           setConfig({ ...config, cron_interval_hours: val });
                            saveConfig("cron_interval_hours", String(val));
                         }}
                         className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all appearance-none"
@@ -1149,7 +1143,6 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                     <div className="space-y-2">
                       <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex justify-between">
                         <span>分钟</span>
-                        <span className="text-indigo-500/60 font-black">最少 15</span>
                       </label>
                       <input 
                         type="number"
@@ -1160,7 +1153,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                         onBlur={(e) => {
                            let val = parseInt(e.target.value) || 0;
                            if (val > 60) val = 60;
-                           if (val < 15 && (!config.cron_interval_hours || parseInt(String(config.cron_interval_hours)) === 0)) val = 15;
+                           if (val < 0) val = 0;
                            setConfig({ ...config, cron_interval_minutes: val });
                            saveConfig("cron_interval_minutes", String(val));
                         }}
