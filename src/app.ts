@@ -128,7 +128,7 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
   if (onStreamPulse) {
       heartbeatPromise = (async () => {
           while (isFetching) {
-              await new Promise(r => setTimeout(r, 4000)); // Reduced from 8s to 4s
+              await new Promise(r => setTimeout(r, 10000)); // Change from 4s to 10s
               if (!isFetching) break;
               try { 
                 await onStreamPulse(); 
@@ -167,7 +167,7 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
             await onStreamPulse();
             try { await fetch("https://www.google.com/robots.txt", { method: 'HEAD', signal: AbortSignal.timeout(1000) }).catch(()=>{}); } catch(e){}
           } catch(e) {}
-      }, 2000); // Increased frequency to 2s for better stability
+      }, 10000); // Increased from 2s to 10s
     }
 
     const aliyunCleanup = () => {
@@ -296,9 +296,11 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
           } : undefined
         });
         let fullText = "";
+        let lastPulse = Date.now();
         for await (const chunk of stream) {
            fullText += chunk.text;
-           if (onStreamPulse) {
+           if (onStreamPulse && Date.now() - lastPulse > 10000) { // 10s throttle
+               lastPulse = Date.now();
                onStreamPulse().catch(()=>{});
                // Occasional dummy fetch to keep worker alive
                if (fullText.length % 500 < 50) {

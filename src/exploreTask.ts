@@ -154,27 +154,27 @@ export async function runExplorationTask(
     console.log("[Explore Task] State initialized.");
     addLog(`[SYSTEM] 协议就绪，调度引擎 (SCHEDULER_R3) 已分配任务单元`, "success");
 
-    // Global activity heartbeat every 4 seconds for better UI feedback
+    // Global activity heartbeat every 10 seconds for better UI feedback
     globalHeartbeat = setInterval(async () => {
         try {
             const lastStep = state.steps[state.steps.length - 1];
             const waitingSecs = Math.floor((Date.now() - (lastStep?.startTime || Date.now())) / 1000);
             if (waitingSecs > 1 && state.status === 'running') {
                 // Persistent log for heartbeat
-                if (waitingSecs % 8 === 0) {
+                if (waitingSecs % 10 === 0) {
                     addLog(`探索进行中... 已在当前步骤等待 ${waitingSecs}s`, "heartbeat", undefined, true);
                 }
                 saveState(`Tick ${waitingSecs}s`);
 
                 // Dummy activity to keep Cloudflare isolate from suspension
-                if (waitingSecs % 12 === 0) {
+                if (waitingSecs % 20 === 0) {
                     fetch("https://www.google.com/robots.txt", { method: 'HEAD', signal: AbortSignal.timeout(1000) }).catch(()=>{});
                 }
             }
         } catch (e) {
             console.error("Heartbeat timer error:", e);
         }
-    }, 4000);
+    }, 10000);
 
     addLog("正在读取后台模型配置与权限校验...", "info");
     console.log("[Explore Task] Reading config...");
@@ -254,12 +254,13 @@ export async function runExplorationTask(
     // Wikidata timeout set to 45s to be safe
     let wikiMeta: any;
     try {
-        // Explicitly pulse and log while waiting for Wiki
         const wikiPulse = setInterval(() => {
             const waiting = Math.floor((Date.now() - (state.steps[state.steps.length - 1]?.startTime || Date.now())) / 1000);
             addLog(`[WIKI] Wikidata 深度检索中... 已持续 ${waiting}s`, "heartbeat", undefined, true);
             saveState("Wiki 检索中...");
-        }, 8000);
+            // Keep Cloudflare isolate alive during long Wiki fetch
+            fetch("https://www.google.com/robots.txt", { method: 'HEAD', signal: AbortSignal.timeout(1000) }).catch(()=>{});
+        }, 10000);
 
         wikiMeta = await Promise.race([
             metaPromise,
