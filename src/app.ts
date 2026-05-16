@@ -1286,7 +1286,11 @@ app.get("/explore/status", async (c) => {
   let statusStr = await getConfig(db, "explore_state", "null");
   if (statusStr === "null") return c.json(null);
   const data = JSON.parse(statusStr);
-  const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
+  let isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
+  const cronSecret = (c.env && c.env.CRON_SECRET) || "update_celeb";
+  if (!isAdmin && c.req.header("x-admin-password") === cronSecret) {
+      isAdmin = true;
+  }
   
   if (data && data.status === 'running') {
       const diff = data.lastHeartbeat ? (Date.now() - data.lastHeartbeat) : Infinity;
@@ -1300,13 +1304,9 @@ app.get("/explore/status", async (c) => {
 
   data.isOwner = isAdmin;
 
+  // if not admin, strip logs to avoid exposing potential error stacks or prompt info
   if (!isAdmin) {
-      return c.json(null);
-  }
-
-  // if not admin, strip logs and steps except last step or error? No, frontend needs steps for UI. 
-  if (!isAdmin) {
-      data.logs = []; // do not return logs to frontend users
+      data.logs = [];
   }
   return c.json(data);
 });
@@ -1512,7 +1512,8 @@ app.post("/cron", async (c) => {
     const secret = c.req.query("secret");
     const force = c.req.query("force") === "true";
 
-    if (secret !== "update_celeb") {
+    const cronSecret = (c.env && c.env.CRON_SECRET) || "update_celeb";
+    if (secret !== cronSecret) {
         return c.json({ error: "Unauthorized" }, 401);
     }
     
@@ -1603,26 +1604,13 @@ app.post("/cron", async (c) => {
         'explorer'
     );
     
-    console.log(`[Cron] Started streaming task for ${targetName}`);
+    console.log(`[Cron] Started background task for ${targetName}`);
 
-    // Return a stream immediately to keep the connection alive and prevent early Worker eviction
-    return streamSSE(c, async (stream) => {
-        // Send initial acknowledgment so the cron worker knows it started
-        await stream.writeSSE({ data: JSON.stringify({ status: "started", message: "探索任务已启动", taskId: newTaskId, target: targetName }) });
+    if (c.executionCtx && c.executionCtx.waitUntil) {
+        c.executionCtx.waitUntil(task.catch((e: any) => console.error("[Cron Task Error]", e)));
+    } else {
+        task.catch(e => console.error("Task Error", e));
+    }
 
-        // Keep the connection open while the task runs
-        const heartbeatTimer = setInterval(() => {
-            stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(()=>{});
-        }, 8000);
-
-        try {
-            await task;
-            await stream.writeSSE({ data: JSON.stringify({ status: "completed" }) });
-        } catch (e: any) {
-            console.error("[Cron Task Error]", e);
-            await stream.writeSSE({ data: JSON.stringify({ status: "error", message: e.message }) });
-        } finally {
-            clearInterval(heartbeatTimer);
-        }
-    });
+    return c.json({ status: "started", message: "探索任务已启动", taskId: newTaskId, target: targetName });
 });
