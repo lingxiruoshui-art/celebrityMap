@@ -473,18 +473,6 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
         }
         
         pollStatusRef.current = true;
-
-        if (res.body) {
-           const reader = res.body.getReader();
-           (async () => {
-               try {
-                   while (true) {
-                       const {done} = await reader.read();
-                       if (done) break;
-                   }
-               } catch(e) {}
-           })();
-        }
       } catch (err: any) {
         setError(err.message || "探索过程中发生未知错误。");
         setIsLoading(false);

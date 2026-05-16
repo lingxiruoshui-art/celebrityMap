@@ -1445,42 +1445,30 @@ app.post("/explore/start", async (c) => {
   const stateStr = JSON.stringify(initialState);
   await setConfig(db, "explore_state", stateStr);
 
-  // Return SSE to keep the Cloudflare Worker isolate alive while the AI is computing
-  return streamSSE(c, async (stream) => {
-      // Re-bind the pulse callback to also write to the stream
-      const originalPulse = async (msg: string) => {
-          if (msg !== 'heartbeat') console.log(`[Explore Pulse] ${msg}`);
-          try {
-             await stream.writeSSE({ data: JSON.stringify({ type: msg === 'heartbeat' ? 'ping' : 'msg', text: msg }) });
-          } catch (e) {
-             // Client might have disconnected, ignore
-          }
-      };
+  // Return directly to prevent Cloudflare timeout from terminating the response.
+  // The frontend will poll /api/explore/status to read logs and steps.
+  const originalPulse = async (msg: string) => {
+      // Background heartbeat logging only
+      if (msg !== 'heartbeat') console.log(`[Explore Pulse] ${msg}`);
+  };
 
-      // Create a background promise that tracks the task
-      const taskWithStream = runExplorationTask(
-          db, target, callAI, getConfig, setConfig, addRelationship, 
-          ARCHIVE_PROMPT, ARCHIVE_SCHEMA, 
-          fetchMetadataFromWiki, c, !!isAdmin,
-          originalPulse,
-          newTaskId,
-          reqSource || 'explorer'
-      );
+  // Create a background promise that tracks the task
+  const task = runExplorationTask(
+      db, target, callAI, getConfig, setConfig, addRelationship, 
+      ARCHIVE_PROMPT, ARCHIVE_SCHEMA, 
+      fetchMetadataFromWiki, c, !!isAdmin,
+      originalPulse,
+      newTaskId,
+      reqSource || 'explorer'
+  );
 
-      if (c.executionCtx && c.executionCtx.waitUntil) {
-          c.executionCtx.waitUntil(taskWithStream.catch((e: any) => console.error("Background task error:", e)));
-      }
+  if (c.executionCtx && c.executionCtx.waitUntil) {
+      c.executionCtx.waitUntil(task.catch((e: any) => console.error("Background task error:", e)));
+  } else {
+      task.catch(e => console.error("Task Error", e));
+  }
 
-      try {
-          await taskWithStream;
-      } catch (err: any) {
-          console.error("Task execution error:", err);
-      } finally {
-          try {
-              await stream.writeSSE({ data: JSON.stringify({ type: 'done' }) });
-          } catch (e) {}
-      }
-  });
+  return c.json({ status: "started", message: "探索任务已在后台启动", taskId: newTaskId });
 });
 
 app.post("/explore/stop", async (c) => {
