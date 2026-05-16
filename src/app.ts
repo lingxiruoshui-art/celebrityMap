@@ -1540,6 +1540,13 @@ app.post("/cron", async (c) => {
 
     // Check interval (unless forced)
     const intervalEnabled = await getConfig(db, "cron_interval_enabled", "false") === "true";
+    
+    // If not forced and auto explore is disabled, skip entirely.
+    if (!force && !intervalEnabled) {
+        console.log("[Cron Skip] 后台自动探索未开启");
+        return c.json({ status: "skipped", message: "后台自动探索控制已关闭" });
+    }
+
     const lastTrigger = await getConfig(db, "last_cron_trigger_time", "");
     
     if (!force && intervalEnabled && lastTrigger) {

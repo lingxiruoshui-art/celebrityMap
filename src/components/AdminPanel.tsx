@@ -1115,7 +1115,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                         <div className={`w-10 h-5 rounded-full transition-colors ${(config.cron_interval_enabled === true || config.cron_interval_enabled === 'true') ? 'bg-indigo-600' : 'bg-slate-200'}`}></div>
                         <div className={`absolute top-1 left-1 w-3 h-3 bg-white rounded-full transition-transform ${(config.cron_interval_enabled === true || config.cron_interval_enabled === 'true') ? 'translate-x-5' : ''}`}></div>
                       </div>
-                      <span className="text-xs font-bold text-slate-600 group-hover:text-indigo-600 transition-colors">开启间隔限制</span>
+                      <span className="text-xs font-bold text-slate-600 group-hover:text-indigo-600 transition-colors">开启后台自动探索</span>
                     </label>
                   </div>
                 </div>
@@ -1133,7 +1133,14 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                         onChange={(e) => setConfig({ ...config, cron_interval_hours: e.target.value })}
                         onBlur={(e) => {
                            let val = parseInt(e.target.value) || 0;
-                           setConfig({ ...config, cron_interval_hours: val });
+                           let mins = parseInt(String(config.cron_interval_minutes)) || 0;
+                           if (val === 0 && mins < 15) {
+                               mins = 15;
+                               setConfig({ ...config, cron_interval_hours: val, cron_interval_minutes: mins });
+                               saveConfig("cron_interval_minutes", String(mins));
+                           } else {
+                               setConfig({ ...config, cron_interval_hours: val });
+                           }
                            saveConfig("cron_interval_hours", String(val));
                         }}
                         className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all appearance-none"

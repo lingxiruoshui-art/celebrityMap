@@ -86,6 +86,6 @@ export default {
       }
     };
 
-    ctx.waitUntil(deliver());
+    await deliver();
   }
 };
