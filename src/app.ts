@@ -10,7 +10,6 @@ const root = new Hono<{
   Bindings: { 
     DB?: any;
     IMAGES?: any;
-    EXPLORE_QUEUE?: any;
     GEMINI_API_KEY?: string;
     GEMINI_MODEL_ID?: string;
     ADMIN_PASSWORD?: string;
@@ -1440,40 +1439,32 @@ app.post("/explore/start", async (c) => {
   const newTaskId = clientTaskId || Date.now();
   await initExplorationState(db, getConfig, setConfig, target, reqSource || 'explorer', newTaskId);
 
-  if (c.env && c.env.EXPLORE_QUEUE) {
-      console.log(`[Explore] 准备分发手动探索任务至 Queue, target: ${target}, source: ${reqSource || 'explorer'}, taskId: ${newTaskId}`);
-      await c.env.EXPLORE_QUEUE.send({ type: 'admin', targetName: target, reqSource: reqSource || 'explorer', taskId: newTaskId });
-      console.log(`[Explore] 手动探索任务已成功投递至 Queue.`);
-      return c.json({ status: "started", message: "探索任务已提交至 Queue 处理", taskId: newTaskId });
-  } else {
-      // Fallback if no queue bound in local env or development
-      return streamSSE(c, async (stream) => {
-          await stream.writeSSE({ data: JSON.stringify({ status: "started", message: "（本地无Queue模式）任务状态机已初始化", taskId: newTaskId }) });
-          const heartbeatTimer = setInterval(() => {
-              stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(()=>{});
-          }, 5000);
-          
-          try {
-              let isDone = false;
-              while (!isDone) {
-                  const state = await advanceExplorationStep(
-                      db, callAI, getConfig, setConfig, addRelationship,
-                      ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA,
-                      fetchMetadataFromWiki, c, !!isAdmin
-                  );
-                  if (state.status === "success" || state.status === "error" || state.status === "idle") {
-                      isDone = true;
-                  }
+  return streamSSE(c, async (stream) => {
+      await stream.writeSSE({ data: JSON.stringify({ status: "started", message: "任务状态机已初始化", taskId: newTaskId }) });
+      const heartbeatTimer = setInterval(() => {
+          stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(()=>{});
+      }, 5000);
+      
+      try {
+          let isDone = false;
+          while (!isDone) {
+              const state = await advanceExplorationStep(
+                  db, callAI, getConfig, setConfig, addRelationship,
+                  ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA,
+                  fetchMetadataFromWiki, c, !!isAdmin
+              );
+              if (state.status === "success" || state.status === "error" || state.status === "idle") {
+                  isDone = true;
               }
-              await stream.writeSSE({ data: JSON.stringify({ status: "completed" }) });
-          } catch (e: any) {
-              console.error("[Explore Task Error]", e);
-              await stream.writeSSE({ data: JSON.stringify({ status: "error", message: e.message }) });
-          } finally {
-              clearInterval(heartbeatTimer);
           }
-      });
-  }
+          await stream.writeSSE({ data: JSON.stringify({ status: "completed" }) });
+      } catch (e: any) {
+          console.error("[Explore Task Error]", e);
+          await stream.writeSSE({ data: JSON.stringify({ status: "error", message: e.message }) });
+      } finally {
+          clearInterval(heartbeatTimer);
+      }
+  });
 });
 
 app.post("/explore/stop", async (c) => {
@@ -1511,51 +1502,38 @@ app.post("/explore/reset", async (c) => {
 });
 
 // Added cron endpoint
-app.post("/cron", async (c) => {
+app.post("/api/cron/get-target", async (c) => {
     const now = Date.now();
-    console.log(`[Cron Worker] ${new Date(now).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })} 后台明确收到 worker 消息`);
+    console.log(`[Cron Get Target] ${new Date(now).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })} 请求参数`);
     const secret = c.req.query("secret");
     const force = c.req.query("force") === "true";
-    const action = c.req.query("action"); // e.g. "step"
 
     const cronSecret = (c.env && c.env.CRON_SECRET) || "update_celeb";
-    if (secret !== cronSecret) {
+    if (secret !== cronSecret && c.req.header("x-admin-password") !== getAdminPassword(c)) {
         return c.json({ error: "Unauthorized" }, 401);
     }
     
     const db = await getDb(c);
     
-    // Always update last_cron_message_time to show "live" heartbeat
     await setConfig(db, "last_cron_message_time", String(now));
     
-    // 检查是否已经有探索任务在运行
     let currentStr = await getConfig(db, "explore_state", "null");
-
     if (currentStr !== "null") {
         try {
             const current = JSON.parse(currentStr);
             const isStale = current.status === 'running' && (!current.lastHeartbeat || (Date.now() - current.lastHeartbeat > 600000));
-            
             if (current.status === 'running' && !isStale) {
-                console.log("[Cron Skip] 探索正在进行中，跳过本次触发");
                 return c.json({ status: "skipped", message: "探索正在进行中，跳过本次触发" });
             }
-        } catch(e) {
-            console.error("[Cron] 解析状态失败:", e);
-        }
+        } catch(e) {}
     }
 
-    // Check interval (unless forced)
     const intervalEnabled = await getConfig(db, "cron_interval_enabled", "false") === "true";
-    
-    // If not forced and auto explore is disabled, skip entirely.
     if (!force && !intervalEnabled) {
-        console.log("[Cron Skip] 后台自动探索未开启");
         return c.json({ status: "skipped", message: "后台自动探索控制已关闭" });
     }
 
     const lastTrigger = await getConfig(db, "last_cron_trigger_time", "");
-    
     if (!force && intervalEnabled && lastTrigger) {
         const lastTime = parseInt(lastTrigger);
         const hours = parseInt(await getConfig(db, "cron_interval_hours", "0"));
@@ -1563,12 +1541,9 @@ app.post("/cron", async (c) => {
         const intervalMs = (hours * 3600 + mins * 60) * 1000;
         
         if (now - lastTime < intervalMs) {
-            console.log(`[Cron Skip] Interval not reached. Last: ${new Date(lastTime).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`);
             return c.json({ 
                 status: "skipped", 
-                message: "间隔时间未到，自动探索任务跳过（可使用 force=true 强制运行）", 
-                last_trigger: new Date(lastTime).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }),
-                next_allowable: new Date(lastTime + intervalMs).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })
+                message: "间隔时间未到，自动探索任务跳过", 
             });
         }
     }
@@ -1576,15 +1551,14 @@ app.post("/cron", async (c) => {
     const { targetName, isEmpty } = await pickTarget(db);
     
     if (isEmpty || !targetName) {
-        return c.json({ status: "no target found", isEmpty, message: "成功收到消息，但已无更多人物可探索" });
+        return c.json({ status: "no target found", isEmpty, message: "已无更多人物可探索" });
     }
-
-    // 收到下一次触发任务时将上次的探索结果入库
+    
+    // Process previous pending result
     try {
         const pendingResultStr = await getConfig(db, "pending_auto_result", "null");
         if (pendingResultStr !== "null") {
             const pendingParams = JSON.parse(pendingResultStr);
-            console.log(`[Cron] 正在将上次的探索结果入库: ${pendingParams.finalName}`);
             await doFinalizeInsert(db, pendingParams.finalName, pendingParams.personData, pendingParams.wikiMeta, c, addRelationship, null);
             await setConfig(db, "pending_auto_result", "null");
         }
@@ -1592,48 +1566,28 @@ app.post("/cron", async (c) => {
         console.error("[Cron] 上次结果入库失败", e);
     }
     
-    // Update last trigger time
     await setConfig(db, "last_cron_trigger_time", String(now));
 
-    if (c.env && c.env.EXPLORE_QUEUE) {
-        console.log(`[Cron] 定时任务触发，准备分发唤醒探索任务至 Queue: ${targetName}`);
-        await c.env.EXPLORE_QUEUE.send({ type: 'auto' });
-        console.log(`[Cron] 唤醒探索任务已成功投递至 Queue.`);
-        return c.json({ status: "started", message: "定时任务触发，已提交至 Queue 处理" });
-    } else {
-        const newTaskId = Date.now();
-        await initExplorationState(db, getConfig, setConfig, targetName, 'explorer', newTaskId);
-        
-        console.log(`[Cron] Initialized state machine for ${targetName}`);
+    const newTaskId = Date.now();
+    await initExplorationState(db, getConfig, setConfig, targetName, 'auto', newTaskId);
+    console.log(`[Cron] Initialized state machine for ${targetName}`);
 
-        return streamSSE(c, async (stream) => {
-            await stream.writeSSE({ data: JSON.stringify({ status: "started", message: "探索状态机已启动", taskId: newTaskId, target: targetName }) });
-            const heartbeatTimer = setInterval(() => {
-                stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(()=>{});
-            }, 5000);
-            
-            try {
-                let isDone = false;
-                while (!isDone) {
-                    const state = await advanceExplorationStep(
-                        db, callAI, getConfig, setConfig, addRelationship,
-                        ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA,
-                        fetchMetadataFromWiki, c, true
-                    );
-                    
-                    await stream.writeSSE({ data: JSON.stringify({ status: "running", phase: state.phase, target: state.target }) }).catch(()=>{});
-                    
-                    if (state.status === "success" || state.status === "error" || state.status === "idle") {
-                        isDone = true;
-                    }
-                }
-                await stream.writeSSE({ data: JSON.stringify({ status: "completed", target: targetName }) }).catch(()=>{});
-            } catch (e: any) {
-                console.error("[Cron Explore Task Error]", e);
-                await stream.writeSSE({ data: JSON.stringify({ status: "error", target: targetName, message: e.message }) }).catch(()=>{});
-            } finally {
-                clearInterval(heartbeatTimer);
-            }
-        });
+    return c.json({ status: "success", targetName, taskId: newTaskId });
+});
+
+app.post("/api/cron/notify-result", async (c) => {
+    const secret = c.req.query("secret");
+    const cronSecret = (c.env && c.env.CRON_SECRET) || "update_celeb";
+    if (secret !== cronSecret && c.req.header("x-admin-password") !== getAdminPassword(c)) {
+        return c.json({ error: "Unauthorized" }, 401);
     }
+
+    const { targetName, result } = await c.req.json();
+    console.log(`[Cron Notify Result] 收到 Queue 的处理结果: target=${targetName}, status=${result.status}`);
+    
+    const db = await getDb(c);
+    // Any extra cleanup or logging can be added here. (the main finalization is handled within advanceExplorationStep)
+    await setConfig(db, "last_queue_result", JSON.stringify({ targetName, result, t: Date.now() }));
+    
+    return c.json({ success: true, message: "结果已记录" });
 });
