@@ -200,7 +200,31 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
         const res = await fetch("/api/explore/status", { headers: adminHeaders });
         if (res.ok) {
           const data = await res.json() as any;
-          setIsLoading(data && data.status === 'running');
+          const isRunning = data && data.status === 'running';
+          setIsLoading(isRunning);
+
+          // Recovery logic: if global task is running but we didn't start a local task, 
+          // or if local task logs are far behind global logs, sync them.
+          if (data && isRunning && data.logs && data.logs.length > 0) {
+            if (!activeTask || (activeTaskLogs.length < (data.logs.length - 1))) {
+                if (!activeTask) {
+                    setActiveTask({ title: `同步中: ${data.target}`, isRunning: true });
+                }
+                
+                // Map the logs from ExploreState format to AdminPanel format
+                const mappedLogs = data.logs.map((L: any) => ({
+                    type: L.type,
+                    msg: L.msg,
+                    time: L.timestamp && L.timestamp.includes(':') ? new Date() : new Date(L.timestamp) // rough mapping
+                }));
+                setActiveTaskLogs(mappedLogs);
+            }
+          } else if (data && data.status === 'success' && activeTask && activeTask.isRunning) {
+              // Task finished elsewhere
+              setActiveTask({ ...activeTask, isRunning: false });
+              setActiveTaskLogs(prev => [...prev, { type: 'success', msg: '任务已成功完成', time: new Date() }]);
+              fetchArchive();
+          }
         }
       } catch (e) {}
     };
@@ -209,6 +233,9 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
       fetchStatus();
       if (activeTab === "archive") {
         fetchArchive();
+      }
+      if (activeTab === "config") {
+        fetchConfig();
       }
     }, 5000); // Poll every 5 seconds
 
@@ -291,41 +318,65 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
       { type: 'ai-req', msg: '正在调用 AI 匹配馆藏人物网络 (耗时约 5-10 秒)...', time: new Date() }
     ]);
     
+    let errorMsg = '';
     try {
       const res = await fetch(`/api/admin/people/${id}/expand-connections`, {
         method: "POST",
         headers: adminHeaders
       });
-      if (res.ok) {
-        const data = await res.json() as any;
-        if (data.addedCount > 0) {
-          setActiveTaskLogs(prev => [...prev, { type: 'success', msg: `扩展完成，成功新增 ${data.addedCount} 条联系`, time: new Date() }]);
-          showNotification('success', `已成功为 [${name}] 扩展 ${data.addedCount} 条联系`);
-          fetchArchive();
-        } else if (data.fallbackArchive) {
-          const { name: fallbackName, reason } = data.fallbackArchive;
-          setActiveTaskLogs(prev => [...prev, { 
-            type: 'info', 
-            msg: `库内未发现直接联系。AI 推荐将关联人物 [${fallbackName}] 收入馆藏。原因: ${reason}`, 
-            time: new Date() 
-          }]);
-          setActiveTaskLogs(prev => [...prev, { type: 'step', msg: `准备将 [${fallbackName}] 收入馆藏...`, time: new Date() }]);
-          
-          setExpandingId(null); // Clear expanding state as we transition to archiving
-          await performArchiveFigure(fallbackName, `关联入库 [${fallbackName}]`);
-          return; // performArchiveFigure handles task closing
-        } else {
-          setActiveTaskLogs(prev => [...prev, { type: 'info', msg: `未能在现有库中找到与 [${name}] 相关的新联系`, time: new Date() }]);
-          showNotification('info', `未能在现有库中找到与 [${name}] 相关的新联系`);
+      
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("无法建立数据流连接");
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.type === 'error') {
+                 errorMsg = data.msg;
+                 setActiveTaskLogs(prev => [...prev, { type: 'error', msg: errorMsg, time: new Date() }]);
+              } else if (data.type === 'step' || data.type === 'info' || data.type === 'success' || data.type === 'ai-req' || data.type === 'ai-res' || data.type === 'heartbeat') {
+                 setActiveTaskLogs(prev => [...prev, { type: data.type as any, msg: data.msg, time: new Date() }]);
+              } else if (data.type === 'result') {
+                 if (data.addedCount > 0) {
+                   setActiveTaskLogs(prev => [...prev, { type: 'success', msg: `扩展完成，成功新增 ${data.addedCount} 条联系`, time: new Date() }]);
+                   showNotification('success', `已成功为 [${name}] 扩展 ${data.addedCount} 条联系`);
+                   fetchArchive();
+                 } else if (data.fallbackArchive) {
+                   const { name: fallbackName, reason } = data.fallbackArchive;
+                   setActiveTaskLogs(prev => [...prev, { 
+                     type: 'info', 
+                     msg: `馆藏内未发现新联系。AI 推荐收录关联人物 [${fallbackName}]。原因: ${reason}`, 
+                     time: new Date() 
+                   }]);
+                   setActiveTaskLogs(prev => [...prev, { type: 'step', msg: `准备将 [${fallbackName}] 收入馆藏...`, time: new Date() }]);
+                   
+                   setExpandingId(null);
+                   await performArchiveFigure(fallbackName, `关联入库 [${fallbackName}]`);
+                   return; 
+                 } else {
+                   setActiveTaskLogs(prev => [...prev, { type: 'info', msg: `未能在现有库中找到与 [${name}] 相关的新联系`, time: new Date() }]);
+                   showNotification('info', `未能在现有库中找到与 [${name}] 相关的新联系`);
+                 }
+              }
+            } catch(e) {}
+          }
         }
-      } else {
-        const data = await res.json() as any;
-        setActiveTaskLogs(prev => [...prev, { type: 'error', msg: `扩展失败: ${data.error}`, time: new Date() }]);
-        showNotification('error', data.error || '扩展失败');
       }
-    } catch (e) {
-      setActiveTaskLogs(prev => [...prev, { type: 'error', msg: `连接超时`, time: new Date() }]);
-      showNotification('error', '连接超时');
+      if (errorMsg) throw new Error(errorMsg);
+    } catch (e: any) {
+      setActiveTaskLogs(prev => [...prev, { type: 'error', msg: e.message || `连接超时`, time: new Date() }]);
+      showNotification('error', e.message || '连接超时');
     } finally {
       setExpandingId(null);
       setActiveTask(prev => prev ? { ...prev, isRunning: false } : null);
@@ -637,77 +688,96 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
             )}
           </AnimatePresence>
 
-          <div className="p-5 h-20 border-b border-slate-100 flex items-center justify-between bg-white shrink-0">
-            <div className="flex items-center gap-3">
-              {activeTab === 'archive_plus' && <PlusCircle className="w-6 h-6 text-indigo-600" />}
-              {activeTab === 'archive' && <Library className="w-6 h-6 text-indigo-600" />}
-              {activeTab === 'config' && <SlidersHorizontal className="w-6 h-6 text-indigo-600" />}
-              <h3 className="font-bold text-lg text-slate-800 tracking-tight">
-                {activeTab === 'archive_plus' ? '时空入库' : activeTab === 'archive' ? '馆藏管理' : '系统配置'}
-              </h3>
-            </div>
-            <div className="flex items-center gap-2 sm:gap-4">
-              {activeTab === 'config' && (
-                <button
-                  onClick={saveAllConfig}
-                  disabled={savingKey !== null}
-                  title="保存所有设置"
-                  className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all disabled:opacity-50"
-                >
-                  {savingKey === 'all' ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-5 h-5" />}
+          <div className="border-b border-slate-100 bg-white">
+            <div className="p-5 h-20 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3">
+                {activeTab === 'archive_plus' && <PlusCircle className="w-6 h-6 text-indigo-600" />}
+                {activeTab === 'archive' && <Library className="w-6 h-6 text-indigo-600" />}
+                {activeTab === 'config' && <SlidersHorizontal className="w-6 h-6 text-indigo-600" />}
+                <h3 className="font-bold text-lg text-slate-800 tracking-tight">
+                  {activeTab === 'archive_plus' ? '时空入库' : activeTab === 'archive' ? '馆藏管理' : '系统配置'}
+                </h3>
+              </div>
+              <div className="flex items-center gap-2 sm:gap-6">
+                {activeTab === 'archive' && (
+                  <div className="relative group shrink-0 hidden sm:block">
+                    <input 
+                      type="text"
+                      placeholder="搜索馆藏..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-48 lg:w-64 pl-9 pr-4 py-2 bg-slate-100 border border-transparent rounded-xl text-xs focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 outline-none transition-all placeholder:text-slate-400 group-hover:bg-slate-200/50"
+                    />
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
+                  </div>
+                )}
+                {activeTab === 'config' && (
+                  <button
+                    onClick={saveAllConfig}
+                    disabled={savingKey !== null}
+                    title="保存所有设置"
+                    className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all disabled:opacity-50"
+                  >
+                    {savingKey === 'all' ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-5 h-5" />}
+                  </button>
+                )}
+                <button onClick={onClose} className="hidden md:flex p-2.5 hover:bg-slate-100 rounded-full transition-colors text-slate-400 hover:text-slate-600">
+                  <X className="w-5 h-5" />
                 </button>
-              )}
-              <button onClick={onClose} className="hidden md:flex p-2.5 hover:bg-slate-100 rounded-full transition-colors text-slate-400 hover:text-slate-600">
-                <X className="w-5 h-5" />
-              </button>
+              </div>
             </div>
+
+            {/* Global Task Status Bar */}
+            <AnimatePresence>
+              {activeTask && (
+                <motion.div 
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  className="bg-indigo-50/80 border-t border-indigo-100/50 overflow-hidden backdrop-blur-sm"
+                >
+                  <div className="px-5 py-3.5 flex flex-col gap-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                         <div className={`w-2 h-2 rounded-full ${activeTask.isRunning ? 'bg-indigo-500 animate-pulse shadow-[0_0_8px_rgba(99,102,241,0.5)]' : 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]'}`} />
+                         <span className="text-[10px] font-black text-indigo-900 uppercase tracking-widest">{activeTask.title}</span>
+                      </div>
+                      {!activeTask.isRunning && (
+                        <button onClick={() => setActiveTask(null)} className="p-1 hover:bg-indigo-100 text-indigo-400 rounded-md transition-all">
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                    <div 
+                      ref={taskLogsContainerRef}
+                      className="max-h-40 overflow-y-auto custom-scrollbar flex flex-col gap-1.5 text-[11px] font-mono leading-relaxed pb-1 pr-2"
+                    >
+                      {activeTaskLogs.map((log, i) => (
+                        <div key={i} className={`flex items-start gap-2.5 transition-all animate-in slide-in-from-left-1 duration-300 ${log.type === 'error' ? 'text-red-500 bg-red-50/50' : log.type === 'success' ? 'text-emerald-600 bg-emerald-50/30' : log.type === 'ai-req' || log.type === 'ai-res' || log.type === 'heartbeat' ? 'text-indigo-500' : 'text-slate-500'} rounded px-1.5 py-0.5`}>
+                          <span className="opacity-30 min-w-[70px] shrink-0 font-sans text-[10px]">[{log.time.toLocaleTimeString('zh-CN', { hour12: false })}]</span>
+                          <span className="font-semibold break-all leading-tight">{log.msg}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
           <div className={`flex-1 ${activeTab === 'archive_plus' ? 'overflow-hidden flex flex-col p-4 sm:p-6 pb-2 sm:pb-2 pt-2 sm:pt-4' : 'overflow-y-auto p-5'} bg-slate-50/30`}>
           <div className={activeTab === "archive" ? "space-y-6 animate-in fade-in duration-500 pb-8" : "hidden"}>
               
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-end px-2 gap-4">
-                <div className="flex-1 w-full min-h-[42px]">
-                   {activeTask ? (
-                       <div className="bg-white border text-xs border-indigo-100 shadow-sm shadow-indigo-100/50 rounded-xl p-3 flex flex-col gap-2 relative overflow-hidden h-32 w-full max-w-2xl">
-                           <div className="font-bold flex items-center justify-between z-10 relative">
-                               <div className="flex items-center gap-2">
-                                   <div className={`w-2 h-2 rounded-full ${activeTask.isRunning ? 'bg-indigo-500 animate-pulse' : 'bg-green-500'}`} />
-                                   <span className="text-indigo-900">{activeTask.title}</span>
-                               </div>
-                               {!activeTask.isRunning && (
-                                   <button onClick={() => setActiveTask(null)} className="text-slate-400 hover:text-slate-600 p-1 bg-slate-50 rounded-md"><X className="w-3.5 h-3.5"/></button>
-                               )}
-                           </div>
-                           <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1.5 z-10 relative text-[11px] font-mono" ref={taskLogsContainerRef}>
-                               {activeTaskLogs.map((log, i) => (
-                                   <div key={i} className={`flex items-start gap-2 leading-relaxed ${log.type === 'error' ? 'text-red-600' : log.type === 'success' ? 'text-emerald-600' : log.type === 'ai-req' || log.type === 'ai-res' || log.type === 'heartbeat' ? 'text-indigo-500' : 'text-slate-600'}`}>
-                                       <span className="opacity-40 min-w-[55px] shrink-0 font-sans text-[10px] hidden sm:block whitespace-nowrap">[{log.time.toLocaleTimeString('zh-CN', { hour12: false })}]</span>
-                                       <span className="break-words font-medium">{log.msg}</span>
-                                   </div>
-                               ))}
-                           </div>
-                           {activeTask.isRunning && <div className="absolute inset-x-0 bottom-0 top-0 bg-gradient-to-r from-indigo-50/30 flex items-center via-transparent to-transparent pointer-events-none z-0" />}
-                       </div>
-                   ) : (
-                       <div className="text-xs text-slate-500 font-medium bg-white border shadow-sm border-slate-200/60 rounded-xl py-3 px-4 h-full flex flex-col justify-center w-full max-w-2xl">
-                          <div className="flex items-center">
-                            <Info className="w-4 h-4 text-indigo-400 mr-2 shrink-0" />
-                            <span>点击操作列的 <UserPlus className="w-3.5 h-3.5 mx-1 inline-block text-emerald-500"/> 或 <Sparkles className="w-3.5 h-3.5 mx-1 inline-block text-indigo-400"/> 查看任务运行状态和详细日志。</span>
-                          </div>
-                       </div>
-                   )}
-                </div>
-
-                <div className="relative w-full md:max-w-xs group shrink-0">
+              <div className="flex flex-col md:flex-row justify-between items-center sm:hidden px-2 mb-2">
+                <div className="relative w-full group shrink-0">
                   <input 
                     type="text"
-                    placeholder="搜索已收录人物..."
+                    placeholder="搜索馆藏..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 outline-none transition-all placeholder:text-slate-400 group-hover:border-slate-300 shadow-sm"
+                    className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 outline-none transition-all shadow-sm"
                   />
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 </div>
               </div>
 
@@ -1087,10 +1157,10 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                     <div className="space-y-2">
                       <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-2">
                          <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
-                         上次收到同步指令
+                         上次成功通讯 (Worker)
                       </label>
                       <div className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono font-bold text-slate-700 tracking-tight flex items-center h-[42px] overflow-hidden whitespace-nowrap">
-                         {config.last_cron_trigger_time ? new Date(parseInt(config.last_cron_trigger_time)).toLocaleString('zh-CN', {
+                         {config.last_cron_message_time ? new Date(parseInt(config.last_cron_message_time)).toLocaleString('zh-CN', {
                            year: 'numeric',
                            month: '2-digit',
                            day: '2-digit',

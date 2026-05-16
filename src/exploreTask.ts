@@ -43,7 +43,7 @@ export async function runExplorationTask(
 
   let isSaving = false;
   const saveState = async (reason?: string) => {
-    if (isSaving) return; // Prevent concurrent saveState
+    if (isSaving) return;
     isSaving = true;
     state.lastHeartbeat = Date.now();
     state.pulse = (state.pulse || 0) + 1;
@@ -67,12 +67,15 @@ export async function runExplorationTask(
 
         const stateStr = JSON.stringify(state);
         await setConfig(db, "explore_state", stateStr);
+        
+        // Also sync last task_logs to DB for persistence if needed
+        // For now we use explore_state as the primary source of truth
     };
 
     try {
         await Promise.race([
             doSave(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error("SaveState Timeout")), 8000))
+            new Promise((_, reject) => setTimeout(() => reject(new Error("SaveState Timeout")), 5000))
         ]);
     } catch (e: any) {
         if (e.message === "AbortError") throw e;
@@ -92,14 +95,23 @@ export async function runExplorationTask(
         return;
       }
     }
+    const timestamp = new Date().toLocaleTimeString();
     state.logs.push({
-      timestamp: new Date().toLocaleTimeString(),
+      timestamp,
       msg,
       type,
       data,
     });
-    // Significantly increased limit for detailed trace logs
-    if (state.logs.length > 500) state.logs.shift();
+
+    // Persistent logging to DB
+    const logData = data ? JSON.stringify(data) : null;
+    db.prepare("INSERT INTO task_logs (task_id, type, msg, data) VALUES (?, ?, ?, ?)")
+      .run(String(state.taskId), type, msg, logData)
+      .catch(e => console.error("Persistent logging failed:", e));
+
+    if (state.logs.length > 150) {
+        state.logs = state.logs.slice(-150);
+    }
   };
 
   const addStep = (msg: string) => {
@@ -138,16 +150,22 @@ export async function runExplorationTask(
     console.log("[Explore Task] State initialized.");
     addLog(`[SYSTEM] 协议就绪，调度引擎 (SCHEDULER_R3) 已分配任务单元`, "success");
 
-    // Global activity heartbeat every 3 seconds as requested
+    // Global activity heartbeat every 4 seconds for better UI feedback
     globalHeartbeat = setInterval(async () => {
-        const lastStep = state.steps[state.steps.length - 1];
-        const waitingSecs = Math.floor((Date.now() - (lastStep?.startTime || Date.now())) / 1000);
-        // More frequent updates for better UI feedback
-        if (waitingSecs > 1) {
-            addLog(`探索进行中... 已在当前步骤等待 ${waitingSecs}s`, "heartbeat", undefined, true);
+        try {
+            const lastStep = state.steps[state.steps.length - 1];
+            const waitingSecs = Math.floor((Date.now() - (lastStep?.startTime || Date.now())) / 1000);
+            if (waitingSecs > 1 && state.status === 'running') {
+                // Persistent log for heartbeat
+                if (waitingSecs % 8 === 0) {
+                    addLog(`探索进行中... 已在当前步骤等待 ${waitingSecs}s`, "heartbeat", undefined, true);
+                }
+                saveState(`Tick ${waitingSecs}s`);
+            }
+        } catch (e) {
+            console.error("Heartbeat timer error:", e);
         }
-        await saveState(waitingSecs % 10 === 0 ? "ongoing" : "heartbeat");
-    }, 3000);
+    }, 4000);
 
     addLog("正在读取后台模型配置与权限校验...", "info");
     console.log("[Explore Task] Reading config...");

@@ -288,7 +288,6 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                        setIsLoading(false);
                        pollStatusRef.current = false;
                    } else if (data.status === 'success') {
-                       if (data.target && allowAdminControls) {} 
                        if (!hasLoadedResultRef.current) {
                            setPath(data.path || []);
                            setNewArrivals(data.newArrivals ? data.newArrivals : []);
@@ -298,11 +297,16 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                            hasLoadedResultRef.current = true;
                            if (onPathFound) onPathFound(data.path || []);
                             
-                            // Automatically pick next candidate after success
-                            if (allowAdminControls || isAdmin) {
-                               handlePickRandomPair();
-                            }
-                           if (data.newArrivals && data.newArrivals.length > 0) onRefreshArchive();
+                           if (data.newArrivals && data.newArrivals.length > 0) {
+                               onRefreshArchive();
+                           }
+                           
+                           // Automatically pick next candidate after success
+                           if (allowAdminControls || isAdmin) {
+                               setTimeout(() => {
+                                   handlePickRandomPair();
+                               }, 500); 
+                           }
                        } else {
                            pollStatusRef.current = false;
                        }
@@ -389,6 +393,12 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     if (isLoading || pollStatusRef.current) return;
     setIsPickingRandom(true);
     setError(null);
+    setPath(null);
+    setDetailedLogs([]);
+    setSearchSteps([]);
+    setShowResults(false);
+    hasLoadedResultRef.current = false;
+    
     try {
       if (allowAdminControls || isAdmin) {
         const headers: any = { "Content-Type": "application/json" };
@@ -896,19 +906,21 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                     </button>
                   </div>
                   
-                  {/* Path Summary Header */}
-                  <div className="p-4 bg-gradient-to-br from-indigo-50 to-white/50 border border-indigo-100/50 rounded-2xl shadow-sm">
-                    <div className="flex items-center gap-2 mb-2">
-                       <Zap className="w-3.5 h-3.5 text-indigo-600" />
-                      <span className="text-[9px] font-black text-slate-800 uppercase tracking-widest">时空关系探索报告</span>
+                  {/* Path Summary Header - Only show if there's an actual path connecting different people */}
+                  {path.length > 1 && (
+                    <div className="p-4 bg-gradient-to-br from-indigo-50 to-white/50 border border-indigo-100/50 rounded-2xl shadow-sm">
+                      <div className="flex items-center gap-2 mb-2">
+                         <Zap className="w-3.5 h-3.5 text-indigo-600" />
+                        <span className="text-[9px] font-black text-slate-800 uppercase tracking-widest">时空关系探索报告</span>
+                      </div>
+                      <p className="text-[11px] text-slate-600 leading-relaxed font-bold">
+                        成功建立 <span className="text-indigo-600">{path[0].name}</span> 
+                        与 <span className="text-indigo-600">{path[path.length-1].name}</span> 之间的历史连接。
+                        链条共包含 <span className="text-indigo-600">{path.length}</span> 个节点，
+                        跨越了深厚的历史脉络。
+                      </p>
                     </div>
-                    <p className="text-[11px] text-slate-600 leading-relaxed font-bold">
-                      成功建立 <span className="text-indigo-600">{path[0].name}</span> 
-                      与 <span className="text-indigo-600">{path[path.length-1].name}</span> 之间的历史连接。
-                      链条共包含 <span className="text-indigo-600">{path.length}</span> 个节点，
-                      跨越了深厚的历史脉络。
-                    </p>
-                  </div>
+                  )}
   
                   {/* Stylized Results List */}
                   <div className="relative pt-2">
@@ -966,14 +978,13 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                        <Zap className={`w-3.5 h-3.5 ${isLoading ? 'text-indigo-500' : 'text-indigo-600'} shrink-0`} />
                       <span className="text-[10px] font-black text-slate-700 uppercase tracking-[0.2em] font-mono">运行日志</span>
                     </div>
-                    {isLoading && lastActivityTime && (
-                       <div className="flex items-center gap-1.5 bg-white/80 px-2 py-0.5 rounded-full border border-slate-200 shadow-sm">
-                         <RefreshCw className={`w-2.5 h-2.5 text-emerald-500 ${pulseActive ? 'animate-spin' : ''}`} />
-                         <span className="text-[9px] font-bold text-slate-500">
-                           {Math.max(0, Math.floor((Date.now() - lastActivityTime) / 1000))}s 前活跃
+                    <div className="flex items-center gap-1.5 bg-white/80 px-2 py-0.5 rounded-full border border-slate-200 shadow-sm">
+                         <RefreshCw className={`w-2.5 h-2.5 ${pulseActive ? 'text-emerald-500 animate-spin' : 'text-rose-500'}`} />
+                         <span className={`text-[9px] font-bold ${pulseActive ? 'text-slate-500' : 'text-rose-600 animate-pulse'}`}>
+                           {Math.max(0, Math.floor((Date.now() - (lastActivityTime || Date.now())) / 1000))}s 前活跃
+                           {!pulseActive && " (连接可能已断开)"}
                          </span>
-                       </div>
-                    )}
+                    </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <button 

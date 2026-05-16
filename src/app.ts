@@ -70,6 +70,14 @@ async function getDb(c: any): Promise<DatabaseAdapter> {
         FOREIGN KEY(person2_id) REFERENCES people(id),
         UNIQUE(person1_id, person2_id)
       )`,
+      `CREATE TABLE IF NOT EXISTS task_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id TEXT,
+        type TEXT,
+        msg TEXT,
+        data TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`,
       `CREATE TABLE IF NOT EXISTS config (
         key TEXT PRIMARY KEY,
         value TEXT
@@ -141,7 +149,10 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
 
     const startTime = Date.now();
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 180000); // 180s timeout
+    const timeoutId = setTimeout(() => {
+        console.warn(`[Aliyun] Request timeout reached (290s) for prompt: ${prompt.substring(0, 50)}...`);
+        controller.abort();
+    }, 290000); // Increased to 290s to stay within Cloud Run 300s limit
 
     let pulseTimer: any;
     if (onStreamPulse) {
@@ -150,7 +161,7 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
           try {
             await onStreamPulse();
           } catch(e) {}
-      }, 5000); // Pulse every 5s instead of 8s for better stability
+      }, 3000); // Increased frequency to 3s for better stability
     }
 
     const aliyunCleanup = () => {
@@ -526,7 +537,8 @@ app.get("/admin/config", async (c) => {
     cron_interval_enabled: await getConfig(db, "cron_interval_enabled", "false") === "true",
     cron_interval_hours: parseInt(await getConfig(db, "cron_interval_hours", "0")),
     cron_interval_minutes: parseInt(await getConfig(db, "cron_interval_minutes", "15")),
-    last_cron_trigger_time: await getConfig(db, "last_cron_trigger_time", "")
+    last_cron_trigger_time: await getConfig(db, "last_cron_trigger_time", ""),
+    last_cron_message_time: await getConfig(db, "last_cron_message_time", "")
   });
 });
 
@@ -606,80 +618,101 @@ app.post("/admin/people/:id/expand-connections", async (c) => {
   const db = await getDb(c);
   const id = c.req.param("id");
   
-  // 1. Get current person info
-  const person = await db.prepare("SELECT * FROM people WHERE id = ?").get(id) as any;
-  if (!person) return c.json({ error: "Person not found" }, 404);
+  return streamSSE(c, async (stream) => {
+    const send = async (data: any) => await stream.writeSSE({ data: JSON.stringify(data) });
+    
+    try {
+      // 1. Get current person info
+      const person = await db.prepare("SELECT * FROM people WHERE id = ?").get(id) as any;
+      if (!person) {
+          await send({ type: 'error', msg: "人物不存在" });
+          return;
+      }
 
-  // 2. Get existing connection IDs (members of the same archive)
-  const existingConnections = await db.prepare(`
-    SELECT person1_id as other_id FROM relationships WHERE person2_id = ?
-    UNION
-    SELECT person2_id as other_id FROM relationships WHERE person1_id = ?
-  `).all(id, id) as any[];
-  const existingIds = new Set(existingConnections.map(cc => cc.other_id));
-  existingIds.add(parseInt(id));
+      await send({ type: 'step', msg: `初始化 [${person.name}] 的时空扩展任务...` });
 
-  // 3. Get up to 50 candidates (archived people not connected)
-  const candidates = await db.prepare("SELECT name FROM people WHERE id NOT IN (" + Array.from(existingIds).join(",") + ") ORDER BY RANDOM() LIMIT 50").all() as any[];
-  
-  let addedCount = 0;
-  let newRels = [];
+      // 2. Get existing connection IDs
+      const existingConnections = await db.prepare(`
+        SELECT person1_id as other_id FROM relationships WHERE person2_id = ?
+        UNION
+        SELECT person2_id as other_id FROM relationships WHERE person1_id = ?
+      `).all(id, id) as any[];
+      const existingIds = new Set(existingConnections.map(cc => cc.other_id));
+      existingIds.add(parseInt(id));
 
-  if (candidates.length > 0) {
-      // 4. Call AI to find links among archived people
-      const prompt = EXPAND_CONNECTIONS_PROMPT(person.name, person.biography, candidates.map(c => c.name));
-      try {
-          const resultText = await callAI(c, db, prompt, "json", EXPAND_CONNECTIONS_SCHEMA);
-          newRels = JSON.parse(resultText || "[]");
+      // 3. Get candidates
+      await send({ type: 'info', msg: "正在扫描馆藏档案库以匹配潜在连接点..." });
+      const candidates = await db.prepare("SELECT name FROM people WHERE id NOT IN (" + Array.from(existingIds).join(",") + ") ORDER BY RANDOM() LIMIT 50").all() as any[];
+      
+      let addedCount = 0;
+
+      if (candidates.length > 0) {
+          await send({ type: 'ai-req', msg: `已选取 ${candidates.length} 名潜在对象，请求 AI 进行维度对齐...` });
+          const prompt = EXPAND_CONNECTIONS_PROMPT(person.name, person.biography, candidates.map(c => c.name));
+          
+          const resultText = await callAI(c, db, prompt, "json", EXPAND_CONNECTIONS_SCHEMA, async () => {
+              await send({ type: 'heartbeat', msg: '时空网络计算中...' });
+          });
+          
+          await send({ type: 'ai-res', msg: "AI 计算完成，正在建立连接隧道..." });
+          const newRels = JSON.parse(resultText || "[]");
           
           for (const rel of newRels) {
               const matched = await db.prepare("SELECT id FROM people WHERE name = ?").get(rel.personName) as any;
               if (matched) {
                   await addRelationship(db, parseInt(id), matched.id, rel.relationshipType);
                   addedCount++;
+                  await send({ type: 'info', msg: `成功建立与 [${rel.personName}] 的联系: ${rel.relationshipType}` });
               }
           }
-      } catch (e: any) {
-          console.error("Expand connections link-building error:", e);
       }
-  }
 
-  // 5. If no links were added, fallback: pick an unarchived person from raw_relationships to archive
-  if (addedCount === 0) {
+      if (addedCount > 0) {
+          await send({ type: 'result', addedCount });
+          return;
+      }
+
+      // 4. Fallback: pick from raw_relationships
+      await send({ type: 'info', msg: "当前馆藏内未发现新联系。正在溯源原始时空轨迹..." });
       const archivedPeopleRows = await db.prepare("SELECT name FROM people").all() as any[];
       const archivedNames = new Set(archivedPeopleRows.map(p => p.name));
       
       let rawRels = [];
-      try {
-          rawRels = JSON.parse(person.raw_relationships || "[]");
-      } catch (e) {}
+      try { rawRels = JSON.parse(person.raw_relationships || "[]"); } catch (e) {}
 
       const unarchivedCandidates = rawRels
           .map((r: any) => r.personName)
           .filter((name: string) => name && !archivedNames.has(name));
 
       if (unarchivedCandidates.length > 0) {
+          await send({ type: 'info', msg: `发现 ${unarchivedCandidates.length} 名库外关联人物。正在由 AI 评估优先收录目标...` });
           const fallbackPrompt = `你是一位历史策展人。人物 "${person.name}" 的原始关联中有一些尚未正式入库的历史人物：[${unarchivedCandidates.join("、")}]。\n请从中挑选出一名您认为最重要/最知名/最值得入库的人物，并给出推荐理由。\n\n请严格返回以下格式的 JSON：\n{ "name": "标准中文译名", "reason": "推荐收录理由(20字内)" }`;
-          try {
-              const pickedRaw = await callAI(c, db, fallbackPrompt, "json", {
-                  type: "object",
-                  properties: {
-                      name: { type: "string" },
-                      reason: { type: "string" }
-                  },
-                  required: ["name", "reason"]
-              });
-              const picked = JSON.parse(pickedRaw || "{}");
-              if (picked.name && unarchivedCandidates.includes(picked.name)) {
-                  return c.json({ success: true, addedCount: 0, fallbackArchive: picked });
-              }
-          } catch (e) {
-              console.error("Expand connections fallback error:", e);
+          
+          const pickedRaw = await callAI(c, db, fallbackPrompt, "json", {
+              type: "object",
+              properties: {
+                  name: { type: "string" },
+                  reason: { type: "string" }
+              },
+              required: ["name", "reason"]
+          }, async () => {
+              await send({ type: 'heartbeat', msg: '评估候选人价值中...' });
+          });
+          
+          const picked = JSON.parse(pickedRaw || "{}");
+          if (picked.name && unarchivedCandidates.includes(picked.name)) {
+              await send({ type: 'result', addedCount: 0, fallbackArchive: picked });
+              return;
           }
       }
-  }
-  
-  return c.json({ success: true, addedCount });
+
+      await send({ type: 'info', msg: "全维度检索完毕，未发现可收录的新目标。" });
+      await send({ type: 'result', addedCount: 0 });
+      
+    } catch (e: any) {
+        await send({ type: 'error', msg: e.message });
+    }
+  });
 });
 
 app.post("/admin/repair-images", async (c) => {
@@ -989,7 +1022,44 @@ app.post("/archive-figure", async (c) => {
       const isAdmin = pass === getAdminPassword(c);
 
       return streamSSE(c, async (stream) => {
-          const send = async (data: any) => await stream.writeSSE({ data: JSON.stringify(data) });
+          const startTime = Date.now();
+          const taskId = Date.now();
+          
+          let state = {
+            status: 'running',
+            target: targetName || '待定',
+            taskId,
+            lastHeartbeat: Date.now(),
+            logs: [] as any[],
+            steps: [{ msg: "启动时空入库任务...", status: "pending", startTime: Date.now() }],
+            path: null,
+            error: null,
+            newArrivals: []
+          };
+
+          const updateGlobalState = async (reason?: string) => {
+              state.lastHeartbeat = Date.now();
+              // Non-blocking update to prevent blocking SSE if DB is slow
+              setConfig(db, "explore_state", JSON.stringify(state)).catch(e => console.error("Global state sync failed", e));
+          };
+
+          const send = async (data: any) => {
+              // Add to local state for global tracking
+              const timestamp = new Date().toLocaleTimeString();
+              if (data.msg) {
+                state.logs.push({ timestamp, msg: data.msg, type: data.type || 'info' });
+                if (state.logs.length > 100) state.logs.shift();
+              }
+              await updateGlobalState();
+              
+              try {
+                await stream.writeSSE({ data: JSON.stringify(data) });
+              } catch (e) {}
+          };
+
+          // Initial sync
+          await updateGlobalState("init");
+
           try {
               if (!targetName) {
                   await send({ type: 'info', msg: `未指定人物，正在检索图谱以寻找合适目标...` });
@@ -1115,8 +1185,15 @@ app.post("/archive-figure", async (c) => {
 
 
               await send({ type: 'result', personId });
+              state.status = 'success';
+              await updateGlobalState();
           } catch (e: any) {
               await send({ type: 'error', msg: e.message });
+              state.status = 'error';
+              state.error = e.message;
+              await updateGlobalState();
+          } finally {
+              // We could clear it, but keeping success/error for Spacetime Explorer to show is better
           }
       });
   } else {
@@ -1395,7 +1472,7 @@ app.post("/explore/reset", async (c) => {
 // Added cron endpoint
 app.post("/cron", async (c) => {
     const now = Date.now();
-    console.trace(`[Cron Worker] ${new Date(now).toISOString()} 后台成功收到 worker 触发的消息`);
+    console.log(`[Cron Worker] ${new Date(now).toISOString()} 后台明确收到 worker 消息`);
     const secret = c.req.query("secret");
     const force = c.req.query("force") === "true";
 
@@ -1404,6 +1481,9 @@ app.post("/cron", async (c) => {
     }
     
     const db = await getDb(c);
+    
+    // Always update last_cron_message_time to show "live" heartbeat
+    await setConfig(db, "last_cron_message_time", String(now));
     
     // 检查是否已经有探索任务在运行
     let currentStr = await getConfig(db, "explore_state", "null");
