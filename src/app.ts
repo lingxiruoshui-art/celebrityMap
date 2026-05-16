@@ -4,7 +4,7 @@ import { GoogleGenAI } from "@google/genai";
 import { D1DatabaseAdapter, DatabaseAdapter } from "./db.ts";
 import { CATEGORIES, FIGURE_POOL } from "./figuresPool.ts";
 import { ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA, EXPAND_CONNECTIONS_PROMPT, EXPAND_CONNECTIONS_SCHEMA } from "./services/aiService.ts";
-import { initExplorationState, advanceExplorationStep, doFinalizeInsert } from "./exploreStep.ts";
+import { initExplorationState, advanceExplorationStep } from "./exploreStep.ts";
 
 const root = new Hono<{ 
   Bindings: { 
@@ -34,7 +34,7 @@ app.notFound((c) => {
 let nodeDbInstance: DatabaseAdapter | null = null;
 let dbInitialized = false;
 
-export async function getDb(c: any): Promise<DatabaseAdapter> {
+async function getDb(c: any): Promise<DatabaseAdapter> {
   let db: DatabaseAdapter;
   if (c.env && c.env.DB_ADAPTER) {
     db = c.env.DB_ADAPTER;
@@ -118,7 +118,7 @@ const getAdminPassword = (c: any) => {
     return (c.env && c.env.ADMIN_PASSWORD) || (typeof process !== "undefined" && process.env.ADMIN_PASSWORD) || "admin";
 };
 
-export async function callAI(c: any, db: DatabaseAdapter, prompt: string, responseFormat: "text" | "json" = "text", schema?: any): Promise<string> {
+export async function callAI(c: any, db: DatabaseAdapter, prompt: string, responseFormat: "text" | "json" = "text", schema?: any, onStreamPulse?: () => Promise<void>): Promise<string> {
   const provider = await getConfig(db, "active_model_provider", "gemini");
   
   let apiKey = "";  
@@ -128,8 +128,37 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
       apiKey = (await getConfig(db, "gemini_api_key")) || (c.env && c.env.GEMINI_API_KEY) || (typeof process !== "undefined" && process.env.GEMINI_API_KEY) || "";
   }
   
+  let isFetching = true;
+  let heartbeatPromise: Promise<void> | null = null;
+  if (onStreamPulse) {
+      heartbeatPromise = (async () => {
+          while (isFetching) {
+              await new Promise(r => setTimeout(r, 10000)); // 10s throttle
+              if (!isFetching) break;
+              try { 
+                await onStreamPulse(); 
+                // 真实命中大模型域名的底层API查询，用于 Serverless (如 Cloudflare) 强效保活
+                try { 
+                    if (provider === "aliyun") {
+                      await fetch("https://dashscope.aliyuncs.com/compatible-mode/v1/models", { 
+                        method: 'GET',
+                        headers: { "Authorization": `Bearer ${apiKey}` },
+                        signal: AbortSignal.timeout(2000) 
+                      }).catch(()=>{}); 
+                    } else if (apiKey) {
+                      await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`, { 
+                        method: 'GET',
+                        signal: AbortSignal.timeout(2000) 
+                      }).catch(()=>{});
+                    }
+                } catch(e){}
+              } catch(e) { console.error("Pulse error", e); }
+          }
+      })();
+  }
+
   const cleanup = () => {
-      // isFetching = false;
+      isFetching = false;
   };
   
   if (provider === "aliyun") {
@@ -147,6 +176,7 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
     }, 290000); 
 
     const aliyunCleanup = () => {
+      isFetching = false;
       clearTimeout(timeoutId);
     };
 
@@ -270,8 +300,13 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
           } : undefined
         });
         let fullText = "";
+        let lastPulse = Date.now();
         for await (const chunk of stream) {
            fullText += chunk.text;
+           if (onStreamPulse && Date.now() - lastPulse > 10000) { // 10s throttle
+               lastPulse = Date.now();
+               onStreamPulse().catch(()=>{});
+           }
         }
         return fullText;
       };
@@ -637,7 +672,9 @@ app.post("/admin/people/:id/expand-connections", async (c) => {
           await send({ type: 'ai-req', msg: `已选取 ${candidates.length} 名潜在对象，请求 AI 进行维度对齐...` });
           const prompt = EXPAND_CONNECTIONS_PROMPT(person.name, person.biography, candidates.map(c => c.name));
           
-          const resultText = await callAI(c, db, prompt, "json", EXPAND_CONNECTIONS_SCHEMA);
+          const resultText = await callAI(c, db, prompt, "json", EXPAND_CONNECTIONS_SCHEMA, async () => {
+              await send({ type: 'heartbeat', msg: '时空网络计算中 (已触发 10s 底层网络强保活)...' });
+          });
           
           await send({ type: 'ai-res', msg: "AI 计算完成，正在建立连接隧道..." });
           let newRels: any[] = [];
@@ -691,6 +728,8 @@ app.post("/admin/people/:id/expand-connections", async (c) => {
                   reason: { type: "string" }
               },
               required: ["name", "reason"]
+          }, async () => {
+              await send({ type: 'heartbeat', msg: '评估候选人价值中...' });
           });
           
           let picked: any = {};
@@ -934,7 +973,7 @@ app.get("/archiver/random-pair", async (c) => {
   return c.json({ sourceName: people[0].name, targetName: people[1].name });
 });
 
-export async function pickTarget(db: DatabaseAdapter) {
+async function pickTarget(db: DatabaseAdapter) {
   const people = await db.prepare("SELECT name, raw_relationships FROM people").all() as any[];
   const archivedNames = people.map(p => p.name);
   const archivedSet = new Set(archivedNames);
@@ -1099,7 +1138,9 @@ app.post("/archive-figure", async (c) => {
               const prompt = ARCHIVE_CORE_PROMPT(targetName, CATEGORIES, sampleNames, meta.description);
 
               await send({ type: 'ai-req', msg: 'AI 代理请求发送 (基础传记)', data: { prompt: prompt.substring(0, 300) + "..." } });
-              let resultText = await callAI(c, db, prompt, "json", ARCHIVE_CORE_SCHEMA(!!meta.description));
+              let resultText = await callAI(c, db, prompt, "json", ARCHIVE_CORE_SCHEMA(!!meta.description), async () => {
+                  await send({ type: 'heartbeat', msg: 'AI 仍在思考中 (已触发 10s 底层网络强保活)...' });
+              });
 
               let coreData: any = {};
               try { coreData = JSON.parse(resultText || "{}"); } catch(e) {}
@@ -1111,7 +1152,9 @@ app.post("/archive-figure", async (c) => {
 
               await send({ type: 'ai-req', msg: 'AI 代理请求发送 (成就与关系)' });
               const extraPrompt = ARCHIVE_EXTRA_PROMPT(coreData.standardChineseName || targetName, coreData.biography);
-              let extraResultText = await callAI(c, db, extraPrompt, "json", ARCHIVE_EXTRA_SCHEMA);
+              let extraResultText = await callAI(c, db, extraPrompt, "json", ARCHIVE_EXTRA_SCHEMA, async () => {
+                  await send({ type: 'heartbeat', msg: 'AI 正在提取成就和关联人物 (已触发 10s 底层网络强保活)...' });
+              });
 
               let extraData: any = {};
               try { extraData = JSON.parse(extraResultText || "{}"); } catch(e) {}
@@ -1440,7 +1483,7 @@ app.post("/explore/start", async (c) => {
   await initExplorationState(db, getConfig, setConfig, target, reqSource || 'explorer', newTaskId);
 
   return streamSSE(c, async (stream) => {
-      await stream.writeSSE({ data: JSON.stringify({ status: "started", message: "任务状态机已初始化", taskId: newTaskId }) });
+      await stream.writeSSE({ data: JSON.stringify({ status: "started", message: "探索任务状态机已初始化", taskId: newTaskId }) });
       const heartbeatTimer = setInterval(() => {
           stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(()=>{});
       }, 5000);
@@ -1502,38 +1545,51 @@ app.post("/explore/reset", async (c) => {
 });
 
 // Added cron endpoint
-app.post("/api/cron/get-target", async (c) => {
+app.post("/cron", async (c) => {
     const now = Date.now();
-    console.log(`[Cron Get Target] ${new Date(now).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })} 请求参数`);
+    console.log(`[Cron Worker] ${new Date(now).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })} 后台明确收到 worker 消息`);
     const secret = c.req.query("secret");
     const force = c.req.query("force") === "true";
+    const action = c.req.query("action"); // e.g. "step"
 
     const cronSecret = (c.env && c.env.CRON_SECRET) || "update_celeb";
-    if (secret !== cronSecret && c.req.header("x-admin-password") !== getAdminPassword(c)) {
+    if (secret !== cronSecret) {
         return c.json({ error: "Unauthorized" }, 401);
     }
     
     const db = await getDb(c);
     
+    // Always update last_cron_message_time to show "live" heartbeat
     await setConfig(db, "last_cron_message_time", String(now));
     
+    // 检查是否已经有探索任务在运行
     let currentStr = await getConfig(db, "explore_state", "null");
+
     if (currentStr !== "null") {
         try {
             const current = JSON.parse(currentStr);
             const isStale = current.status === 'running' && (!current.lastHeartbeat || (Date.now() - current.lastHeartbeat > 600000));
+            
             if (current.status === 'running' && !isStale) {
+                console.log("[Cron Skip] 探索正在进行中，跳过本次触发");
                 return c.json({ status: "skipped", message: "探索正在进行中，跳过本次触发" });
             }
-        } catch(e) {}
+        } catch(e) {
+            console.error("[Cron] 解析状态失败:", e);
+        }
     }
 
+    // Check interval (unless forced)
     const intervalEnabled = await getConfig(db, "cron_interval_enabled", "false") === "true";
+    
+    // If not forced and auto explore is disabled, skip entirely.
     if (!force && !intervalEnabled) {
+        console.log("[Cron Skip] 后台自动探索未开启");
         return c.json({ status: "skipped", message: "后台自动探索控制已关闭" });
     }
 
     const lastTrigger = await getConfig(db, "last_cron_trigger_time", "");
+    
     if (!force && intervalEnabled && lastTrigger) {
         const lastTime = parseInt(lastTrigger);
         const hours = parseInt(await getConfig(db, "cron_interval_hours", "0"));
@@ -1541,9 +1597,12 @@ app.post("/api/cron/get-target", async (c) => {
         const intervalMs = (hours * 3600 + mins * 60) * 1000;
         
         if (now - lastTime < intervalMs) {
+            console.log(`[Cron Skip] Interval not reached. Last: ${new Date(lastTime).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`);
             return c.json({ 
                 status: "skipped", 
-                message: "间隔时间未到，自动探索任务跳过", 
+                message: "间隔时间未到，自动探索任务跳过（可使用 force=true 强制运行）", 
+                last_trigger: new Date(lastTime).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }),
+                next_allowable: new Date(lastTime + intervalMs).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })
             });
         }
     }
@@ -1551,43 +1610,44 @@ app.post("/api/cron/get-target", async (c) => {
     const { targetName, isEmpty } = await pickTarget(db);
     
     if (isEmpty || !targetName) {
-        return c.json({ status: "no target found", isEmpty, message: "已无更多人物可探索" });
+        return c.json({ status: "no target found", isEmpty, message: "成功收到消息，但已无更多人物可探索" });
     }
-    
-    // Process previous pending result
-    try {
-        const pendingResultStr = await getConfig(db, "pending_auto_result", "null");
-        if (pendingResultStr !== "null") {
-            const pendingParams = JSON.parse(pendingResultStr);
-            await doFinalizeInsert(db, pendingParams.finalName, pendingParams.personData, pendingParams.wikiMeta, c, addRelationship, null);
-            await setConfig(db, "pending_auto_result", "null");
-        }
-    } catch(e) {
-        console.error("[Cron] 上次结果入库失败", e);
-    }
-    
+
+    // Update last trigger time
     await setConfig(db, "last_cron_trigger_time", String(now));
 
     const newTaskId = Date.now();
-    await initExplorationState(db, getConfig, setConfig, targetName, 'auto', newTaskId);
+    await initExplorationState(db, getConfig, setConfig, targetName, 'explorer', newTaskId);
+    
     console.log(`[Cron] Initialized state machine for ${targetName}`);
 
-    return c.json({ status: "success", targetName, taskId: newTaskId });
-});
-
-app.post("/api/cron/notify-result", async (c) => {
-    const secret = c.req.query("secret");
-    const cronSecret = (c.env && c.env.CRON_SECRET) || "update_celeb";
-    if (secret !== cronSecret && c.req.header("x-admin-password") !== getAdminPassword(c)) {
-        return c.json({ error: "Unauthorized" }, 401);
-    }
-
-    const { targetName, result } = await c.req.json();
-    console.log(`[Cron Notify Result] 收到 Queue 的处理结果: target=${targetName}, status=${result.status}`);
-    
-    const db = await getDb(c);
-    // Any extra cleanup or logging can be added here. (the main finalization is handled within advanceExplorationStep)
-    await setConfig(db, "last_queue_result", JSON.stringify({ targetName, result, t: Date.now() }));
-    
-    return c.json({ success: true, message: "结果已记录" });
+    return streamSSE(c, async (stream) => {
+        await stream.writeSSE({ data: JSON.stringify({ status: "started", message: "探索状态机已启动", taskId: newTaskId, target: targetName }) });
+        const heartbeatTimer = setInterval(() => {
+            stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(()=>{});
+        }, 5000);
+        
+        try {
+            let isDone = false;
+            while (!isDone) {
+                const state = await advanceExplorationStep(
+                    db, callAI, getConfig, setConfig, addRelationship,
+                    ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA,
+                    fetchMetadataFromWiki, c, true
+                );
+                
+                await stream.writeSSE({ data: JSON.stringify({ status: "running", phase: state.phase, target: state.target }) }).catch(()=>{});
+                
+                if (state.status === "success" || state.status === "error" || state.status === "idle") {
+                    isDone = true;
+                }
+            }
+            await stream.writeSSE({ data: JSON.stringify({ status: "completed", target: targetName }) }).catch(()=>{});
+        } catch (e: any) {
+            console.error("[Cron Explore Task Error]", e);
+            await stream.writeSSE({ data: JSON.stringify({ status: "error", target: targetName, message: e.message }) }).catch(()=>{});
+        } finally {
+            clearInterval(heartbeatTimer);
+        }
+    });
 });
