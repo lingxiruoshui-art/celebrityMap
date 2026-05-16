@@ -1469,7 +1469,32 @@ app.post("/explore/start", async (c) => {
   const newTaskId = clientTaskId || Date.now();
   await initExplorationState(db, getConfig, setConfig, target, reqSource || 'explorer', newTaskId);
 
-  return c.json({ status: "started", message: "探索任务状态机已初始化", taskId: newTaskId });
+  return streamSSE(c, async (stream) => {
+      await stream.writeSSE({ data: JSON.stringify({ status: "started", message: "探索任务状态机已初始化", taskId: newTaskId }) });
+      const heartbeatTimer = setInterval(() => {
+          stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(()=>{});
+      }, 5000);
+      
+      try {
+          let isDone = false;
+          while (!isDone) {
+              const state = await advanceExplorationStep(
+                  db, callAI, getConfig, setConfig, addRelationship,
+                  ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA,
+                  fetchMetadataFromWiki, c, !!isAdmin
+              );
+              if (state.status === "success" || state.status === "error" || state.status === "stop" || state.status === "idle") {
+                  isDone = true;
+              }
+          }
+          await stream.writeSSE({ data: JSON.stringify({ status: "completed" }) });
+      } catch (e: any) {
+          console.error("[Explore Task Error]", e);
+          await stream.writeSSE({ data: JSON.stringify({ status: "error", message: e.message }) });
+      } finally {
+          clearInterval(heartbeatTimer);
+      }
+  });
 });
 
 app.post("/explore/stop", async (c) => {
@@ -1584,5 +1609,30 @@ app.post("/cron", async (c) => {
     
     console.log(`[Cron] Initialized state machine for ${targetName}`);
 
-    return c.json({ status: "started", message: "探索状态机已启动", taskId: newTaskId, target: targetName });
+    return streamSSE(c, async (stream) => {
+        await stream.writeSSE({ data: JSON.stringify({ status: "started", message: "探索状态机已启动", taskId: newTaskId, target: targetName }) });
+        const heartbeatTimer = setInterval(() => {
+            stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(()=>{});
+        }, 5000);
+        
+        try {
+            let isDone = false;
+            while (!isDone) {
+                const state = await advanceExplorationStep(
+                    db, callAI, getConfig, setConfig, addRelationship,
+                    ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA,
+                    fetchMetadataFromWiki, c, true
+                );
+                if (state.status === "success" || state.status === "error" || state.status === "stop" || state.status === "idle") {
+                    isDone = true;
+                }
+            }
+            await stream.writeSSE({ data: JSON.stringify({ status: "completed", target: targetName }) });
+        } catch (e: any) {
+            console.error("[Cron Explore Task Error]", e);
+            await stream.writeSSE({ data: JSON.stringify({ status: "error", target: targetName, message: e.message }) });
+        } finally {
+            clearInterval(heartbeatTimer);
+        }
+    });
 });

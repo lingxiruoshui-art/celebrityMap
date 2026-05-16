@@ -16,6 +16,7 @@ export async function initExplorationState(
     target,
     source: source || 'explorer',
     taskId: providedTaskId || Date.now(),
+    lastHeartbeat: Date.now(),
     pulse: 0,
     logs: [{ timestamp: new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }), msg: `初始化任务: [${target || '随机发散探索'}]`, type: 'info' }],
     steps: [{ msg: "探索序列启动中...", status: "pending", startTime: Date.now() }],

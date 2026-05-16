@@ -472,32 +472,21 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
            throw new Error(errMsg);
         }
         
-        // Loop the state machine until completed or error
-        const driveStateMachine = async () => {
-           let isDone = false;
-           while (!isDone && activeSearchTaskIdRef.current === startTaskId) {
-               try {
-                   const stepRes = await fetch("/api/explore/step", {
-                       method: "POST",
-                       headers
-                   });
-                   
-                   if (!stepRes.ok) {
-                       console.error("Explore step failed:", stepRes.status);
-                       break; // Halt driving on severe error
-                   }
-                   
-                   const stateData = await stepRes.json() as any;
-                   if (stateData.status === "success" || stateData.status === "error" || stateData.status === "stop" || stateData.status === "idle") {
-                       isDone = true;
-                   }
-               } catch (e) {
-                   console.error("Explore step exception:", e);
-                   break;
-               }
+        // Consume stream to keep task alive and let backend drive state machine
+        const consumeStream = async () => {
+           try {
+             const reader = res.body?.getReader();
+             if (reader) {
+                while (activeSearchTaskIdRef.current === startTaskId) {
+                   const { done } = await reader.read();
+                   if (done) break;
+                }
+             }
+           } catch(e) {
+               console.error("Stream reading error:", e);
            }
         };
-        driveStateMachine();
+        consumeStream();
         
         pollStatusRef.current = true;
       } catch (err: any) {

@@ -40,46 +40,58 @@ export default {
         let finished = false;
         const targetHost = new URL(targetUrl).origin;
 
-        console.log(`[Worker] 开始逐步步进任务状态机...`);
+        // Asynchronously consume the streaming response to keep the backend function alive
+        const consumeStream = async () => {
+            try {
+                const reader = response.body?.getReader();
+                if (!reader) {
+                    console.log(`[Worker] 响应无 body, 无法流式读取`);
+                    return;
+                }
+                const decoder = new TextDecoder("utf-8");
+                while (!finished) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    const chunkText = decoder.decode(value, { stream: true });
+                    const lines = chunkText.split('\n');
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                if (data.status === "skipped" || data.isEmpty) {
+                                    console.warn(`[Worker] 任务跳过或无法开始:`, data.message);
+                                    finished = true;
+                                } else if (data.status === "started") {
+                                    console.log(`[Worker] 成功触发任务:`, data.message);
+                                } else if (data.status === "completed") {
+                                    console.log(`[Worker] 后端长连接提示任务完成!`);
+                                    finished = true;
+                                } else if (data.status === "error") {
+                                    console.error(`[Worker] 后端长连接报告错误:`, data.message);
+                                    finished = true;
+                                }
+                            } catch(e) {}
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error(`[Worker] 流读取异常:`, err.message);
+            }
+        };
+
+        consumeStream();
+
+        console.log(`[Worker] 开始等待并检查任务...`);
 
         while (!finished) {
+           await new Promise(r => setTimeout(r, 5000));
+           if (finished) break;
+           
            try {
-             console.log(`[Worker] 发起请求: 驱动下一步骤...`);
-             const stepRes = await fetch(`${targetHost}/api/explore/step`, {
-                 method: "POST",
-                 headers: {
-                     "User-Agent": "Cloudflare-Cron-Worker",
-                     "x-admin-password": secret
-                 }
-             });
-             
-             if (!stepRes.ok) {
-                 console.error(`[Worker] 步进接口失败, 状态码: ${stepRes.status}`);
-                 let text = await stepRes.text().catch(()=>"");
-                 console.error(`[Worker] 错误信息: ${text}`);
-                 break;
-             }
-             const st = await stepRes.json();
-             
-             if (!st || st === null || st.error) {
-                 console.log(`[Worker] 收到答复: 任务中断或出现错误:`, st?.error || "未知");
-                 finished = true;
-                 break;
-             }
-
-             console.log(`[Worker] /api/explore/step 结果: status=${st.status}, phase=${st.phase || 'N/A'}`);
-
-             if (st.status === "success" || st.status === "completed" || st.status === "stop" || st.status === "idle" || st.status === "error") {
-                 console.log(`[Worker] 收到最终答复: 任务完成! status: ${st.status}`);
-                 finished = true;
-                 break;
-             }
-             
-             // Still running, proceed immediately or wait a bit
-             // 状态机每次只做一小块，不会超时，所以我们可以立即开始下一步
+             // Keep worker running and printing logs conceptually, stream reader does the heavy lifting.
            } catch(pollErr) {
-             console.error(`[Worker] 步进过程出错:`, pollErr.message);
-             break; // don't loop infinitely on hard network errors
+             console.error(`[Worker] 检查过程出错:`, pollErr.message);
            }
         }
         
