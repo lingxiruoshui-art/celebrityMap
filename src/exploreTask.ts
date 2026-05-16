@@ -7,6 +7,7 @@ export interface ExploreState {
   pulse?: number;
   taskId?: number;
   target: string;
+  source?: string;
   logs: { timestamp: string; msg: string; type: string; data?: any }[];
   steps: { msg: string; status: string; startTime?: number }[];
   path: any[] | null;
@@ -27,11 +28,13 @@ export async function runExplorationTask(
   c: any,
   isAdmin: boolean,
   onPulse?: (msg: string) => Promise<void>,
-  providedTaskId?: number
+  providedTaskId?: number,
+  source?: string
 ) {
   let state: ExploreState = {
     status: "running",
     target,
+    source: source || 'explorer',
     taskId: providedTaskId || Date.now(),
     pulse: 0,
     logs: [{ timestamp: new Date().toLocaleTimeString(), msg: `初始化任务: [${target || '随机发散探索'}]`, type: 'info' }],
@@ -161,6 +164,11 @@ export async function runExplorationTask(
                     addLog(`探索进行中... 已在当前步骤等待 ${waitingSecs}s`, "heartbeat", undefined, true);
                 }
                 saveState(`Tick ${waitingSecs}s`);
+
+                // Dummy activity to keep Cloudflare isolate from suspension
+                if (waitingSecs % 12 === 0) {
+                    fetch("https://www.google.com/robots.txt", { method: 'HEAD', signal: AbortSignal.timeout(1000) }).catch(()=>{});
+                }
             }
         } catch (e) {
             console.error("Heartbeat timer error:", e);

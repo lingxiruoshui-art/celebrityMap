@@ -213,7 +213,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                     setActiveTask({ 
                       title: `同步中: ${data.target}`, 
                       isRunning: true, 
-                      source: data.source || (data.target && data.target !== '待定' ? 'list' : 'explorer')
+                      source: data.source || 'explorer'
                     });
                 }
                 

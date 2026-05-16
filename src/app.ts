@@ -128,9 +128,14 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
   if (onStreamPulse) {
       heartbeatPromise = (async () => {
           while (isFetching) {
-              await new Promise(r => setTimeout(r, 8000));
+              await new Promise(r => setTimeout(r, 4000)); // Reduced from 8s to 4s
               if (!isFetching) break;
-              try { await onStreamPulse(); } catch(e) { console.error("Pulse error", e); }
+              try { 
+                await onStreamPulse(); 
+                // A dummy fetch can help keep Cloudflare isolates from being evicted 
+                // by signaling ongoing external I/O activity
+                try { await fetch("https://www.google.com/robots.txt", { method: 'HEAD', signal: AbortSignal.timeout(1000) }).catch(()=>{}); } catch(e){}
+              } catch(e) { console.error("Pulse error", e); }
           }
       })();
   }
@@ -160,8 +165,9 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
           if (!isFetching) return;
           try {
             await onStreamPulse();
+            try { await fetch("https://www.google.com/robots.txt", { method: 'HEAD', signal: AbortSignal.timeout(1000) }).catch(()=>{}); } catch(e){}
           } catch(e) {}
-      }, 3000); // Increased frequency to 3s for better stability
+      }, 2000); // Increased frequency to 2s for better stability
     }
 
     const aliyunCleanup = () => {
@@ -292,6 +298,13 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
         let fullText = "";
         for await (const chunk of stream) {
            fullText += chunk.text;
+           if (onStreamPulse) {
+               onStreamPulse().catch(()=>{});
+               // Occasional dummy fetch to keep worker alive
+               if (fullText.length % 500 < 50) {
+                   fetch("https://www.google.com/robots.txt", { method: 'HEAD', signal: AbortSignal.timeout(1000) }).catch(()=>{});
+               }
+           }
         }
         return fullText;
       };
@@ -1418,7 +1431,8 @@ app.post("/explore/start", async (c) => {
           ARCHIVE_PROMPT, ARCHIVE_SCHEMA, 
           fetchMetadataFromWiki, c, !!isAdmin,
           originalPulse,
-          newTaskId
+          newTaskId,
+          reqSource || 'explorer'
       );
 
       if (c.executionCtx && c.executionCtx.waitUntil) {
@@ -1558,7 +1572,8 @@ app.post("/cron", async (c) => {
         db, targetName, callAI, getConfig, setConfig, addRelationship, 
         ARCHIVE_PROMPT, ARCHIVE_SCHEMA, fetchMetadataFromWiki, c, true,
         async (msg) => { console.log(`[Cron Explore Pulse] ${msg}`); },
-        newTaskId
+        newTaskId,
+        'explorer'
     );
     
     if (c.executionCtx && c.executionCtx.waitUntil) {

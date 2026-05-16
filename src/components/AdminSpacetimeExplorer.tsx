@@ -390,14 +390,13 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   const [isPickingRandom, setIsPickingRandom] = useState(false);
 
   const handlePickRandomPair = async () => {
-    if (isLoading || pollStatusRef.current) return;
+    if (isLoading || pollStatusRef.current || isPickingRandom) return;
     setIsPickingRandom(true);
     setError(null);
     setPath(null);
     setDetailedLogs([]);
     setSearchSteps([]);
     setShowResults(false);
-    hasLoadedResultRef.current = false;
     
     try {
       if (allowAdminControls || isAdmin) {
