@@ -213,7 +213,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                     setActiveTask({ 
                       title: `同步中: ${data.target}`, 
                       isRunning: true, 
-                      source: data.target && data.target !== '待定' ? 'list' : 'explorer' 
+                      source: data.source || (data.target && data.target !== '待定' ? 'list' : 'explorer')
                     });
                 }
                 
@@ -265,7 +265,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
       const res = await fetch("/api/archive-figure", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...adminHeaders },
-        body: JSON.stringify({ personName: name, stream: true })
+        body: JSON.stringify({ personName: name, stream: true, source: 'list' })
       });
       
       const reader = res.body?.getReader();

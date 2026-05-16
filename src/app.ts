@@ -1011,7 +1011,7 @@ app.post("/archiver/generate-target", async (c) => {
 
 app.post("/archive-figure", async (c) => {
   const db = await getDb(c);
-  const { personName, stream: isStream } = await c.req.json();
+  const { personName, stream: isStream, source: reqSource } = await c.req.json();
   let targetName = personName;
 
   const samplePeople = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 20").all() as any[];
@@ -1028,6 +1028,7 @@ app.post("/archive-figure", async (c) => {
           let state = {
             status: 'running',
             target: targetName || '待定',
+            source: reqSource || (targetName && targetName !== '待定' ? 'list' : 'explorer'),
             taskId,
             lastHeartbeat: Date.now(),
             logs: [] as any[],
@@ -1366,7 +1367,7 @@ app.post("/explore/ai-proxy", async (c) => {
 
 app.post("/explore/start", async (c) => {
   const db = await getDb(c);
-  const { target, isAdmin, clientTaskId } = await c.req.json();
+  const { target, isAdmin, clientTaskId, source: reqSource } = await c.req.json();
   let currentStr = await getConfig(db, "explore_state", "null");
   if (currentStr !== "null") {
       const current = JSON.parse(currentStr);
@@ -1387,6 +1388,7 @@ app.post("/explore/start", async (c) => {
   const initialState = {
       status: 'running', 
       target, 
+      source: reqSource || 'explorer',
       taskId: newTaskId,
       logs: [{ timestamp: new Date().toLocaleTimeString(), msg: `初始化任务: [${target || '随机发散探索'}]`, type: 'info' }], 
       steps: [{ msg: "探索序列启动中...", status: "pending", startTime: Date.now() }], 
@@ -1539,6 +1541,7 @@ app.post("/cron", async (c) => {
     const initialState = {
         status: 'running', 
         target: targetName, 
+        source: 'explorer',
         taskId: newTaskId,
         logs: [{ timestamp: new Date().toLocaleTimeString(), msg: "系统周期性巡检：触发自动档案补完协议", type: "info" }], 
         steps: [{ msg: "周期性检索启动中...", status: "pending", startTime: Date.now() }], 

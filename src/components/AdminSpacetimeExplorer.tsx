@@ -461,7 +461,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
         const res = await fetch("/api/explore/start", {
           method: "POST",
           headers,
-          body: JSON.stringify({ target: finalTargetForAI, isAdmin: true, clientTaskId: startTaskId })
+          body: JSON.stringify({ target: finalTargetForAI, isAdmin: true, clientTaskId: startTaskId, source: 'explorer' })
         });
         
         if (!res.ok) {
