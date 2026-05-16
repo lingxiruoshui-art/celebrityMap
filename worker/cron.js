@@ -37,6 +37,7 @@ export default {
         }
 
         // Asynchronously consume the streaming response to keep the backend function alive
+        let buffer = "";
         const consumeStream = async () => {
             try {
                 const reader = response.body?.getReader();
@@ -47,47 +48,91 @@ export default {
                 const decoder = new TextDecoder("utf-8");
                 while (!finished) {
                     const { done, value } = await reader.read();
-                    if (done) break;
+                    if (done) {
+                        console.log(`[Worker] 流读取完成 (done)`);
+                        break;
+                    }
                     
-                    const chunkText = decoder.decode(value, { stream: true });
-                    const lines = chunkText.split('\n');
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || "";
+                    
                     for (const line of lines) {
-                        if (line.startsWith('data: ')) {
+                        const trimmedLine = line.trim();
+                        if (trimmedLine.startsWith('data: ')) {
                             try {
-                                const data = JSON.parse(line.slice(6));
+                                const data = JSON.parse(trimmedLine.slice(6));
                                 if (data.status === "skipped" || data.isEmpty) {
-                                    console.warn(`[Worker] 任务跳过或无法开始:`, data.message);
+                                    console.warn(`[Worker] 任务跳过或无法开始:`, data.message || "条件未满足");
                                     finished = true;
                                 } else if (data.status === "started") {
-                                    console.log(`[Worker] 成功触发任务:`, data.message);
+                                    console.log(`[Worker] 成功触发任务:`, data.message || "探索已启动");
                                 } else if (data.status === "completed") {
                                     console.log(`[Worker] 后端长连接提示任务完成!`);
                                     finished = true;
                                 } else if (data.status === "error") {
-                                    console.error(`[Worker] 后端长连接报告错误:`, data.message);
+                                    console.error(`[Worker] 后端长连接报告错误:`, data.message || "未知错误");
                                     finished = true;
+                                } else if (data.type === "ping") {
+                                    // Heartbeat - keep going
                                 }
-                            } catch(e) {}
+                            } catch(e) {
+                                // Partial or malformed JSON, wait for more data
+                                console.log(`[Worker] 无法解析数据行，可能是分片: ${trimmedLine.substring(0, 50)}...`);
+                            }
                         }
                     }
                 }
             } catch (err) {
-                console.error(`[Worker] 流读取异常:`, err.message);
+                console.error(`[Worker] 流读取发生异常:`, err.message);
             }
         };
 
         consumeStream();
 
-        console.log(`[Worker] 开始等待并检查任务...`);
+        console.log(`[Worker] 开始每 5 秒轮询任务执行状态...`);
+
+        const startTime = Date.now();
+        const MAX_WAIT = 15 * 60 * 1000; // 15 minutes max wait
 
         while (!finished) {
-           await new Promise(r => setTimeout(r, 5000));
+           await new Promise(r => setTimeout(r, 8000));
            if (finished) break;
            
+           if (Date.now() - startTime > MAX_WAIT) {
+               console.error(`[Worker] 超过最大等待时间 (15min)，强制停止。`);
+               finished = true;
+               break;
+           }
+           
            try {
-             // Keep worker running and printing logs conceptually, stream reader does the heavy lifting.
+             // Polling as a secondary check in case SSE disconnects
+             const statusUrl = new URL(`${targetHost}/api/explore/status`);
+             // We use the same secret for status if supported, otherwise just poll
+             const statusRes = await fetch(statusUrl.toString(), {
+                headers: { "x-admin-password": secret }
+             });
+             
+             if (statusRes.ok) {
+                 const statusData = await statusRes.json();
+                 if (!statusData) {
+                    console.log(`[Worker] 收到答复: 探索任务似乎已结束(无状态)。`);
+                    finished = true;
+                    break;
+                 }
+                 
+                 if (statusData.status === "running") {
+                    console.log(`[Worker] 任务进行中 -> Phase: ${statusData.phase}, Target: ${statusData.target}`);
+                 } else if (statusData.status === "success") {
+                    console.log(`[Worker] 轮询确认任务已成功完成!`);
+                    finished = true;
+                 } else if (statusData.status === "error") {
+                    console.error(`[Worker] 轮询发现任务错误:`, statusData.error || "未知错误");
+                    finished = true;
+                 }
+             }
            } catch(pollErr) {
-             console.error(`[Worker] 检查过程出错:`, pollErr.message);
+             console.error(`[Worker] 轮询过程出错:`, pollErr.message);
            }
         }
         

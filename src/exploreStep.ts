@@ -71,6 +71,13 @@ export async function advanceExplorationStep(
         state.steps.push({ msg, status: "pending", startTime: Date.now() });
     };
 
+    // Self-pulsing heartbeat to prevent timeout during long API calls within this step
+    const heartbeatTimer = setInterval(() => {
+        if (state.status === 'running') {
+            saveState({}).catch(() => {});
+        }
+    }, 15000); // 15s pulse
+
     try {
         if (state.phase === "init") {
             let finalTargetName = state.target;
@@ -212,6 +219,8 @@ export async function advanceExplorationStep(
         addLog(`探索中止: ${e.message}`, "error");
         await saveState({ status: "error", error: e.message });
         return state;
+    } finally {
+        clearInterval(heartbeatTimer);
     }
     
     return state;
