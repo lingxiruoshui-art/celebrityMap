@@ -11,7 +11,7 @@ export function getGemini(apiKeyOverride?: string): GoogleGenAI {
   return ai;
 }
 
-export const ARCHIVE_PROMPT = (name: string, categories: string[], sampleNames?: string, bioSnippet?: string) => `
+export const ARCHIVE_CORE_PROMPT = (name: string, categories: string[], sampleNames?: string, bioSnippet?: string) => `
 你是一位研究历史人物的传记专家。请为人物 "${name}" 撰写一份既有历史厚度又风趣幽默的传记。
 ${bioSnippet ? `参考背景资料（身份线索）：${bioSnippet}\n\n注意：该人物的身份已通过背景资料确认，无须再次验证或标准化姓名。` : ""}
 
@@ -33,23 +33,17 @@ ${bioSnippet ? "" : `  "accepted": true/false,
   "birthplace": "出生地",
   "category": "${bioSnippet ? `参考背景资料提取角色身份，或从以下选择：[${categories.join("、")}]` : `从以下选择最合适的：[${categories.join("、")}]`}",
   "biography": "正规且诙谐幽默的传记。绝对不要写成1大段，至少分2段。必须在 JSON 字符串内部使用字面量 \\n\\n 代表分段，禁止在字符串内直接换行敲回车（导致 JSON 解析错误），200-300字即可。禁止使用大家好等开场白。",
-  "achievements": ["成就1", "成就2"],
-  "relationships": [
-    {"personName": "标准中文全名", "relationshipType": "15-20字关系描述，禁止换行和特殊格式"}
-  ],
   "latitude": 纬度数字,
   "longitude": 经度数字
 }
 
 特别要求：
-1. relationships 中提供3~5个人物，必须是真实的已故历史人物（严禁出现神话、民间传说、虚构小说中的人物，如孟姜女、女娲等），且为中国老百姓家喻户晓的名字。不需要有强烈的交集，可以是弱关联，比如言论中谈到、思想上有继承、同一流派、参加过同一社团等等，只要能扯上关系就行。
-2. 请务必使用广泛公认的学术标准中文译名，以确保数据一致性，避免重复录入。
-3. biography 字段绝对不能写成一大段，必须分成 2 段以上。注意：必须在 JSON 字符串内部使用双反斜杠加n（即 \\n\\n）表示换行分段，绝对禁止在生平内容字符串中间直接产生包含真实回车换行的多行字符串，这会让 JSON 格式非法崩溃。
-4. 所有返回内容必须使用简体中文，生成的 JSON 中所有键值对的引号必须闭合，并且如果有内部引号要用 \\" 转义。
-5. 请确保仅返回一个合法的 JSON 对象，不要包含任何 markdown（如 \`\`\`json 等）或其他多余的旁白文字。
+1. biography 字段绝对不能写成一大段，必须分成 2 段以上。注意：必须在 JSON 字符串内部使用双反斜杠加n（即 \\n\\n）表示换行分段，绝对禁止在生平内容字符串中间直接产生包含真实回车换行的多行字符串，这会让 JSON 格式非法崩溃。
+2. 所有返回内容必须使用简体中文，生成的 JSON 中所有键值对的引号必须闭合，并且如果有内部引号要用 \\" 转义。
+3. 请确保仅返回一个合法的 JSON 对象，不要包含任何 markdown（如 \`\`\`json 等）或其他多余的旁白文字。
 `;
 
-export const ARCHIVE_SCHEMA = (hasBio: boolean): Schema => ({
+export const ARCHIVE_CORE_SCHEMA = (hasBio: boolean): Schema => ({
   type: Type.OBJECT,
   properties: {
     ...(!hasBio ? {
@@ -62,9 +56,38 @@ export const ARCHIVE_SCHEMA = (hasBio: boolean): Schema => ({
     birthplace: { type: Type.STRING },
     category: { type: Type.STRING },
     biography: { type: Type.STRING, description: "正规且诙谐幽默的传记。绝对不要写成1大段，必须分段，至少2段，至多3段（各段用\\n\\n分隔），不少于300字。" },
-    achievements: { type: Type.ARRAY, items: { type: Type.STRING } },
     latitude: { type: Type.NUMBER },
-    longitude: { type: Type.NUMBER },
+    longitude: { type: Type.NUMBER }
+  },
+  required: [
+    ...(!hasBio ? ["accepted", "reason"] : []), 
+    "standardChineseName", "keyword", "lifespan", "birthplace", "biography", "category", "latitude", "longitude"
+  ]
+});
+
+export const ARCHIVE_EXTRA_PROMPT = (name: string, biography: string) => `
+基于以下人物传记，提取该人物的成就，并找出相关联的历史人物。
+人物：${name}
+传记：
+${biography}
+
+请严格按以下 JSON 格式返回：
+{
+  "achievements": ["成就1", "成就2"],
+  "relationships": [
+    {"personName": "标准中文全名", "relationshipType": "15-20字关系描述，禁止换行和特殊格式"}
+  ]
+}
+
+特别要求：
+1. relationships 中提供3~5个人物，必须是真实的已故历史人物（严禁出现神话、民间传说、虚构小说中的人物），且为中国老百姓家喻户晓的名字。不需要有强烈的交集，可以是弱关联，比如言论中谈到、思想上有继承、同一流派、参加过同一社团等等，只要能扯上关系就行。
+2. 请确保返回合法的 JSON 对象，不要包含任何 markdown。
+`;
+
+export const ARCHIVE_EXTRA_SCHEMA: Schema = {
+  type: Type.OBJECT,
+  properties: {
+    achievements: { type: Type.ARRAY, items: { type: Type.STRING } },
     relationships: {
       type: Type.ARRAY,
       items: {
@@ -77,11 +100,8 @@ export const ARCHIVE_SCHEMA = (hasBio: boolean): Schema => ({
       }
     }
   },
-  required: [
-    ...(!hasBio ? ["accepted", "reason"] : []), 
-    "standardChineseName", "keyword", "lifespan", "birthplace", "biography", "achievements", "category", "latitude", "longitude", "relationships"
-  ]
-});
+  required: ["achievements", "relationships"]
+};
 
 export const EXPAND_CONNECTIONS_PROMPT = (name: string, bio: string, candidates: string[]) => `
 你是一位历史关系网络专家。

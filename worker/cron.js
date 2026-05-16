@@ -26,32 +26,59 @@ export default {
           headers: { "User-Agent": "Cloudflare-Cron-Worker" }
         });
         
-        console.log(`[Worker] 开始接收后端响应...`);
-        const text = await response.text();
+        console.log(`[Worker] 已发起触发请求, 准备读取响应流...`);
         
-        let startResponseData = null;
-        try {
-            startResponseData = JSON.parse(text);
-        } catch (e) {
-            console.error(`[Worker] 无法解析触发响应:`, text.substring(0, 200));
-            return;
-        }
-
-        if (startResponseData.status === "skipped" || startResponseData.isEmpty) {
-            console.warn(`[Worker] 任务跳过或无法开始:`, startResponseData.message);
-            return;
-        }
-
-        if (startResponseData.status === "started") {
-            console.log(`[Worker] 成功触发任务:`, startResponseData.message || startResponseData);
-        }
-
         let finished = false;
         const targetHost = new URL(targetUrl).origin;
+
+        // Asynchronously consume the streaming response to keep the backend function alive
+        const consumeStream = async () => {
+            try {
+                const reader = response.body?.getReader();
+                if (!reader) {
+                    console.log(`[Worker] 响应无 body, 无法流式读取`);
+                    return;
+                }
+                const decoder = new TextDecoder("utf-8");
+                while (!finished) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    const chunkText = decoder.decode(value, { stream: true });
+                    const lines = chunkText.split('\n');
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                if (data.status === "skipped" || data.isEmpty) {
+                                    console.warn(`[Worker] 任务跳过或无法开始:`, data.message);
+                                    finished = true;
+                                } else if (data.status === "started") {
+                                    console.log(`[Worker] 成功触发任务:`, data.message);
+                                } else if (data.status === "completed") {
+                                    console.log(`[Worker] 后端长连接提示任务完成!`);
+                                    finished = true;
+                                } else if (data.status === "error") {
+                                    console.error(`[Worker] 后端长连接报告错误:`, data.message);
+                                    finished = true;
+                                }
+                            } catch(e) {}
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error(`[Worker] 流读取异常:`, err.message);
+            }
+        };
+
+        consumeStream();
+
         console.log(`[Worker] 开始每 5 秒轮询任务执行状态...`);
 
         while (!finished) {
            await new Promise(r => setTimeout(r, 5000));
+           if (finished) break; // Check again in case consumeStream finished it
+
            try {
              const _v = Date.now();
              console.log(`[Worker] 正在通过网络消息问询后端任务状态 (请求ID: ${_v})...`);

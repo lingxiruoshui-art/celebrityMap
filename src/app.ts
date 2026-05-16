@@ -3,7 +3,7 @@ import { streamSSE } from "hono/streaming";
 import { GoogleGenAI } from "@google/genai";
 import { D1DatabaseAdapter, DatabaseAdapter } from "./db.ts";
 import { CATEGORIES, FIGURE_POOL } from "./figuresPool.ts";
-import { ARCHIVE_PROMPT, ARCHIVE_SCHEMA, EXPAND_CONNECTIONS_PROMPT, EXPAND_CONNECTIONS_SCHEMA } from "./services/aiService.ts";
+import { ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA, EXPAND_CONNECTIONS_PROMPT, EXPAND_CONNECTIONS_SCHEMA } from "./services/aiService.ts";
 import { runExplorationTask } from "./exploreTask.ts";
 
 const root = new Hono<{ 
@@ -13,6 +13,7 @@ const root = new Hono<{
     GEMINI_API_KEY?: string;
     GEMINI_MODEL_ID?: string;
     ADMIN_PASSWORD?: string;
+    CRON_SECRET?: string;
   },
   Variables: { dbAdapter: DatabaseAdapter } 
 }>();
@@ -1128,12 +1129,33 @@ app.post("/archive-figure", async (c) => {
               }
               await send({ type: 'info', msg: `正在利用 AI 深度检索并编织 ${targetName} 的历史时空数据...`, data: { categories: CATEGORIES } });
               
-              const prompt = ARCHIVE_PROMPT(targetName, CATEGORIES, sampleNames, meta.description);
+              const prompt = ARCHIVE_CORE_PROMPT(targetName, CATEGORIES, sampleNames, meta.description);
 
-              await send({ type: 'ai-req', msg: 'AI 代理请求发送', data: { prompt: prompt.substring(0, 300) + "..." } });
-              let resultText = await callAI(c, db, prompt, "json", ARCHIVE_SCHEMA(!!meta.description), async () => {
+              await send({ type: 'ai-req', msg: 'AI 代理请求发送 (基础传记)', data: { prompt: prompt.substring(0, 300) + "..." } });
+              let resultText = await callAI(c, db, prompt, "json", ARCHIVE_CORE_SCHEMA(!!meta.description), async () => {
                   await send({ type: 'heartbeat', msg: 'AI 仍在思考中...' });
               });
+
+              let coreData: any = {};
+              try { coreData = JSON.parse(resultText || "{}"); } catch(e) {}
+              if (Array.isArray(coreData)) coreData = coreData[0];
+
+              if (!coreData.biography) {
+                  throw new Error("AI未能生成有效传记数据");
+              }
+
+              await send({ type: 'ai-req', msg: 'AI 代理请求发送 (成就与关系)' });
+              const extraPrompt = ARCHIVE_EXTRA_PROMPT(coreData.standardChineseName || targetName, coreData.biography);
+              let extraResultText = await callAI(c, db, extraPrompt, "json", ARCHIVE_EXTRA_SCHEMA, async () => {
+                  await send({ type: 'heartbeat', msg: 'AI 正在提取成就和关联人物...' });
+              });
+
+              let extraData: any = {};
+              try { extraData = JSON.parse(extraResultText || "{}"); } catch(e) {}
+              if (Array.isArray(extraData)) extraData = extraData[0];
+
+              const finalData = { ...coreData, ...extraData };
+              resultText = JSON.stringify(finalData);
               await send({ type: 'ai-res', msg: 'AI 响应解码成功', data: { rawText: resultText.substring(0, 200) + "..." } });
 
               let data: any = {};
@@ -1455,7 +1477,7 @@ app.post("/explore/start", async (c) => {
   // Create a background promise that tracks the task
   const task = runExplorationTask(
       db, target, callAI, getConfig, setConfig, addRelationship, 
-      ARCHIVE_PROMPT, ARCHIVE_SCHEMA, 
+      ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA,
       fetchMetadataFromWiki, c, !!isAdmin,
       originalPulse,
       newTaskId,
@@ -1468,7 +1490,21 @@ app.post("/explore/start", async (c) => {
       task.catch(e => console.error("Task Error", e));
   }
 
-  return c.json({ status: "started", message: "探索任务已在后台启动", taskId: newTaskId });
+  return streamSSE(c, async (stream) => {
+      await stream.writeSSE({ data: JSON.stringify({ status: "started", message: "探索任务已在后台启动", taskId: newTaskId }) });
+      const heartbeatTimer = setInterval(() => {
+          stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(()=>{});
+      }, 8000);
+      try {
+          await task;
+          await stream.writeSSE({ data: JSON.stringify({ status: "completed" }) });
+      } catch (e: any) {
+          console.error("[Explore Task Error]", e);
+          await stream.writeSSE({ data: JSON.stringify({ status: "error", message: e.message }) });
+      } finally {
+          clearInterval(heartbeatTimer);
+      }
+  });
 });
 
 app.post("/explore/stop", async (c) => {
@@ -1598,13 +1634,14 @@ app.post("/cron", async (c) => {
     // Trigger task
     const task = runExplorationTask(
         db, targetName, callAI, getConfig, setConfig, addRelationship, 
-        ARCHIVE_PROMPT, ARCHIVE_SCHEMA, fetchMetadataFromWiki, c, true,
+        ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA,
+        fetchMetadataFromWiki, c, true,
         async (msg) => { console.log(`[Cron Explore Pulse] ${msg}`); },
         newTaskId,
         'explorer'
     );
     
-    console.log(`[Cron] Started background task for ${targetName}`);
+    console.log(`[Cron] Started streaming task for ${targetName}`);
 
     if (c.executionCtx && c.executionCtx.waitUntil) {
         c.executionCtx.waitUntil(task.catch((e: any) => console.error("[Cron Task Error]", e)));
@@ -1612,5 +1649,24 @@ app.post("/cron", async (c) => {
         task.catch(e => console.error("Task Error", e));
     }
 
-    return c.json({ status: "started", message: "探索任务已启动", taskId: newTaskId, target: targetName });
+    // Return a stream immediately to keep the connection alive so Cloudflare doesn't terminate the isolate
+    return streamSSE(c, async (stream) => {
+        // Send initial acknowledgment so the cron worker knows it started
+        await stream.writeSSE({ data: JSON.stringify({ status: "started", message: "探索任务已启动", taskId: newTaskId, target: targetName }) });
+
+        // Keep the connection open while the task runs
+        const heartbeatTimer = setInterval(() => {
+            stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(()=>{});
+        }, 8000);
+
+        try {
+            await task;
+            await stream.writeSSE({ data: JSON.stringify({ status: "completed" }) });
+        } catch (e: any) {
+            console.error("[Cron Task Error]", e);
+            await stream.writeSSE({ data: JSON.stringify({ status: "error", message: e.message }) });
+        } finally {
+            clearInterval(heartbeatTimer);
+        }
+    });
 });

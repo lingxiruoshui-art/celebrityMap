@@ -22,8 +22,10 @@ export async function runExplorationTask(
   getConfig: any,
   setConfig: any,
   addRelationship: any,
-  ARCHIVE_PROMPT: any,
-  ARCHIVE_SCHEMA: any,
+  ARCHIVE_CORE_PROMPT: any,
+  ARCHIVE_CORE_SCHEMA: any,
+  ARCHIVE_EXTRA_PROMPT: any,
+  ARCHIVE_EXTRA_SCHEMA: any,
   fetchMetadataFromWiki: any,
   c: any,
   isAdmin: boolean,
@@ -302,9 +304,9 @@ export async function runExplorationTask(
       "歌手/演艺明星", "探险家/航海家", "商业精英/企业家", "医学家", "其他历史名人"
     ];
 
-    const prompt = ARCHIVE_PROMPT(finalTargetName, CATEGORIES, sampleNames, meta.description);
+    const prompt = ARCHIVE_CORE_PROMPT(finalTargetName, CATEGORIES, sampleNames, meta.description);
 
-    addLog(`AI 代理请求发送 [${provider === 'gemini' ? 'Google Gemini' : 'Aliyun Qwen'}]`, "ai-req", { 
+    addLog(`AI 代理请求发送 (分步1:基础传记) [${provider === 'gemini' ? 'Google Gemini' : 'Aliyun Qwen'}]`, "ai-req", { 
         target: finalTargetName,
         categories: CATEGORIES.slice(0, 3).join(",") + "...",
         prompt_snippet: prompt.substring(0, 300) + "..." 
@@ -312,15 +314,13 @@ export async function runExplorationTask(
     let resultText: string;
     
     try {
-        addLog(`[AI] 正在通过时空信道上行数据 (Payload: ${Math.round(prompt.length / 1024 * 10) / 10}KB)...`, "info");
-        resultText = await callAI(c, db, prompt, "json", ARCHIVE_SCHEMA(!!meta.description), async () => {
-            // This is the internal callback of callAI if it supports it
-            // We MUST update the heartbeat here too to prevent "stale" detection during long AI calls
+        addLog(`[AI] 正在通过时空信道上行核心数据 (Payload: ${Math.round(prompt.length / 1024 * 10) / 10}KB)...`, "info");
+        resultText = await callAI(c, db, prompt, "json", ARCHIVE_CORE_SCHEMA(!!meta.description), async () => {
             const waiting = Math.floor((Date.now() - (state.steps[state.steps.length - 1]?.startTime || Date.now())) / 1000);
-            addLog(`[AI] 超维建模中 (Streaming)... 已等待 ${waiting}s`, "heartbeat", undefined, true);
-            await saveState("AI 流式处理中...");
+            addLog(`[AI] 超维核心建模中 (Streaming)... 已等待 ${waiting}s`, "heartbeat", undefined, true);
+            await saveState("AI 核心流式处理中...");
         });
-        addLog(`[AI] 建模数据下行采集完成`, "ai-res");
+        addLog(`[AI] 核心建模数据下行采集完成`, "ai-res");
     } catch (e: any) {
         addLog(`AI 请求失败: ${e.message}`, "error");
         throw new Error(e.message === "请求超时" || e.message.includes("超时") ? "AI 探索思考时间过长，已中止" : (e.message || "AI 服务异常"));
@@ -328,42 +328,62 @@ export async function runExplorationTask(
         // aiHeartbeat was removed, we use the globalHeartbeat
     }
 
-    addLog("AI 响应解码成功", "ai-res", { 
+    addLog("AI 核心响应解码成功", "ai-res", { 
         rawTextSnippet: resultText.substring(0, 150) + "..." 
     });
 
-    let personData: any = {};
+    let coreData: any = {};
     try {
-        personData = JSON.parse(resultText || "{}");
+        coreData = JSON.parse(resultText || "{}");
     } catch (e) {
         try {
-            // Fallback: AI sometimes includes literal newlines or control characters inside JSON strings.
-            // Replacing all literal newlines and tabs with spaces will un-prettify the JSON,
-            // but it will also flatten multi-line unescaped strings, making it valid JSON.
-            // Then we parse it again.
-            const sanitizedText = (resultText || "{}")
-                .replace(/\n/g, ' ')
-                .replace(/\r/g, '')
-                .replace(/\t/g, ' ');
-            personData = JSON.parse(sanitizedText);
+            const sanitizedText = (resultText || "{}").replace(/\n/g, ' ').replace(/\r/g, '').replace(/\t/g, ' ');
+            coreData = JSON.parse(sanitizedText);
         } catch (e2) {
-            console.error("JSON parse fallback failed:", e2, "\\nRaw text:", resultText);
             throw new Error(`AI 生成人物 ${finalTargetName} 的传记数据格式有误`);
         }
     }
 
-    if (Array.isArray(personData) && personData.length > 0) personData = personData[0];
-    if (!personData.biography && personData.result) personData = personData.result;
+    if (Array.isArray(coreData) && coreData.length > 0) coreData = coreData[0];
+    if (!coreData.biography && coreData.result) coreData = coreData.result;
 
-    if (!personData || Object.keys(personData).length === 0 || (!personData.standardChineseName && !personData.biography)) {
-        throw new Error(`AI 返回了空的或无效的数据，可能触发了内容过滤或流意外中断。`);
+    if (!coreData || (!coreData.standardChineseName && !coreData.biography)) {
+        throw new Error(`AI 返回了空的或无效的数据。`);
     }
 
     if (!isAdmin) {
-        if (!meta.description && personData.accepted === false) {
-            throw new Error(`抱歉，${finalTargetName} 可能不符合入库标准（${personData.reason || "非真实历史人物"}）`);
+        if (!meta.description && coreData.accepted === false) {
+            throw new Error(`抱歉，${finalTargetName} 可能不符合入库标准（${coreData.reason || "非真实历史人物"}）`);
         }
     }
+
+    // --- Step 2: Extract Achievements and Relationships ---
+    addLog(`[AI] 开始第二阶段：提取成就及编织时空关联网...`, "info");
+    const extraPrompt = ARCHIVE_EXTRA_PROMPT(coreData.standardChineseName || finalTargetName, coreData.biography);
+    
+    let extraResultText: string;
+    try {
+        extraResultText = await callAI(c, db, extraPrompt, "json", ARCHIVE_EXTRA_SCHEMA, async () => {
+            const waiting = Math.floor((Date.now() - (state.steps[state.steps.length - 1]?.startTime || Date.now())) / 1000);
+            addLog(`[AI] 关联网络编织中 (Streaming)... 已等待 ${waiting}s`, "heartbeat", undefined, true);
+            await saveState("AI 提取关联中...");
+        });
+        addLog(`[AI] 关联网络数据下行完成`, "ai-res");
+    } catch (e: any) {
+        addLog(`AI 关联提取失败: ${e.message}`, "error");
+        throw new Error(e.message === "请求超时" || e.message.includes("超时") ? "AI 关联提取超时，已中止" : (e.message || "AI 服务异常"));
+    }
+
+    let extraData: any = {};
+    try {
+        const sanitizedText = (extraResultText || "{}").replace(/\n/g, ' ').replace(/\r/g, '').replace(/\t/g, ' ');
+        extraData = JSON.parse(sanitizedText);
+    } catch (e) {
+        throw new Error(`AI 生成的关联数据格式有误`);
+    }
+    if (Array.isArray(extraData) && extraData.length > 0) extraData = extraData[0];
+
+    const personData = { ...coreData, ...extraData };
 
     const finalName = personData.standardChineseName || finalTargetName;
     state.target = finalName;

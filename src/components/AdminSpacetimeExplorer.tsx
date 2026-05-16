@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef } from "react";
 import { X, Search, ChevronRight, User, Loader2, Sparkles, AlertCircle, Zap, ChevronDown, ChevronUp, StopCircle, RefreshCw, Save, CheckCircle } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { getGemini, ARCHIVE_PROMPT, ARCHIVE_SCHEMA } from "../services/aiService";
+import { getGemini } from "../services/aiService";
 
 export interface SpacetimeExplorerHandle {
   start: (overrideSource?: string, overrideTarget?: string) => void;
@@ -471,6 +471,20 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
            } catch(e) {}
            throw new Error(errMsg);
         }
+        
+        // Start consuming stream in background to keep connection alive
+        const consumeStream = async () => {
+           try {
+             const reader = res.body?.getReader();
+             if (reader) {
+                while (true) {
+                   const { done } = await reader.read();
+                   if (done) break;
+                }
+             }
+           } catch(e) {}
+        };
+        consumeStream();
         
         pollStatusRef.current = true;
       } catch (err: any) {
