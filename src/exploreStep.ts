@@ -43,10 +43,18 @@ export async function advanceExplorationStep(
   isAdmin: boolean
 ): Promise<ExploreState> {
     const stateRaw = await getConfig(db, "explore_state", "null");
-    if (stateRaw === "null") return { status: "error", error: "未找到任务状态" } as any;
+    if (stateRaw === "null") {
+        console.error("[advanceExplorationStep] 未找到任务状态，直接返回");
+        return { status: "error", error: "未找到任务状态" } as any;
+    }
     
     let state: ExploreState = JSON.parse(stateRaw);
-    if (state.status !== "running") return state; // Already finished
+    if (state.status !== "running") {
+        console.log(`[advanceExplorationStep] 任务非运行状态 (${state.status})，直接返回`);
+        return state; // Already finished
+    }
+
+    console.log(`[advanceExplorationStep] 进入步骤，当前阶段: ${state.phase}, 目标: ${state.target}`);
 
     const saveState = async (updates: Partial<ExploreState>) => {
         state = { ...state, ...updates, lastHeartbeat: Date.now(), pulse: (state.pulse || 0) + 1 };
@@ -56,6 +64,7 @@ export async function advanceExplorationStep(
     const addLog = (msg: string, type: string = "ui", data?: any) => {
         const timestamp = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
         state.logs.push({ timestamp, msg, type, data });
+        console.log(`[Explore Log - ${type}] ${msg}`);
         if (state.logs.length > 150) state.logs = state.logs.slice(-150);
         db.prepare("INSERT INTO task_logs (task_id, type, msg, data) VALUES (?, ?, ?, ?)").run(String(state.taskId), type, msg, data ? JSON.stringify(data) : null).catch(()=>console.log("log error"));
     };
@@ -76,10 +85,11 @@ export async function advanceExplorationStep(
         if (state.status === 'running') {
             saveState({}).catch(() => {});
         }
-    }, 15000); // 15s pulse
+    }, 10000); // 10s pulse (was 15s)
 
     try {
         if (state.phase === "init") {
+            console.log(`[exploreStep] ==== 进入 init 阶段 ====`);
             let finalTargetName = state.target;
 
             if (!finalTargetName) {
@@ -105,6 +115,7 @@ export async function advanceExplorationStep(
             
             updateLastStep("success", `锁定目标: ${finalTargetName}`);
             addStep(`探索检索：正在寻找 ${finalTargetName} 的特征...`);
+            console.log(`[exploreStep] 检索维基数据：${finalTargetName}`);
             
             const wikiMeta = await fetchMetadataFromWiki(finalTargetName);
             if (!wikiMeta || !wikiMeta.imageUrl) {
@@ -113,10 +124,12 @@ export async function advanceExplorationStep(
             if (wikiMeta.description) addLog(`[WIKI] 匹配身份线索: ${wikiMeta.description.substring(0, 100)}`, "info");
             
             await saveState({ target: wikiMeta.normalizedName, wikiMeta, phase: "ai_core" });
+            console.log(`[exploreStep] ==== 退出 init 阶段，流转至 ai_core ====`);
             return state;
         }
 
         if (state.phase === "ai_core") {
+            console.log(`[exploreStep] ==== 进入 ai_core 阶段 ====`);
             updateLastStep("success", `特征提取成功: ${state.target}`);
             addStep(`深度分析：AI 正在构建 ${state.target} 的核心时空档案...`);
             
@@ -142,10 +155,12 @@ export async function advanceExplorationStep(
             }
             
             await saveState({ coreData, phase: "ai_extra", target: coreData.standardChineseName || state.target });
+            console.log(`[exploreStep] ==== 退出 ai_core 阶段，流转至 ai_extra ====`);
             return state;
         }
 
         if (state.phase === "ai_extra") {
+            console.log(`[exploreStep] ==== 进入 ai_extra 阶段 ====`);
             addStep(`提取成就及编织时空关联网...`);
             const extraPrompt = ARCHIVE_EXTRA_PROMPT(state.target, state.coreData.biography);
             let extraResultText = "";
@@ -158,10 +173,12 @@ export async function advanceExplorationStep(
             if (Array.isArray(extraData)) extraData = extraData[0];
             
             await saveState({ extraData, phase: "finalize" });
+            console.log(`[exploreStep] ==== 退出 ai_extra 阶段，流转至 finalize ====`);
             return state;
         }
 
         if (state.phase === "finalize") {
+            console.log(`[exploreStep] ==== 进入 finalize 阶段 ====`);
             const personData = { ...state.coreData, ...state.extraData };
             const finalName = state.target;
             
@@ -169,6 +186,7 @@ export async function advanceExplorationStep(
             const portraitUrl = `/api/portraits/${encodeURIComponent(finalName.toLowerCase())}.jpg`;
             if (c.env && c.env.IMAGES && portraitUrlRaw) {
                 try {
+                    console.log(`[exploreStep] 正在抓取画像 -> ${portraitUrlRaw}`);
                     const imgRes = await fetch(portraitUrlRaw);
                     if (imgRes.ok) {
                         const buffer = await imgRes.arrayBuffer();
@@ -177,7 +195,9 @@ export async function advanceExplorationStep(
                         });
                         addLog(`肖像同步成功`, "success");
                     }
-                } catch(e) {}
+                } catch(e) {
+                    console.log(`[exploreStep] 画像抓取失败，略过`, e);
+                }
             }
             
             const res = await db.prepare(
@@ -212,9 +232,11 @@ export async function advanceExplorationStep(
             updateLastStep("success", `时空节点建立成功：${finalName}`);
             addLog(`入库协议执行完毕：${finalName} 已正式载入史册`, "success");
             await saveState({ status: "success", target: finalName, newArrivals: [...state.newArrivals, finalName], path: [{ name: finalName, type: "入库成功" }] });
+            console.log(`[exploreStep] ==== 顺利完成，退出 finalize 阶段 ====`);
             return state;
         }
     } catch (e: any) {
+        console.error(`[exploreStep] 执行过程捕获到错误: ${e.message}`, e);
         updateLastStep("error", `执行错误: ${e.message}`);
         addLog(`探索中止: ${e.message}`, "error");
         await saveState({ status: "error", error: e.message });

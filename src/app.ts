@@ -352,11 +352,13 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
 export async function fetchMetadataFromWiki(name: string) {
   const headers = { "User-Agent": "HistoricalArchiveApp/1.0 (zhiduanchangyu@gmail.com)" };
   try {
+    console.log(`[Wiki API] Searching Wikidata for: ${name}`);
     const searchRes = await fetch(`https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(name)}&language=zh&format=json`, { headers });
     const searchData = await searchRes.json() as any;
     const entity = searchData.search?.[0];
     
     if (entity) {
+      console.log(`[Wiki API] Found Wikidata entity: ${entity.id} - ${entity.label}`);
       const entityId = entity.id;
       const entityRes = await fetch(`https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${entityId}&props=claims|descriptions|labels&languages=zh|en&format=json`, { headers });
       const entityData = await entityRes.json() as any;
@@ -364,6 +366,7 @@ export async function fetchMetadataFromWiki(name: string) {
       
       const zhLabel = item.labels?.zh?.value;
       const description = item.descriptions?.zh?.value || item.descriptions?.en?.value || entity.description || "";
+      console.log(`[Wiki API] Parsed description: ${description.substring(0, 50)}...`);
       const claims = item.claims || {};
       let imageUrl = "";
       
@@ -383,17 +386,21 @@ export async function fetchMetadataFromWiki(name: string) {
     }
     
     // Fallback to Wikipedia search for snippet if Wikidata yields nothing
+    console.log(`[Wiki API] No Wikidata entity found for ${name}, falling back to Wikipedia search`);
     const wikiRes = await fetch(`https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(name)}&format=json`, { headers });
     const wikiData = await wikiRes.json() as any;
     const wikiItem = wikiData.query?.search?.[0];
     if (wikiItem) {
+        let snippet = (wikiItem.snippet || "").replace(/<[^>]*>?/gm, '');
+        console.log(`[Wiki API] Found Wikipedia snippet: ${snippet.substring(0, 50)}...`);
         return {
             normalizedName: wikiItem.title,
-            description: (wikiItem.snippet || "").replace(/<[^>]*>?/gm, ''),
+            description: snippet,
             imageUrl: null
         };
     }
 
+    console.log(`[Wiki API] Nothing found for ${name}`);
     return { normalizedName: name, description: "", imageUrl: null };
   } catch (e) {
     console.error("Wiki/Wikidata fetch error:", e);
@@ -1315,10 +1322,17 @@ app.get("/explore/status", async (c) => {
   }
   
   if (data && data.status === 'running') {
-      const diff = data.lastHeartbeat ? (Date.now() - data.lastHeartbeat) : Infinity;
+      const now = Date.now();
+      // Initialize if missing (safety)
+      if (!data.lastHeartbeat) {
+          data.lastHeartbeat = now;
+          await setConfig(db, "explore_state", JSON.stringify(data));
+      }
+      
+      const diff = now - data.lastHeartbeat;
       if (diff > 600000) { // 600 seconds (10 minutes)
           data.status = 'error';
-          data.error = '探索任务被系统认定为已脱机（持续 >600s 无响应）。可能由于大模型 API 限流、网络波动或响应过慢导致。请检查 API 状态或网络连接后重试。';
+          data.error = '探索任务被系统认定为已脱机（持续 >10min 无响应）。可能由于大模型 API 限流、网络波动或响应过慢导致。请检查 API 状态或网络连接后重试。';
           const newState = JSON.stringify(data);
           await setConfig(db, "explore_state", newState);
       }

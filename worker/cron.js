@@ -32,7 +32,7 @@ export default {
         const contentType = response.headers.get("content-type") || "";
         if (contentType.includes("application/json")) {
             const data = await response.json().catch(()=>({}));
-            console.log(`[Worker] 返回 JSON:`, data);
+            console.log(`[Worker] 返回 JSON: ${JSON.stringify(data)}`);
             return;
         }
 
@@ -59,9 +59,16 @@ export default {
                     
                     for (const line of lines) {
                         const trimmedLine = line.trim();
-                        if (trimmedLine.startsWith('data: ')) {
+                        if (!trimmedLine) continue;
+
+                        // Support multiple events joined in one line (e.g. data: {...}data: {...})
+                        // Standard SSE uses "data: " prefix.
+                        const rawEvents = trimmedLine.split('data:').filter(p => p.trim());
+                        
+                        for (const rawEvent of rawEvents) {
                             try {
-                                const data = JSON.parse(trimmedLine.slice(6));
+                                const data = JSON.parse(rawEvent.trim());
+                                console.log(`[Worker SSE] 收到消息:`, JSON.stringify(data));
                                 if (data.status === "skipped" || data.isEmpty) {
                                     console.warn(`[Worker] 任务跳过或无法开始:`, data.message || "条件未满足");
                                     finished = true;
@@ -75,10 +82,12 @@ export default {
                                     finished = true;
                                 } else if (data.type === "ping") {
                                     // Heartbeat - keep going
+                                    console.log(`[Worker SSE] 心跳 (ping)`);
                                 }
                             } catch(e) {
-                                // Partial or malformed JSON, wait for more data
-                                console.log(`[Worker] 无法解析数据行，可能是分片: ${trimmedLine.substring(0, 50)}...`);
+                                // If it's the last part of a line and it's truncated, wait for next chunk
+                                // But since we split by \n and pop the last line, this should mostly be full JSON
+                                console.log(`[Worker] 无法解析状态数据行: ${rawEvent.substring(0, 50)}...`);
                             }
                         }
                     }
@@ -90,7 +99,7 @@ export default {
 
         consumeStream();
 
-        console.log(`[Worker] 开始每 5 秒轮询任务执行状态...`);
+        console.log(`[Worker] 开始每 8 秒轮询任务执行状态...`);
 
         const startTime = Date.now();
         const MAX_WAIT = 15 * 60 * 1000; // 15 minutes max wait
@@ -121,8 +130,10 @@ export default {
                     break;
                  }
                  
+                 console.log(`[Worker Poll] 最新状态: ${JSON.stringify(statusData).substring(0, 300)}`);
+                 
                  if (statusData.status === "running") {
-                    console.log(`[Worker] 任务进行中 -> Phase: ${statusData.phase}, Target: ${statusData.target}`);
+                    console.log(`[Worker] 任务进行中 -> Phase: ${statusData.phase}, Target: ${statusData.target || '未知'}`);
                  } else if (statusData.status === "success") {
                     console.log(`[Worker] 轮询确认任务已成功完成!`);
                     finished = true;
@@ -130,6 +141,8 @@ export default {
                     console.error(`[Worker] 轮询发现任务错误:`, statusData.error || "未知错误");
                     finished = true;
                  }
+             } else {
+                 console.warn(`[Worker Poll] 请求状态失败，状态码: ${statusRes.status}`);
              }
            } catch(pollErr) {
              console.error(`[Worker] 轮询过程出错:`, pollErr.message);
@@ -138,7 +151,7 @@ export default {
         
         console.log(`[Worker] 流程彻底结束，退出。`);
       } catch (e) {
-        console.error(`[Worker] 请求执行异常:`, e.message);
+        console.error(`[Worker] 请求执行异常:`, e.stack || e.message);
       }
     };
 
