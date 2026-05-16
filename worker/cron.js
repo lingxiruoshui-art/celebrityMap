@@ -26,19 +26,15 @@ export default {
           headers: { "User-Agent": "Cloudflare-Cron-Worker" }
         });
         
-        const startResponseData = await response.json().catch(() => ({}));
-
-        if (startResponseData.status === "skipped" || startResponseData.isEmpty) {
-            console.warn(`[Worker] 任务跳过或无法开始:`, startResponseData.message);
-            return;
-        }
-
-        if (startResponseData.status === "started") {
-            console.log(`[Worker] 成功启动状态机:`, startResponseData.message);
-        }
-
         let finished = false;
         const targetHost = new URL(targetUrl).origin;
+
+        const contentType = response.headers.get("content-type") || "";
+        if (contentType.includes("application/json")) {
+            const data = await response.json().catch(()=>({}));
+            console.log(`[Worker] 返回 JSON:`, data);
+            return;
+        }
 
         // Asynchronously consume the streaming response to keep the backend function alive
         const consumeStream = async () => {

@@ -175,8 +175,8 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     const interval = setInterval(() => {
       const now = Date.now();
       const diff = now - lastActivityRef.current;
-      // If no activity for 12 seconds, consider it "stale" (red light)
-      if (diff > 12000) {
+      // If no activity for 25 seconds, consider it "stale" (red light)
+      if (diff > 25000) {
         setPulseActive(false);
       } else {
         setPulseActive(true);

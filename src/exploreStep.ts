@@ -91,7 +91,7 @@ export async function advanceExplorationStep(
                     finalTargetName = unarchivedInPool[Math.floor(Math.random() * unarchivedInPool.length)];
                 } else {
                     const prompt = `请从世界历史中选取一位极其著名、具有重大全球影响力且通常被视为正面的真实历史人物。要求不包含在已知列表中：[${state.sampleNames} ...]`;
-                    const resultText = await callAI(c, db, prompt, "text");
+                    const resultText = await callAI(c, db, prompt, "text", undefined, async () => { addLog("AI 正在深度思考寻找新目标...", "heartbeat"); await saveState({}); });
                     finalTargetName = (resultText || "").trim().replace(/[「」""'']/g, "");
                 }
             }
@@ -117,7 +117,7 @@ export async function advanceExplorationStep(
             const prompt = ARCHIVE_CORE_PROMPT(state.target, CATEGORIES, state.sampleNames || "", state.wikiMeta.description);
             let resultText = "";
             try {
-                resultText = await callAI(c, db, prompt, "json", ARCHIVE_CORE_SCHEMA(!!state.wikiMeta.description));
+                resultText = await callAI(c, db, prompt, "json", ARCHIVE_CORE_SCHEMA(!!state.wikiMeta.description), async () => { addLog("AI 仍在思考并构建基础档案中...", "heartbeat"); await saveState({}); });
             } catch (e: any) { throw new Error(e.message.includes("超时") ? "AI 探索思考时间过长" : e.message); }
 
             let coreData: any = {};
@@ -143,7 +143,7 @@ export async function advanceExplorationStep(
             const extraPrompt = ARCHIVE_EXTRA_PROMPT(state.target, state.coreData.biography);
             let extraResultText = "";
             try {
-                extraResultText = await callAI(c, db, extraPrompt, "json", ARCHIVE_EXTRA_SCHEMA);
+                extraResultText = await callAI(c, db, extraPrompt, "json", ARCHIVE_EXTRA_SCHEMA, async () => { addLog("AI 正在提取成就和关联人物...", "heartbeat"); await saveState({}); });
             } catch (e: any) { throw new Error(e.message); }
             
             let extraData: any = {};
