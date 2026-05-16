@@ -26,58 +26,54 @@ export default {
           headers: { "User-Agent": "Cloudflare-Cron-Worker" }
         });
         
-        const text = await response.text();
-        console.log(`[Worker] 响应状态: ${response.status}`);
-        
-        let startResponseData;
-        try {
-          startResponseData = JSON.parse(text);
-          if (startResponseData.status === "skipped" || startResponseData.isEmpty) {
-            console.warn(`[Worker] 任务跳过或无法开始: ${startResponseData.message}`);
-            return;
-          }
-          console.log(`[Worker] 成功触发任务:`, startResponseData.message || startResponseData);
-        } catch(e) {
-          console.log(`[Worker] 原始响应内容无法解析: ${text.substring(0, 200)}`);
-          return;
-        }
-
-        // 持续轮询直至完成或报错
-        const targetHost = new URL(targetUrl).origin;
-        console.log(`[Worker] 开始每 5 秒轮询任务执行状态...`);
+        console.log(`[Worker] 开始接收后端返回的任务流...`);
+        let startResponseData = null;
         let finished = false;
 
-        while (!finished) {
-           await new Promise(r => setTimeout(r, 5000));
-           try {
-             const _v = Date.now();
-             console.log(`[Worker] 正在通过网络消息问询后端任务状态 (请求ID: ${_v})...`);
-             const stRes = await fetch(`${targetHost}/api/explore/status?_v=${_v}`);
-             
-             if (!stRes.ok) {
-                 console.error(`[Worker] 答复异常: 轮询状态接口失败, 状态码: ${stRes.status}`);
-                 continue;
-             }
-             const st = await stRes.json();
-             
-             if (!st || st === null || st === "null") {
-                 console.log(`[Worker] 收到答复: 探索任务似乎已结束(无状态)。`);
-                 finished = true;
-                 break;
-             }
+        const reader = response.body?.getReader();
+        if (!reader) {
+            console.error(`[Worker] 无法获取响应流`);
+            return;
+        }
 
-             if (st.status === "error" || st.status === "completed" || st.status === "stop" || st.status === "idle") {
-                 console.log(`[Worker] 收到最终答复: 任务最终状态发现! status: ${st.status}, message: ${st.error || st.msg || "完成"}`);
-                 finished = true;
-                 break;
-             }
-             
-             // Still running
-             console.log(`[Worker] 收到答复: 任务进行中 -> 阶段: ${st.stage || '未知'}, 信息: ${st.msg || '探索进行中...'}`);
-             // Keep worker running and printing logs
-           } catch(pollErr) {
-             console.error(`[Worker] 问询过程出错:`, pollErr.message);
-           }
+        const decoder = new TextDecoder("utf-8");
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+                console.log(`[Worker] 后端响应流已关闭，任务执行完毕！`);
+                break;
+            }
+            
+            const chunkText = decoder.decode(value, { stream: true });
+            const lines = chunkText.split('\n');
+            
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(line.slice(6));
+                        
+                        if (data.status === "skipped" || data.isEmpty) {
+                            console.warn(`[Worker] 任务跳过或无法开始: ${data.message}`);
+                            return;
+                        }
+                        
+                        if (data.status === "started") {
+                            console.log(`[Worker] 成功触发任务:`, data.message || data);
+                            startResponseData = data;
+                        } else if (data.status === "completed") {
+                            console.log(`[Worker] 收到后端完成信号!`);
+                            finished = true;
+                        } else if (data.status === "error") {
+                            console.error(`[Worker] 收到后端错误信号:`, data.message);
+                            finished = true;
+                        } else if (data.type === "ping") {
+                            // keep-alive
+                        } else {
+                            console.log(`[Worker] 收到片段流数据:`, JSON.stringify(data).substring(0, 100));
+                        }
+                    } catch(e) {}
+                }
+            }
         }
         
         console.log(`[Worker] 流程彻底结束，退出。`);

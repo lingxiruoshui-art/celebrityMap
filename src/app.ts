@@ -1594,7 +1594,7 @@ app.post("/cron", async (c) => {
     const stateStr = JSON.stringify(initialState);
     await setConfig(db, "explore_state", stateStr);
 
-    // Trigger task in background
+    // Trigger task
     const task = runExplorationTask(
         db, targetName, callAI, getConfig, setConfig, addRelationship, 
         ARCHIVE_PROMPT, ARCHIVE_SCHEMA, fetchMetadataFromWiki, c, true,
@@ -1603,18 +1603,26 @@ app.post("/cron", async (c) => {
         'explorer'
     );
     
-    if (c.executionCtx && c.executionCtx.waitUntil) {
-        c.executionCtx.waitUntil(task.catch((e: any) => console.error("[Cron Task Error]", e)));
-    } else {
-        // Fallback for Node.js environments
-        task.catch(e => console.error("[Cron Task Error]", e));
-    }
-    
-    console.log(`[Cron] Started task for ${targetName}`);
+    console.log(`[Cron] Started streaming task for ${targetName}`);
 
-    return c.json({ 
-        status: "started", 
-        message: "后台明确确认：已成功收到 worker 触发的消息并启动背景任务", 
-        target: targetName 
+    // Return a stream immediately to keep the connection alive and prevent early Worker eviction
+    return streamSSE(c, async (stream) => {
+        // Send initial acknowledgment so the cron worker knows it started
+        await stream.writeSSE({ data: JSON.stringify({ status: "started", message: "探索任务已启动", taskId: newTaskId, target: targetName }) });
+
+        // Keep the connection open while the task runs
+        const heartbeatTimer = setInterval(() => {
+            stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(()=>{});
+        }, 8000);
+
+        try {
+            await task;
+            await stream.writeSSE({ data: JSON.stringify({ status: "completed" }) });
+        } catch (e: any) {
+            console.error("[Cron Task Error]", e);
+            await stream.writeSSE({ data: JSON.stringify({ status: "error", message: e.message }) });
+        } finally {
+            clearInterval(heartbeatTimer);
+        }
     });
 });
