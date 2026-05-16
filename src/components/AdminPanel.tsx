@@ -80,7 +80,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
     setTimeout(() => setNotification(null), 3000);
   };
 
-  const [activeTask, setActiveTask] = useState<{ title: string; isRunning: boolean } | null>(null);
+  const [activeTask, setActiveTask] = useState<{ title: string; isRunning: boolean; source?: 'list' | 'explorer' } | null>(null);
   const [activeTaskLogs, setActiveTaskLogs] = useState<{type: 'info' | 'success' | 'error' | 'step' | 'ai-req' | 'ai-res' | 'heartbeat', msg: string, time: Date}[]>([]);
   const taskLogsContainerRef = useRef<HTMLDivElement>(null);
 
@@ -208,7 +208,13 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
           if (data && isRunning && data.logs && data.logs.length > 0) {
             if (!activeTask || (activeTaskLogs.length < (data.logs.length - 1))) {
                 if (!activeTask) {
-                    setActiveTask({ title: `同步中: ${data.target}`, isRunning: true });
+                    // Only auto-sync globally if it seems to be a list-oriented task or if we want global visibility
+                    // If it was started by the explorer, we might not want to show it in the list card
+                    setActiveTask({ 
+                      title: `同步中: ${data.target}`, 
+                      isRunning: true, 
+                      source: data.target && data.target !== '待定' ? 'list' : 'explorer' 
+                    });
                 }
                 
                 // Map the logs from ExploreState format to AdminPanel format
@@ -248,7 +254,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
 
   const performArchiveFigure = async (name: string, taskTitle: string, isRegenerating: boolean = false) => {
     if (isRegenerating) setRegeneratingName(name);
-    setActiveTask({ title: taskTitle, isRunning: true });
+    setActiveTask({ title: taskTitle, isRunning: true, source: 'list' });
     setActiveTaskLogs([
       { type: 'step', msg: '初始化数据同步任务...', time: new Date() },
       { type: 'info', msg: '正在从时空漩涡中检索人物拓扑特征...', time: new Date() }
@@ -311,7 +317,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
 
   const expandConnections = async (id: number, name: string) => {
     setExpandingId(id);
-    setActiveTask({ title: `智能扩展联系 [${name}]`, isRunning: true });
+    setActiveTask({ title: `智能扩展联系 [${name}]`, isRunning: true, source: 'list' });
     setActiveTaskLogs([
       { type: 'step', msg: '初始化扩展任务...', time: new Date() },
       { type: 'step', msg: '提取人物知识图谱特征...', time: new Date() },
@@ -726,43 +732,6 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                 </button>
               </div>
             </div>
-
-            {/* Global Task Status Bar */}
-            <AnimatePresence>
-              {activeTask && (
-                <motion.div 
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: "auto", opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  className="bg-indigo-50/80 border-t border-indigo-100/50 overflow-hidden backdrop-blur-sm"
-                >
-                  <div className="px-5 py-3.5 flex flex-col gap-2.5">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                         <div className={`w-2 h-2 rounded-full ${activeTask.isRunning ? 'bg-indigo-500 animate-pulse shadow-[0_0_8px_rgba(99,102,241,0.5)]' : 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]'}`} />
-                         <span className="text-[10px] font-black text-indigo-900 uppercase tracking-widest">{activeTask.title}</span>
-                      </div>
-                      {!activeTask.isRunning && (
-                        <button onClick={() => setActiveTask(null)} className="p-1 hover:bg-indigo-100 text-indigo-400 rounded-md transition-all">
-                          <X className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
-                    <div 
-                      ref={taskLogsContainerRef}
-                      className="max-h-40 overflow-y-auto custom-scrollbar flex flex-col gap-1.5 text-[11px] font-mono leading-relaxed pb-1 pr-2"
-                    >
-                      {activeTaskLogs.map((log, i) => (
-                        <div key={i} className={`flex items-start gap-2.5 transition-all animate-in slide-in-from-left-1 duration-300 ${log.type === 'error' ? 'text-red-500 bg-red-50/50' : log.type === 'success' ? 'text-emerald-600 bg-emerald-50/30' : log.type === 'ai-req' || log.type === 'ai-res' || log.type === 'heartbeat' ? 'text-indigo-500' : 'text-slate-500'} rounded px-1.5 py-0.5`}>
-                          <span className="opacity-30 min-w-[70px] shrink-0 font-sans text-[10px]">[{log.time.toLocaleTimeString('zh-CN', { hour12: false })}]</span>
-                          <span className="font-semibold break-all leading-tight">{log.msg}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
           </div>
 
           <div className={`flex-1 ${activeTab === 'archive_plus' ? 'overflow-hidden flex flex-col p-4 sm:p-6 pb-2 sm:pb-2 pt-2 sm:pt-4' : 'overflow-y-auto p-5'} bg-slate-50/30`}>
@@ -780,6 +749,43 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 </div>
               </div>
+
+              {/* Integrated Task Card inside Archive View */}
+              <AnimatePresence>
+                {activeTask && activeTab === 'archive' && activeTask.source === 'list' && (
+                  <motion.div 
+                    initial={{ height: 0, opacity: 0, scale: 0.98, y: -10 }}
+                    animate={{ height: "auto", opacity: 1, scale: 1, y: 0 }}
+                    exit={{ height: 0, opacity: 0, scale: 0.98, y: -10 }}
+                    className="bg-indigo-50/40 border border-indigo-100/60 rounded-2xl overflow-hidden mx-2 mb-6 shadow-[0_4px_15px_rgba(99,102,241,0.05)] backdrop-blur-sm"
+                  >
+                    <div className="px-5 py-4 flex flex-col gap-3">
+                      <div className="flex items-center justify-between border-b border-indigo-100/30 pb-3">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-2.5 h-2.5 rounded-full ${activeTask.isRunning ? 'bg-indigo-500 animate-pulse shadow-[0_0_8px_rgba(99,102,241,0.5)]' : 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]'}`} />
+                          <span className="text-[11px] font-black text-indigo-950 uppercase tracking-[0.1em]">{activeTask.title}</span>
+                        </div>
+                        {!activeTask.isRunning && (
+                          <button onClick={() => setActiveTask(null)} className="p-1 px-3 hover:bg-white text-indigo-500 rounded-lg transition-all text-[10px] font-black uppercase border border-indigo-100 shadow-sm">
+                             关闭日志
+                          </button>
+                        )}
+                      </div>
+                      <div 
+                        ref={taskLogsContainerRef}
+                        className="max-h-56 overflow-y-auto custom-scrollbar flex flex-col gap-1 text-[11px] font-mono leading-relaxed pb-1 pr-2"
+                      >
+                        {activeTaskLogs.slice(-150).map((log, i) => (
+                          <div key={i} className={`flex items-start gap-3 transition-all animate-in slide-in-from-left-1 duration-300 ${log.type === 'error' ? 'text-red-500 bg-red-50/50' : log.type === 'success' ? 'text-emerald-600 bg-emerald-50/30' : log.type === 'ai-req' || log.type === 'ai-res' || log.type === 'heartbeat' ? 'text-indigo-500' : 'text-slate-500'} rounded-md px-2 py-0.5`}>
+                            <span className="opacity-25 min-w-[75px] shrink-0 font-sans text-[10px] tabular-nums">[{log.time.toLocaleTimeString('zh-CN', { hour12: false })}]</span>
+                            <span className="font-semibold break-all leading-tight">{log.msg}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               <div className="flex items-center justify-between px-2">
                 <div className="flex items-center gap-3">
