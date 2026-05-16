@@ -12,6 +12,15 @@ database_id = "b805d7ec-6522-446a-a9be-0553983c088d"
 binding = "IMAGES"
 bucket_name = "historical-portraits"
 
+[[queues.producers]]
+binding = "EXPLORE_QUEUE"
+queue = "explore-queue"
+
+[[queues.consumers]]
+queue = "explore-queue"
+max_batch_size = 1
+max_batch_timeout = 5
+max_retries = 3
 
 [vars]
 # Add other environment variables here

@@ -4,12 +4,13 @@ import { GoogleGenAI } from "@google/genai";
 import { D1DatabaseAdapter, DatabaseAdapter } from "./db.ts";
 import { CATEGORIES, FIGURE_POOL } from "./figuresPool.ts";
 import { ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA, EXPAND_CONNECTIONS_PROMPT, EXPAND_CONNECTIONS_SCHEMA } from "./services/aiService.ts";
-import { initExplorationState, advanceExplorationStep } from "./exploreStep.ts";
+import { initExplorationState, advanceExplorationStep, doFinalizeInsert } from "./exploreStep.ts";
 
 const root = new Hono<{ 
   Bindings: { 
     DB?: any;
     IMAGES?: any;
+    EXPLORE_QUEUE?: any;
     GEMINI_API_KEY?: string;
     GEMINI_MODEL_ID?: string;
     ADMIN_PASSWORD?: string;
@@ -34,7 +35,7 @@ app.notFound((c) => {
 let nodeDbInstance: DatabaseAdapter | null = null;
 let dbInitialized = false;
 
-async function getDb(c: any): Promise<DatabaseAdapter> {
+export async function getDb(c: any): Promise<DatabaseAdapter> {
   let db: DatabaseAdapter;
   if (c.env && c.env.DB_ADAPTER) {
     db = c.env.DB_ADAPTER;
@@ -118,7 +119,7 @@ const getAdminPassword = (c: any) => {
     return (c.env && c.env.ADMIN_PASSWORD) || (typeof process !== "undefined" && process.env.ADMIN_PASSWORD) || "admin";
 };
 
-export async function callAI(c: any, db: DatabaseAdapter, prompt: string, responseFormat: "text" | "json" = "text", schema?: any, onStreamPulse?: () => Promise<void>): Promise<string> {
+export async function callAI(c: any, db: DatabaseAdapter, prompt: string, responseFormat: "text" | "json" = "text", schema?: any): Promise<string> {
   const provider = await getConfig(db, "active_model_provider", "gemini");
   
   let apiKey = "";  
@@ -128,37 +129,8 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
       apiKey = (await getConfig(db, "gemini_api_key")) || (c.env && c.env.GEMINI_API_KEY) || (typeof process !== "undefined" && process.env.GEMINI_API_KEY) || "";
   }
   
-  let isFetching = true;
-  let heartbeatPromise: Promise<void> | null = null;
-  if (onStreamPulse) {
-      heartbeatPromise = (async () => {
-          while (isFetching) {
-              await new Promise(r => setTimeout(r, 10000)); // 10s throttle
-              if (!isFetching) break;
-              try { 
-                await onStreamPulse(); 
-                // 真实命中大模型域名的底层API查询，用于 Serverless (如 Cloudflare) 强效保活
-                try { 
-                    if (provider === "aliyun") {
-                      await fetch("https://dashscope.aliyuncs.com/compatible-mode/v1/models", { 
-                        method: 'GET',
-                        headers: { "Authorization": `Bearer ${apiKey}` },
-                        signal: AbortSignal.timeout(2000) 
-                      }).catch(()=>{}); 
-                    } else if (apiKey) {
-                      await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`, { 
-                        method: 'GET',
-                        signal: AbortSignal.timeout(2000) 
-                      }).catch(()=>{});
-                    }
-                } catch(e){}
-              } catch(e) { console.error("Pulse error", e); }
-          }
-      })();
-  }
-
   const cleanup = () => {
-      isFetching = false;
+      // isFetching = false;
   };
   
   if (provider === "aliyun") {
@@ -176,7 +148,6 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
     }, 290000); 
 
     const aliyunCleanup = () => {
-      isFetching = false;
       clearTimeout(timeoutId);
     };
 
@@ -300,13 +271,8 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
           } : undefined
         });
         let fullText = "";
-        let lastPulse = Date.now();
         for await (const chunk of stream) {
            fullText += chunk.text;
-           if (onStreamPulse && Date.now() - lastPulse > 10000) { // 10s throttle
-               lastPulse = Date.now();
-               onStreamPulse().catch(()=>{});
-           }
         }
         return fullText;
       };
@@ -672,9 +638,7 @@ app.post("/admin/people/:id/expand-connections", async (c) => {
           await send({ type: 'ai-req', msg: `已选取 ${candidates.length} 名潜在对象，请求 AI 进行维度对齐...` });
           const prompt = EXPAND_CONNECTIONS_PROMPT(person.name, person.biography, candidates.map(c => c.name));
           
-          const resultText = await callAI(c, db, prompt, "json", EXPAND_CONNECTIONS_SCHEMA, async () => {
-              await send({ type: 'heartbeat', msg: '时空网络计算中 (已触发 10s 底层网络强保活)...' });
-          });
+          const resultText = await callAI(c, db, prompt, "json", EXPAND_CONNECTIONS_SCHEMA);
           
           await send({ type: 'ai-res', msg: "AI 计算完成，正在建立连接隧道..." });
           let newRels: any[] = [];
@@ -728,8 +692,6 @@ app.post("/admin/people/:id/expand-connections", async (c) => {
                   reason: { type: "string" }
               },
               required: ["name", "reason"]
-          }, async () => {
-              await send({ type: 'heartbeat', msg: '评估候选人价值中...' });
           });
           
           let picked: any = {};
@@ -973,7 +935,7 @@ app.get("/archiver/random-pair", async (c) => {
   return c.json({ sourceName: people[0].name, targetName: people[1].name });
 });
 
-async function pickTarget(db: DatabaseAdapter) {
+export async function pickTarget(db: DatabaseAdapter) {
   const people = await db.prepare("SELECT name, raw_relationships FROM people").all() as any[];
   const archivedNames = people.map(p => p.name);
   const archivedSet = new Set(archivedNames);
@@ -1138,9 +1100,7 @@ app.post("/archive-figure", async (c) => {
               const prompt = ARCHIVE_CORE_PROMPT(targetName, CATEGORIES, sampleNames, meta.description);
 
               await send({ type: 'ai-req', msg: 'AI 代理请求发送 (基础传记)', data: { prompt: prompt.substring(0, 300) + "..." } });
-              let resultText = await callAI(c, db, prompt, "json", ARCHIVE_CORE_SCHEMA(!!meta.description), async () => {
-                  await send({ type: 'heartbeat', msg: 'AI 仍在思考中 (已触发 10s 底层网络强保活)...' });
-              });
+              let resultText = await callAI(c, db, prompt, "json", ARCHIVE_CORE_SCHEMA(!!meta.description));
 
               let coreData: any = {};
               try { coreData = JSON.parse(resultText || "{}"); } catch(e) {}
@@ -1152,9 +1112,7 @@ app.post("/archive-figure", async (c) => {
 
               await send({ type: 'ai-req', msg: 'AI 代理请求发送 (成就与关系)' });
               const extraPrompt = ARCHIVE_EXTRA_PROMPT(coreData.standardChineseName || targetName, coreData.biography);
-              let extraResultText = await callAI(c, db, extraPrompt, "json", ARCHIVE_EXTRA_SCHEMA, async () => {
-                  await send({ type: 'heartbeat', msg: 'AI 正在提取成就和关联人物 (已触发 10s 底层网络强保活)...' });
-              });
+              let extraResultText = await callAI(c, db, extraPrompt, "json", ARCHIVE_EXTRA_SCHEMA);
 
               let extraData: any = {};
               try { extraData = JSON.parse(extraResultText || "{}"); } catch(e) {}
@@ -1482,32 +1440,40 @@ app.post("/explore/start", async (c) => {
   const newTaskId = clientTaskId || Date.now();
   await initExplorationState(db, getConfig, setConfig, target, reqSource || 'explorer', newTaskId);
 
-  return streamSSE(c, async (stream) => {
-      await stream.writeSSE({ data: JSON.stringify({ status: "started", message: "探索任务状态机已初始化", taskId: newTaskId }) });
-      const heartbeatTimer = setInterval(() => {
-          stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(()=>{});
-      }, 5000);
-      
-      try {
-          let isDone = false;
-          while (!isDone) {
-              const state = await advanceExplorationStep(
-                  db, callAI, getConfig, setConfig, addRelationship,
-                  ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA,
-                  fetchMetadataFromWiki, c, !!isAdmin
-              );
-              if (state.status === "success" || state.status === "error" || state.status === "idle") {
-                  isDone = true;
+  if (c.env && c.env.EXPLORE_QUEUE) {
+      console.log(`[Explore] 准备分发手动探索任务至 Queue, target: ${target}, source: ${reqSource || 'explorer'}, taskId: ${newTaskId}`);
+      await c.env.EXPLORE_QUEUE.send({ type: 'admin', targetName: target, reqSource: reqSource || 'explorer', taskId: newTaskId });
+      console.log(`[Explore] 手动探索任务已成功投递至 Queue.`);
+      return c.json({ status: "started", message: "探索任务已提交至 Queue 处理", taskId: newTaskId });
+  } else {
+      // Fallback if no queue bound in local env or development
+      return streamSSE(c, async (stream) => {
+          await stream.writeSSE({ data: JSON.stringify({ status: "started", message: "（本地无Queue模式）任务状态机已初始化", taskId: newTaskId }) });
+          const heartbeatTimer = setInterval(() => {
+              stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(()=>{});
+          }, 5000);
+          
+          try {
+              let isDone = false;
+              while (!isDone) {
+                  const state = await advanceExplorationStep(
+                      db, callAI, getConfig, setConfig, addRelationship,
+                      ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA,
+                      fetchMetadataFromWiki, c, !!isAdmin
+                  );
+                  if (state.status === "success" || state.status === "error" || state.status === "idle") {
+                      isDone = true;
+                  }
               }
+              await stream.writeSSE({ data: JSON.stringify({ status: "completed" }) });
+          } catch (e: any) {
+              console.error("[Explore Task Error]", e);
+              await stream.writeSSE({ data: JSON.stringify({ status: "error", message: e.message }) });
+          } finally {
+              clearInterval(heartbeatTimer);
           }
-          await stream.writeSSE({ data: JSON.stringify({ status: "completed" }) });
-      } catch (e: any) {
-          console.error("[Explore Task Error]", e);
-          await stream.writeSSE({ data: JSON.stringify({ status: "error", message: e.message }) });
-      } finally {
-          clearInterval(heartbeatTimer);
-      }
-  });
+      });
+  }
 });
 
 app.post("/explore/stop", async (c) => {
@@ -1613,41 +1579,61 @@ app.post("/cron", async (c) => {
         return c.json({ status: "no target found", isEmpty, message: "成功收到消息，但已无更多人物可探索" });
     }
 
+    // 收到下一次触发任务时将上次的探索结果入库
+    try {
+        const pendingResultStr = await getConfig(db, "pending_auto_result", "null");
+        if (pendingResultStr !== "null") {
+            const pendingParams = JSON.parse(pendingResultStr);
+            console.log(`[Cron] 正在将上次的探索结果入库: ${pendingParams.finalName}`);
+            await doFinalizeInsert(db, pendingParams.finalName, pendingParams.personData, pendingParams.wikiMeta, c, addRelationship, null);
+            await setConfig(db, "pending_auto_result", "null");
+        }
+    } catch(e) {
+        console.error("[Cron] 上次结果入库失败", e);
+    }
+    
     // Update last trigger time
     await setConfig(db, "last_cron_trigger_time", String(now));
 
-    const newTaskId = Date.now();
-    await initExplorationState(db, getConfig, setConfig, targetName, 'explorer', newTaskId);
-    
-    console.log(`[Cron] Initialized state machine for ${targetName}`);
-
-    return streamSSE(c, async (stream) => {
-        await stream.writeSSE({ data: JSON.stringify({ status: "started", message: "探索状态机已启动", taskId: newTaskId, target: targetName }) });
-        const heartbeatTimer = setInterval(() => {
-            stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(()=>{});
-        }, 5000);
+    if (c.env && c.env.EXPLORE_QUEUE) {
+        console.log(`[Cron] 定时任务触发，准备分发唤醒探索任务至 Queue: ${targetName}`);
+        await c.env.EXPLORE_QUEUE.send({ type: 'auto' });
+        console.log(`[Cron] 唤醒探索任务已成功投递至 Queue.`);
+        return c.json({ status: "started", message: "定时任务触发，已提交至 Queue 处理" });
+    } else {
+        const newTaskId = Date.now();
+        await initExplorationState(db, getConfig, setConfig, targetName, 'explorer', newTaskId);
         
-        try {
-            let isDone = false;
-            while (!isDone) {
-                const state = await advanceExplorationStep(
-                    db, callAI, getConfig, setConfig, addRelationship,
-                    ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA,
-                    fetchMetadataFromWiki, c, true
-                );
-                
-                await stream.writeSSE({ data: JSON.stringify({ status: "running", phase: state.phase, target: state.target }) }).catch(()=>{});
-                
-                if (state.status === "success" || state.status === "error" || state.status === "idle") {
-                    isDone = true;
+        console.log(`[Cron] Initialized state machine for ${targetName}`);
+
+        return streamSSE(c, async (stream) => {
+            await stream.writeSSE({ data: JSON.stringify({ status: "started", message: "探索状态机已启动", taskId: newTaskId, target: targetName }) });
+            const heartbeatTimer = setInterval(() => {
+                stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(()=>{});
+            }, 5000);
+            
+            try {
+                let isDone = false;
+                while (!isDone) {
+                    const state = await advanceExplorationStep(
+                        db, callAI, getConfig, setConfig, addRelationship,
+                        ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA,
+                        fetchMetadataFromWiki, c, true
+                    );
+                    
+                    await stream.writeSSE({ data: JSON.stringify({ status: "running", phase: state.phase, target: state.target }) }).catch(()=>{});
+                    
+                    if (state.status === "success" || state.status === "error" || state.status === "idle") {
+                        isDone = true;
+                    }
                 }
+                await stream.writeSSE({ data: JSON.stringify({ status: "completed", target: targetName }) }).catch(()=>{});
+            } catch (e: any) {
+                console.error("[Cron Explore Task Error]", e);
+                await stream.writeSSE({ data: JSON.stringify({ status: "error", target: targetName, message: e.message }) }).catch(()=>{});
+            } finally {
+                clearInterval(heartbeatTimer);
             }
-            await stream.writeSSE({ data: JSON.stringify({ status: "completed", target: targetName }) }).catch(()=>{});
-        } catch (e: any) {
-            console.error("[Cron Explore Task Error]", e);
-            await stream.writeSSE({ data: JSON.stringify({ status: "error", target: targetName, message: e.message }) }).catch(()=>{});
-        } finally {
-            clearInterval(heartbeatTimer);
-        }
-    });
+        });
+    }
 });
