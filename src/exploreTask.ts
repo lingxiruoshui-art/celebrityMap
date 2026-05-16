@@ -41,11 +41,13 @@ export async function runExplorationTask(
     newArrivals: [],
   };
 
+  let isSaving = false;
   const saveState = async (reason?: string) => {
+    if (isSaving) return; // Prevent concurrent saveState
+    isSaving = true;
     state.lastHeartbeat = Date.now();
     state.pulse = (state.pulse || 0) + 1;
     if (onPulse) {
-      // Do not await onPulse to prevent streaming backpressure from hanging the task
       onPulse(reason || "heartbeat").catch(e => console.error("Pulse error:", e));
     }
     
@@ -75,6 +77,8 @@ export async function runExplorationTask(
     } catch (e: any) {
         if (e.message === "AbortError") throw e;
         console.warn(`[Explore Task] saveState failed/timeout: ${e.message}`);
+    } finally {
+        isSaving = false;
     }
   };
 

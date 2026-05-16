@@ -141,7 +141,23 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
 
     const startTime = Date.now();
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 180000); // 180s timeout as requested
+    const timeoutId = setTimeout(() => controller.abort(), 180000); // 180s timeout
+
+    let pulseTimer: any;
+    if (onStreamPulse) {
+      pulseTimer = setInterval(async () => {
+          if (!isFetching) return;
+          try {
+            await onStreamPulse();
+          } catch(e) {}
+      }, 5000); // Pulse every 5s instead of 8s for better stability
+    }
+
+    const aliyunCleanup = () => {
+      isFetching = false;
+      if (pulseTimer) clearInterval(pulseTimer);
+      clearTimeout(timeoutId);
+    };
 
     try {
       const res = await fetch("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", {
@@ -164,7 +180,7 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
       
       if (!res.ok) {
         clearTimeout(timeoutId);
-        cleanup();
+        aliyunCleanup();
         console.error(`Aliyun API error: ${res.status} ${res.statusText}`);
         throw new Error(`Aliyun API error`);
       }
@@ -204,7 +220,7 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
       }
       
       clearTimeout(timeoutId);
-      cleanup();
+      aliyunCleanup();
       
       if (!fullContent) {
         throw new Error("API 未返回任何有效内容，可能触发了安全拦截。");
@@ -235,7 +251,7 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
       return content;
     } catch (err: any) {
       clearTimeout(timeoutId);
-      cleanup();
+      aliyunCleanup();
       if (err.name === 'AbortError') throw new Error("AI 调用超时 (300s)");
       throw err;
     }
@@ -594,39 +610,76 @@ app.post("/admin/people/:id/expand-connections", async (c) => {
   const person = await db.prepare("SELECT * FROM people WHERE id = ?").get(id) as any;
   if (!person) return c.json({ error: "Person not found" }, 404);
 
-  // 2. Get existing connection IDs
+  // 2. Get existing connection IDs (members of the same archive)
   const existingConnections = await db.prepare(`
     SELECT person1_id as other_id FROM relationships WHERE person2_id = ?
     UNION
     SELECT person2_id as other_id FROM relationships WHERE person1_id = ?
   `).all(id, id) as any[];
-  const existingIds = new Set(existingConnections.map(c => c.other_id));
+  const existingIds = new Set(existingConnections.map(cc => cc.other_id));
   existingIds.add(parseInt(id));
 
   // 3. Get up to 50 candidates (archived people not connected)
   const candidates = await db.prepare("SELECT name FROM people WHERE id NOT IN (" + Array.from(existingIds).join(",") + ") ORDER BY RANDOM() LIMIT 50").all() as any[];
-  if (candidates.length === 0) return c.json({ error: "No connection candidates found" });
+  
+  let addedCount = 0;
+  let newRels = [];
 
-  // 4. Call AI
-  const prompt = EXPAND_CONNECTIONS_PROMPT(person.name, person.biography, candidates.map(c => c.name));
-  try {
-      const resultText = await callAI(c, db, prompt, "json", EXPAND_CONNECTIONS_SCHEMA);
-      const newRels = JSON.parse(resultText || "[]");
+  if (candidates.length > 0) {
+      // 4. Call AI to find links among archived people
+      const prompt = EXPAND_CONNECTIONS_PROMPT(person.name, person.biography, candidates.map(c => c.name));
+      try {
+          const resultText = await callAI(c, db, prompt, "json", EXPAND_CONNECTIONS_SCHEMA);
+          newRels = JSON.parse(resultText || "[]");
+          
+          for (const rel of newRels) {
+              const matched = await db.prepare("SELECT id FROM people WHERE name = ?").get(rel.personName) as any;
+              if (matched) {
+                  await addRelationship(db, parseInt(id), matched.id, rel.relationshipType);
+                  addedCount++;
+              }
+          }
+      } catch (e: any) {
+          console.error("Expand connections link-building error:", e);
+      }
+  }
+
+  // 5. If no links were added, fallback: pick an unarchived person from raw_relationships to archive
+  if (addedCount === 0) {
+      const archivedPeopleRows = await db.prepare("SELECT name FROM people").all() as any[];
+      const archivedNames = new Set(archivedPeopleRows.map(p => p.name));
       
-      let addedCount = 0;
-      for (const rel of newRels) {
-          const matched = await db.prepare("SELECT id FROM people WHERE name = ?").get(rel.personName) as any;
-          if (matched) {
-              await addRelationship(db, parseInt(id), matched.id, rel.relationshipType);
-              addedCount++;
+      let rawRels = [];
+      try {
+          rawRels = JSON.parse(person.raw_relationships || "[]");
+      } catch (e) {}
+
+      const unarchivedCandidates = rawRels
+          .map((r: any) => r.personName)
+          .filter((name: string) => name && !archivedNames.has(name));
+
+      if (unarchivedCandidates.length > 0) {
+          const fallbackPrompt = `你是一位历史策展人。人物 "${person.name}" 的原始关联中有一些尚未正式入库的历史人物：[${unarchivedCandidates.join("、")}]。\n请从中挑选出一名您认为最重要/最知名/最值得入库的人物，并给出推荐理由。\n\n请严格返回以下格式的 JSON：\n{ "name": "标准中文译名", "reason": "推荐收录理由(20字内)" }`;
+          try {
+              const pickedRaw = await callAI(c, db, fallbackPrompt, "json", {
+                  type: "object",
+                  properties: {
+                      name: { type: "string" },
+                      reason: { type: "string" }
+                  },
+                  required: ["name", "reason"]
+              });
+              const picked = JSON.parse(pickedRaw || "{}");
+              if (picked.name && unarchivedCandidates.includes(picked.name)) {
+                  return c.json({ success: true, addedCount: 0, fallbackArchive: picked });
+              }
+          } catch (e) {
+              console.error("Expand connections fallback error:", e);
           }
       }
-      
-      return c.json({ success: true, addedCount });
-  } catch (e: any) {
-      console.error("Expand connections error:", e);
-      return c.json({ error: e.message }, 500);
   }
+  
+  return c.json({ success: true, addedCount });
 });
 
 app.post("/admin/repair-images", async (c) => {

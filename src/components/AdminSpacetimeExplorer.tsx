@@ -288,22 +288,24 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                        setIsLoading(false);
                        pollStatusRef.current = false;
                    } else if (data.status === 'success') {
-                       if (data.target && allowAdminControls) {} // Removed auto-reset to successful target
+                       if (data.target && allowAdminControls) {} 
                        if (!hasLoadedResultRef.current) {
                            setPath(data.path || []);
                            setNewArrivals(data.newArrivals ? data.newArrivals : []);
                            setShowResults(true);
                            setIsLoading(false);
+                           pollStatusRef.current = false;
                            hasLoadedResultRef.current = true;
                            if (onPathFound) onPathFound(data.path || []);
                             
                             // Automatically pick next candidate after success
                             if (allowAdminControls || isAdmin) {
-                                handlePickRandomPair();
+                               handlePickRandomPair();
                             }
                            if (data.newArrivals && data.newArrivals.length > 0) onRefreshArchive();
+                       } else {
+                           pollStatusRef.current = false;
                        }
-                       pollStatusRef.current = false;
                    } else {
                        setIsLoading(false);
                        pollStatusRef.current = false;
@@ -455,7 +457,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
         if (!res.ok) {
            let errMsg = "探索启动失败";
            try {
-             const errData = await res.json();
+             const errData = await res.json() as any;
              errMsg = errData.error || errMsg;
            } catch(e) {}
            throw new Error(errMsg);
@@ -897,7 +899,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                   {/* Path Summary Header */}
                   <div className="p-4 bg-gradient-to-br from-indigo-50 to-white/50 border border-indigo-100/50 rounded-2xl shadow-sm">
                     <div className="flex items-center gap-2 mb-2">
-                      <Zap className="w-3.5 h-3.5 text-indigo-600" />
+                       <Zap className="w-3.5 h-3.5 text-indigo-600" />
                       <span className="text-[9px] font-black text-slate-800 uppercase tracking-widest">时空关系探索报告</span>
                     </div>
                     <p className="text-[11px] text-slate-600 leading-relaxed font-bold">

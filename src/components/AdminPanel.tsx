@@ -80,6 +80,16 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
     setTimeout(() => setNotification(null), 3000);
   };
 
+  const [activeTask, setActiveTask] = useState<{ title: string; isRunning: boolean } | null>(null);
+  const [activeTaskLogs, setActiveTaskLogs] = useState<{type: 'info' | 'success' | 'error' | 'step' | 'ai-req' | 'ai-res' | 'heartbeat', msg: string, time: Date}[]>([]);
+  const taskLogsContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (taskLogsContainerRef.current) {
+      taskLogsContainerRef.current.scrollTop = taskLogsContainerRef.current.scrollHeight;
+    }
+  }, [activeTaskLogs]);
+
   // Confirm dialog state
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmData, setConfirmData] = useState({
@@ -209,8 +219,14 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
     setCurrentPage(1);
   }, [searchQuery, sortField, sortOrder]);
 
-  const regeneratePerson = async (name: string) => {
-    setRegeneratingName(name);
+  const performArchiveFigure = async (name: string, taskTitle: string, isRegenerating: boolean = false) => {
+    if (isRegenerating) setRegeneratingName(name);
+    setActiveTask({ title: taskTitle, isRunning: true });
+    setActiveTaskLogs([
+      { type: 'step', msg: '初始化数据同步任务...', time: new Date() },
+      { type: 'info', msg: '正在从时空漩涡中检索人物拓扑特征...', time: new Date() }
+    ]);
+
     let errorMsg = '';
     try {
       const res = await fetch("/api/archive-figure", {
@@ -220,7 +236,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
       });
       
       const reader = res.body?.getReader();
-      if (!reader) throw new Error("No response");
+      if (!reader) throw new Error("无法建立数据流连接");
       const decoder = new TextDecoder();
       let buffer = '';
 
@@ -238,23 +254,43 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
               const data = JSON.parse(line.slice(6));
               if (data.type === 'error') {
                  errorMsg = data.msg;
+                 setActiveTaskLogs(prev => [...prev, { type: 'error', msg: errorMsg, time: new Date() }]);
+              } else if (data.type === 'step' || data.type === 'info' || data.type === 'success' || data.type === 'ai-req' || data.type === 'ai-res' || data.type === 'heartbeat') {
+                 setActiveTaskLogs(prev => [...prev, { type: data.type as any, msg: data.msg, time: new Date() }]);
+              } else if (data.type === 'result') {
+                 setActiveTaskLogs(prev => [...prev, { type: 'success', msg: '资料库同步成功。', time: new Date() }]);
               }
             } catch(e) {}
           }
         }
       }
       if (errorMsg) throw new Error(errorMsg);
-      showNotification('success', `人物 [${name}] 已重新生成`);
+      showNotification('success', `人物 [${name}] 已成功${isRegenerating ? '重新生成' : '归档入库'}`);
       fetchArchive();
+      return true;
     } catch(e: any) {
-      showNotification('error', e.message || '重新生成失败');
+      showNotification('error', e.message || '任务执行失败');
+      setActiveTaskLogs(prev => [...prev, { type: 'error', msg: e.message || '任务中断', time: new Date() }]);
+      return false;
     } finally {
-      setRegeneratingName(null);
+      if (isRegenerating) setRegeneratingName(null);
+      setActiveTask(prev => prev ? { ...prev, isRunning: false } : null);
     }
+  };
+
+  const regeneratePerson = async (name: string) => {
+    await performArchiveFigure(name, `重新生成简介 [${name}]`, true);
   };
 
   const expandConnections = async (id: number, name: string) => {
     setExpandingId(id);
+    setActiveTask({ title: `智能扩展联系 [${name}]`, isRunning: true });
+    setActiveTaskLogs([
+      { type: 'step', msg: '初始化扩展任务...', time: new Date() },
+      { type: 'step', msg: '提取人物知识图谱特征...', time: new Date() },
+      { type: 'ai-req', msg: '正在调用 AI 匹配馆藏人物网络 (耗时约 5-10 秒)...', time: new Date() }
+    ]);
+    
     try {
       const res = await fetch(`/api/admin/people/${id}/expand-connections`, {
         method: "POST",
@@ -263,19 +299,36 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
       if (res.ok) {
         const data = await res.json() as any;
         if (data.addedCount > 0) {
+          setActiveTaskLogs(prev => [...prev, { type: 'success', msg: `扩展完成，成功新增 ${data.addedCount} 条联系`, time: new Date() }]);
           showNotification('success', `已成功为 [${name}] 扩展 ${data.addedCount} 条联系`);
           fetchArchive();
+        } else if (data.fallbackArchive) {
+          const { name: fallbackName, reason } = data.fallbackArchive;
+          setActiveTaskLogs(prev => [...prev, { 
+            type: 'info', 
+            msg: `库内未发现直接联系。AI 推荐将关联人物 [${fallbackName}] 收入馆藏。原因: ${reason}`, 
+            time: new Date() 
+          }]);
+          setActiveTaskLogs(prev => [...prev, { type: 'step', msg: `准备将 [${fallbackName}] 收入馆藏...`, time: new Date() }]);
+          
+          setExpandingId(null); // Clear expanding state as we transition to archiving
+          await performArchiveFigure(fallbackName, `关联入库 [${fallbackName}]`);
+          return; // performArchiveFigure handles task closing
         } else {
+          setActiveTaskLogs(prev => [...prev, { type: 'info', msg: `未能在现有库中找到与 [${name}] 相关的新联系`, time: new Date() }]);
           showNotification('info', `未能在现有库中找到与 [${name}] 相关的新联系`);
         }
       } else {
         const data = await res.json() as any;
+        setActiveTaskLogs(prev => [...prev, { type: 'error', msg: `扩展失败: ${data.error}`, time: new Date() }]);
         showNotification('error', data.error || '扩展失败');
       }
     } catch (e) {
+      setActiveTaskLogs(prev => [...prev, { type: 'error', msg: `连接超时`, time: new Date() }]);
       showNotification('error', '连接超时');
     } finally {
       setExpandingId(null);
+      setActiveTask(prev => prev ? { ...prev, isRunning: false } : null);
     }
   };
 
@@ -613,14 +666,46 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
           <div className={`flex-1 ${activeTab === 'archive_plus' ? 'overflow-hidden flex flex-col p-4 sm:p-6 pb-2 sm:pb-2 pt-2 sm:pt-4' : 'overflow-y-auto p-5'} bg-slate-50/30`}>
           <div className={activeTab === "archive" ? "space-y-6 animate-in fade-in duration-500 pb-8" : "hidden"}>
               
-              <div className="flex justify-end pr-2">
-                <div className="relative w-full max-w-sm group">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-end px-2 gap-4">
+                <div className="flex-1 w-full min-h-[42px]">
+                   {activeTask ? (
+                       <div className="bg-white border text-xs border-indigo-100 shadow-sm shadow-indigo-100/50 rounded-xl p-3 flex flex-col gap-2 relative overflow-hidden h-32 w-full max-w-2xl">
+                           <div className="font-bold flex items-center justify-between z-10 relative">
+                               <div className="flex items-center gap-2">
+                                   <div className={`w-2 h-2 rounded-full ${activeTask.isRunning ? 'bg-indigo-500 animate-pulse' : 'bg-green-500'}`} />
+                                   <span className="text-indigo-900">{activeTask.title}</span>
+                               </div>
+                               {!activeTask.isRunning && (
+                                   <button onClick={() => setActiveTask(null)} className="text-slate-400 hover:text-slate-600 p-1 bg-slate-50 rounded-md"><X className="w-3.5 h-3.5"/></button>
+                               )}
+                           </div>
+                           <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1.5 z-10 relative text-[11px] font-mono" ref={taskLogsContainerRef}>
+                               {activeTaskLogs.map((log, i) => (
+                                   <div key={i} className={`flex items-start gap-2 leading-relaxed ${log.type === 'error' ? 'text-red-600' : log.type === 'success' ? 'text-emerald-600' : log.type === 'ai-req' || log.type === 'ai-res' || log.type === 'heartbeat' ? 'text-indigo-500' : 'text-slate-600'}`}>
+                                       <span className="opacity-40 min-w-[55px] shrink-0 font-sans text-[10px] hidden sm:block whitespace-nowrap">[{log.time.toLocaleTimeString('zh-CN', { hour12: false })}]</span>
+                                       <span className="break-words font-medium">{log.msg}</span>
+                                   </div>
+                               ))}
+                           </div>
+                           {activeTask.isRunning && <div className="absolute inset-x-0 bottom-0 top-0 bg-gradient-to-r from-indigo-50/30 flex items-center via-transparent to-transparent pointer-events-none z-0" />}
+                       </div>
+                   ) : (
+                       <div className="text-xs text-slate-500 font-medium bg-white border shadow-sm border-slate-200/60 rounded-xl py-3 px-4 h-full flex flex-col justify-center w-full max-w-2xl">
+                          <div className="flex items-center">
+                            <Info className="w-4 h-4 text-indigo-400 mr-2 shrink-0" />
+                            <span>点击操作列的 <UserPlus className="w-3.5 h-3.5 mx-1 inline-block text-emerald-500"/> 或 <Sparkles className="w-3.5 h-3.5 mx-1 inline-block text-indigo-400"/> 查看任务运行状态和详细日志。</span>
+                          </div>
+                       </div>
+                   )}
+                </div>
+
+                <div className="relative w-full md:max-w-xs group shrink-0">
                   <input 
                     type="text"
                     placeholder="搜索已收录人物..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 outline-none transition-all placeholder:text-slate-400 group-hover:border-slate-300"
+                    className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 outline-none transition-all placeholder:text-slate-400 group-hover:border-slate-300 shadow-sm"
                   />
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
                 </div>
