@@ -29,16 +29,55 @@ export default {
         const text = await response.text();
         console.log(`[Worker] 响应状态: ${response.status}`);
         
+        let startResponseData;
         try {
-          const data = JSON.parse(text);
-          if (data.status === "skipped") {
-            console.warn(`[Worker] 任务跳过: ${data.message}`);
-          } else {
-            console.log(`[Worker] 成功结果:`, JSON.stringify(data));
+          startResponseData = JSON.parse(text);
+          if (startResponseData.status === "skipped" || startResponseData.isEmpty) {
+            console.warn(`[Worker] 任务跳过或无法开始: ${startResponseData.message}`);
+            return;
           }
+          console.log(`[Worker] 成功触发任务:`, startResponseData.message || startResponseData);
         } catch(e) {
-          console.log(`[Worker] 原始响应内容: ${text.substring(0, 200)}`);
+          console.log(`[Worker] 原始响应内容无法解析: ${text.substring(0, 200)}`);
+          return;
         }
+
+        // 持续轮询直至完成或报错
+        const targetHost = new URL(targetUrl).origin;
+        console.log(`[Worker] 开始每 10 秒轮询任务执行状态...`);
+        let finished = false;
+
+        while (!finished) {
+           await new Promise(r => setTimeout(r, 10000));
+           try {
+             const stRes = await fetch(`${targetHost}/api/explore/status?_v=${Date.now()}`);
+             if (!stRes.ok) {
+                 console.error(`[Worker] 轮询状态接口失败:`, stRes.status);
+                 continue;
+             }
+             const st = await stRes.json();
+             
+             if (!st || st === null || st === "null") {
+                 console.log(`[Worker] 探索任务似乎已结束(无状态)。`);
+                 finished = true;
+                 break;
+             }
+
+             if (st.status === "error" || st.status === "completed" || st.status === "stop" || st.status === "idle") {
+                 console.log(`[Worker] 任务最终状态发现! status: ${st.status}, message: ${st.error || st.msg || "完成"}`);
+                 finished = true;
+                 break;
+             }
+             
+             // Still running
+             console.log(`[Worker] 任务进行中 -> 阶段: ${st.stage || '未知'}, 信息: ${st.msg || '探索进行中...'}`);
+             // Keep worker running and printing logs
+           } catch(pollErr) {
+             console.error(`[Worker] 轮询出错:`, pollErr.message);
+           }
+        }
+        
+        console.log(`[Worker] 流程彻底结束，退出。`);
       } catch (e) {
         console.error(`[Worker] 请求执行异常:`, e.message);
       }

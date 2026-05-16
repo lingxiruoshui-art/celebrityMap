@@ -21,5 +21,7 @@ export const scheduled = async (
   });
   
   // This invokes the Hono app directly with the request
-  ctx.waitUntil(Promise.resolve(app.fetch(request, env, ctx)));
+  const response = await app.fetch(request, env, ctx);
+  // Consume the response body completely to ensure the isolate waits for background tasks if streamed
+  await response.text();
 };

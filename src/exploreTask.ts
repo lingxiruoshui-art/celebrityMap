@@ -37,7 +37,7 @@ export async function runExplorationTask(
     source: source || 'explorer',
     taskId: providedTaskId || Date.now(),
     pulse: 0,
-    logs: [{ timestamp: new Date().toLocaleTimeString(), msg: `初始化任务: [${target || '随机发散探索'}]`, type: 'info' }],
+    logs: [{ timestamp: new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }), msg: `初始化任务: [${target || '随机发散探索'}]`, type: 'info' }],
     steps: [{ msg: "探索序列启动中...", status: "pending", startTime: Date.now() }],
     path: null,
     error: null,
@@ -94,12 +94,12 @@ export async function runExplorationTask(
       const last = state.logs[state.logs.length - 1];
       if (last.type === type) {
         last.msg = msg;
-        last.timestamp = new Date().toLocaleTimeString();
+        last.timestamp = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
         if (data) last.data = data;
         return;
       }
     }
-    const timestamp = new Date().toLocaleTimeString();
+    const timestamp = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
     state.logs.push({
       timestamp,
       msg,
@@ -140,7 +140,7 @@ export async function runExplorationTask(
     console.log(`[Explore Task] Starting for: ${target}`);
     addLog("启动时空档案入库协议", "api", {
       target,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }),
     });
     addLog(`[SYSTEM] 守护进程已激活 (Process ID: ${Math.floor(Math.random()*100000)})`, "info");
     addLog(`[SYSTEM] 资源栈初始化中... (Memory: ${Math.floor(Math.random()*30+10)}MB)`, "api-req");
@@ -335,11 +335,25 @@ export async function runExplorationTask(
     let personData: any = {};
     try {
         personData = JSON.parse(resultText || "{}");
-        if (Array.isArray(personData) && personData.length > 0) personData = personData[0];
-        if (!personData.biography && personData.result) personData = personData.result;
     } catch (e) {
-        throw new Error(`AI 生成人物 ${finalTargetName} 的传记数据格式有误`);
+        try {
+            // Fallback: AI sometimes includes literal newlines or control characters inside JSON strings.
+            // Replacing all literal newlines and tabs with spaces will un-prettify the JSON,
+            // but it will also flatten multi-line unescaped strings, making it valid JSON.
+            // Then we parse it again.
+            const sanitizedText = (resultText || "{}")
+                .replace(/\n/g, ' ')
+                .replace(/\r/g, '')
+                .replace(/\t/g, ' ');
+            personData = JSON.parse(sanitizedText);
+        } catch (e2) {
+            console.error("JSON parse fallback failed:", e2, "\\nRaw text:", resultText);
+            throw new Error(`AI 生成人物 ${finalTargetName} 的传记数据格式有误`);
+        }
     }
+
+    if (Array.isArray(personData) && personData.length > 0) personData = personData[0];
+    if (!personData.biography && personData.result) personData = personData.result;
 
     if (!personData || Object.keys(personData).length === 0 || (!personData.standardChineseName && !personData.biography)) {
         throw new Error(`AI 返回了空的或无效的数据，可能触发了内容过滤或流意外中断。`);

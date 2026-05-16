@@ -670,7 +670,18 @@ app.post("/admin/people/:id/expand-connections", async (c) => {
           });
           
           await send({ type: 'ai-res', msg: "AI 计算完成，正在建立连接隧道..." });
-          const newRels = JSON.parse(resultText || "[]");
+          let newRels: any[] = [];
+          try {
+              const sanitizedText = (resultText || "[]")
+                  .replace(/\n/g, ' ')
+                  .replace(/\r/g, '')
+                  .replace(/\t/g, ' ');
+              newRels = JSON.parse(sanitizedText);
+          } catch (e) {
+              console.error("Expand connections parse failed", e, "\nText:", resultText);
+              await send({ type: 'error', msg: `AI 数据解析异常，请重试。` });
+              return;
+          }
           
           for (const rel of newRels) {
               const matched = await db.prepare("SELECT id FROM people WHERE name = ?").get(rel.personName) as any;
@@ -714,7 +725,16 @@ app.post("/admin/people/:id/expand-connections", async (c) => {
               await send({ type: 'heartbeat', msg: '评估候选人价值中...' });
           });
           
-          const picked = JSON.parse(pickedRaw || "{}");
+          let picked: any = {};
+          try {
+              const sanitizedRaw = (pickedRaw || "{}")
+                  .replace(/\n/g, ' ')
+                  .replace(/\r/g, '')
+                  .replace(/\t/g, ' ');
+              picked = JSON.parse(sanitizedRaw);
+          } catch(e) {
+              console.error("Fallback json parse failed", e);
+          }
           if (picked.name && unarchivedCandidates.includes(picked.name)) {
               await send({ type: 'result', addedCount: 0, fallbackArchive: picked });
               return;
@@ -1061,7 +1081,7 @@ app.post("/archive-figure", async (c) => {
 
           const send = async (data: any) => {
               // Add to local state for global tracking
-              const timestamp = new Date().toLocaleTimeString();
+              const timestamp = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
               if (data.msg) {
                 state.logs.push({ timestamp, msg: data.msg, type: data.type || 'info' });
                 if (state.logs.length > 100) state.logs.shift();
@@ -1120,7 +1140,17 @@ app.post("/archive-figure", async (c) => {
               try {
                   data = JSON.parse(resultText || "{}");
               } catch (e) {
-                  data = { category: "其他", biography: "资料解析失败", achievements: [], relationships: [], standardChineseName: targetName };
+                  try {
+                      // Fallback for trailing newlines or control chars in json strings
+                      const sanitizedText = (resultText || "{}")
+                          .replace(/\n/g, ' ')
+                          .replace(/\r/g, '')
+                          .replace(/\t/g, ' ');
+                      data = JSON.parse(sanitizedText);
+                  } catch (e2) {
+                      console.error("Archive parse failed", e2, "\nText:", resultText);
+                      data = { category: "其他", biography: "资料解析失败 (格式有误)", achievements: [], relationships: [], standardChineseName: targetName };
+                  }
               }
 
               if (!data.accepted && !isAdmin) {
@@ -1405,7 +1435,7 @@ app.post("/explore/start", async (c) => {
       target, 
       source: reqSource || 'explorer',
       taskId: newTaskId,
-      logs: [{ timestamp: new Date().toLocaleTimeString(), msg: `初始化任务: [${target || '随机发散探索'}]`, type: 'info' }], 
+      logs: [{ timestamp: new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }), msg: `初始化任务: [${target || '随机发散探索'}]`, type: 'info' }], 
       steps: [{ msg: "探索序列启动中...", status: "pending", startTime: Date.now() }], 
       path: null, 
       error: null, 
@@ -1490,7 +1520,7 @@ app.post("/explore/reset", async (c) => {
 // Added cron endpoint
 app.post("/cron", async (c) => {
     const now = Date.now();
-    console.log(`[Cron Worker] ${new Date(now).toISOString()} 后台明确收到 worker 消息`);
+    console.log(`[Cron Worker] ${new Date(now).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })} 后台明确收到 worker 消息`);
     const secret = c.req.query("secret");
     const force = c.req.query("force") === "true";
 
@@ -1531,12 +1561,12 @@ app.post("/cron", async (c) => {
         const intervalMs = (hours * 3600 + mins * 60) * 1000;
         
         if (now - lastTime < intervalMs) {
-            console.log(`[Cron Skip] Interval not reached. Last: ${new Date(lastTime).toISOString()}`);
+            console.log(`[Cron Skip] Interval not reached. Last: ${new Date(lastTime).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`);
             return c.json({ 
                 status: "skipped", 
                 message: "间隔时间未到，自动探索任务跳过（可使用 force=true 强制运行）", 
-                last_trigger: new Date(lastTime).toISOString(),
-                next_allowable: new Date(lastTime + intervalMs).toISOString()
+                last_trigger: new Date(lastTime).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }),
+                next_allowable: new Date(lastTime + intervalMs).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })
             });
         }
     }
@@ -1559,7 +1589,7 @@ app.post("/cron", async (c) => {
         target: targetName, 
         source: 'explorer',
         taskId: newTaskId,
-        logs: [{ timestamp: new Date().toLocaleTimeString(), msg: "系统周期性巡检：触发自动档案补完协议", type: "info" }], 
+        logs: [{ timestamp: new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }), msg: "系统周期性巡检：触发自动档案补完协议", type: "info" }], 
         steps: [{ msg: "周期性检索启动中...", status: "pending", startTime: Date.now() }], 
         path: null, 
         error: null, 
@@ -1579,7 +1609,7 @@ app.post("/cron", async (c) => {
     );
     
     if (c.executionCtx && c.executionCtx.waitUntil) {
-        c.executionCtx.waitUntil(task.catch(e => console.error("[Cron Task Error]", e)));
+        c.executionCtx.waitUntil(task.catch((e: any) => console.error("[Cron Task Error]", e)));
     } else {
         // Fallback for Node.js environments
         task.catch(e => console.error("[Cron Task Error]", e));
@@ -1588,7 +1618,7 @@ app.post("/cron", async (c) => {
     console.log(`[Cron] Started task for ${targetName}`);
 
     return c.json({ 
-        status: "success", 
+        status: "started", 
         message: "后台明确确认：已成功收到 worker 触发的消息并启动背景任务", 
         target: targetName 
     });

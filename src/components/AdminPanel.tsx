@@ -777,7 +777,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                       >
                         {activeTaskLogs.slice(-150).map((log, i) => (
                           <div key={i} className={`flex items-start gap-3 transition-all animate-in slide-in-from-left-1 duration-300 ${log.type === 'error' ? 'text-red-500 bg-red-50/50' : log.type === 'success' ? 'text-emerald-600 bg-emerald-50/30' : log.type === 'ai-req' || log.type === 'ai-res' || log.type === 'heartbeat' ? 'text-indigo-500' : 'text-slate-500'} rounded-md px-2 py-0.5`}>
-                            <span className="opacity-25 min-w-[75px] shrink-0 font-sans text-[10px] tabular-nums">[{log.time.toLocaleTimeString('zh-CN', { hour12: false })}]</span>
+                            <span className="opacity-25 min-w-[75px] shrink-0 font-sans text-[10px] tabular-nums">[{log.time.toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}]</span>
                             <span className="font-semibold break-all leading-tight">{log.msg}</span>
                           </div>
                         ))}
@@ -1167,6 +1167,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                       </label>
                       <div className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono font-bold text-slate-700 tracking-tight flex items-center h-[42px] overflow-hidden whitespace-nowrap">
                          {config.last_cron_message_time ? new Date(parseInt(config.last_cron_message_time)).toLocaleString('zh-CN', {
+                           timeZone: 'Asia/Shanghai',
                            year: 'numeric',
                            month: '2-digit',
                            day: '2-digit',

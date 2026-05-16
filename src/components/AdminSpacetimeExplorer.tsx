@@ -857,7 +857,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                         </span>
                         {step.startTime && (
                           <span className="text-[9px] text-slate-300 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
-                            {new Date(step.startTime).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit' })}
+                            {new Date(step.startTime).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, hour: '2-digit', minute: '2-digit' })}
                           </span>
                         )}
                       </motion.div>
