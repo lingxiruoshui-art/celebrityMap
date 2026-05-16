@@ -673,7 +673,7 @@ app.post("/admin/people/:id/expand-connections", async (c) => {
           const prompt = EXPAND_CONNECTIONS_PROMPT(person.name, person.biography, candidates.map(c => c.name));
           
           const resultText = await callAI(c, db, prompt, "json", EXPAND_CONNECTIONS_SCHEMA, async () => {
-              await send({ type: 'heartbeat', msg: '时空网络计算中...' });
+              await send({ type: 'heartbeat', msg: '时空网络计算中 (已触发 10s 底层网络强保活)...' });
           });
           
           await send({ type: 'ai-res', msg: "AI 计算完成，正在建立连接隧道..." });
@@ -1139,7 +1139,7 @@ app.post("/archive-figure", async (c) => {
 
               await send({ type: 'ai-req', msg: 'AI 代理请求发送 (基础传记)', data: { prompt: prompt.substring(0, 300) + "..." } });
               let resultText = await callAI(c, db, prompt, "json", ARCHIVE_CORE_SCHEMA(!!meta.description), async () => {
-                  await send({ type: 'heartbeat', msg: 'AI 仍在思考中...' });
+                  await send({ type: 'heartbeat', msg: 'AI 仍在思考中 (已触发 10s 底层网络强保活)...' });
               });
 
               let coreData: any = {};
@@ -1153,7 +1153,7 @@ app.post("/archive-figure", async (c) => {
               await send({ type: 'ai-req', msg: 'AI 代理请求发送 (成就与关系)' });
               const extraPrompt = ARCHIVE_EXTRA_PROMPT(coreData.standardChineseName || targetName, coreData.biography);
               let extraResultText = await callAI(c, db, extraPrompt, "json", ARCHIVE_EXTRA_SCHEMA, async () => {
-                  await send({ type: 'heartbeat', msg: 'AI 正在提取成就和关联人物...' });
+                  await send({ type: 'heartbeat', msg: 'AI 正在提取成就和关联人物 (已触发 10s 底层网络强保活)...' });
               });
 
               let extraData: any = {};
