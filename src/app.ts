@@ -121,21 +121,37 @@ const getAdminPassword = (c: any) => {
 export async function callAI(c: any, db: DatabaseAdapter, prompt: string, responseFormat: "text" | "json" = "text", schema?: any, onStreamPulse?: () => Promise<void>): Promise<string> {
   const provider = await getConfig(db, "active_model_provider", "gemini");
   
-  // Set up an active async heartbeat loop. In Cloudflare Workers, setInterval 
-  // can sometimes be suspended during long I/O fetch waits. An explicit async 
-  // loop keeps the isolate event loop actively pulsing the SSE connection.
+  let apiKey = "";  
+  if (provider === "aliyun") {
+      apiKey = await getConfig(db, "aliyun_api_key");
+  } else {
+      apiKey = (await getConfig(db, "gemini_api_key")) || (c.env && c.env.GEMINI_API_KEY) || (typeof process !== "undefined" && process.env.GEMINI_API_KEY) || "";
+  }
+  
   let isFetching = true;
   let heartbeatPromise: Promise<void> | null = null;
   if (onStreamPulse) {
       heartbeatPromise = (async () => {
           while (isFetching) {
-              await new Promise(r => setTimeout(r, 10000)); // Change from 4s to 10s
+              await new Promise(r => setTimeout(r, 10000)); // 10s throttle
               if (!isFetching) break;
               try { 
                 await onStreamPulse(); 
-                // A dummy fetch can help keep Cloudflare isolates from being evicted 
-                // by signaling ongoing external I/O activity
-                try { await fetch("https://www.google.com/robots.txt", { method: 'HEAD', signal: AbortSignal.timeout(1000) }).catch(()=>{}); } catch(e){}
+                // 真实命中大模型域名的底层API查询，用于 Serverless (如 Cloudflare) 强效保活
+                try { 
+                    if (provider === "aliyun") {
+                      await fetch("https://dashscope.aliyuncs.com/compatible-mode/v1/models", { 
+                        method: 'GET',
+                        headers: { "Authorization": `Bearer ${apiKey}` },
+                        signal: AbortSignal.timeout(2000) 
+                      }).catch(()=>{}); 
+                    } else if (apiKey) {
+                      await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`, { 
+                        method: 'GET',
+                        signal: AbortSignal.timeout(2000) 
+                      }).catch(()=>{});
+                    }
+                } catch(e){}
               } catch(e) { console.error("Pulse error", e); }
           }
       })();
@@ -146,7 +162,6 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
   };
   
   if (provider === "aliyun") {
-    const apiKey = await getConfig(db, "aliyun_api_key");
     const modelId = await getConfig(db, "aliyun_model_id");
     if (!apiKey) { cleanup(); throw new Error("缺少 Aliyun API Key"); }
     if (!modelId) { cleanup(); throw new Error("缺少 Aliyun 模型 ID"); }
@@ -158,22 +173,10 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
     const timeoutId = setTimeout(() => {
         console.warn(`[Aliyun] Request timeout reached (290s) for prompt: ${prompt.substring(0, 50)}...`);
         controller.abort();
-    }, 290000); // Increased to 290s to stay within Cloud Run 300s limit
-
-    let pulseTimer: any;
-    if (onStreamPulse) {
-      pulseTimer = setInterval(async () => {
-          if (!isFetching) return;
-          try {
-            await onStreamPulse();
-            try { await fetch("https://www.google.com/robots.txt", { method: 'HEAD', signal: AbortSignal.timeout(1000) }).catch(()=>{}); } catch(e){}
-          } catch(e) {}
-      }, 10000); // Increased from 2s to 10s
-    }
+    }, 290000); 
 
     const aliyunCleanup = () => {
       isFetching = false;
-      if (pulseTimer) clearInterval(pulseTimer);
       clearTimeout(timeoutId);
     };
 
@@ -274,7 +277,7 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
       throw err;
     }
   } else {
-    const apiKey = (await getConfig(db, "gemini_api_key")) || (c.env && c.env.GEMINI_API_KEY) || (typeof process !== "undefined" && process.env.GEMINI_API_KEY);
+    // apiKey is already retrieved at the top
     const modelId = (await getConfig(db, "gemini_model_id")) || (c.env && c.env.GEMINI_MODEL_ID) || (typeof process !== "undefined" && process.env.GEMINI_MODEL_ID) || "gemini-1.5-flash";
     if (!apiKey) { cleanup(); throw new Error("缺少 Gemini API Key"); }
     if (!modelId) { cleanup(); throw new Error("缺少 Gemini 模型 ID"); }
@@ -303,10 +306,6 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
            if (onStreamPulse && Date.now() - lastPulse > 10000) { // 10s throttle
                lastPulse = Date.now();
                onStreamPulse().catch(()=>{});
-               // Occasional dummy fetch to keep worker alive
-               if (fullText.length % 500 < 50) {
-                   fetch("https://www.google.com/robots.txt", { method: 'HEAD', signal: AbortSignal.timeout(1000) }).catch(()=>{});
-               }
            }
         }
         return fullText;
@@ -1572,24 +1571,8 @@ app.post("/cron", async (c) => {
             const isStale = current.status === 'running' && (!current.lastHeartbeat || (Date.now() - current.lastHeartbeat > 600000));
             
             if (current.status === 'running' && !isStale) {
-                if (action === "step") {
-                    console.log(`[Cron Step] 正在推进当前阶段 (${current.phase}) ...`);
-                    try {
-                        const state = await advanceExplorationStep(
-                            db, callAI, getConfig, setConfig, addRelationship,
-                            ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA,
-                            fetchMetadataFromWiki, c, true
-                        );
-                        console.log(`[Cron Step] 推进结束，新状态: ${state.status}, 新阶段: ${state.phase}`);
-                        return c.json({ status: state.status, phase: state.phase, target: state.target });
-                    } catch (e: any) {
-                        console.error("[Cron Step Error]", e);
-                        return c.json({ status: "error", error: e.message });
-                    }
-                } else {
-                    console.log("[Cron Skip] 探索正在进行中，且非 step 请求，跳过本次触发");
-                    return c.json({ status: "skipped", message: "探索正在进行中，跳过本次触发" });
-                }
+                console.log("[Cron Skip] 探索正在进行中，跳过本次触发");
+                return c.json({ status: "skipped", message: "探索正在进行中，跳过本次触发" });
             }
         } catch(e) {
             console.error("[Cron] 解析状态失败:", e);
@@ -1627,8 +1610,6 @@ app.post("/cron", async (c) => {
     const { targetName, isEmpty } = await pickTarget(db);
     
     if (isEmpty || !targetName) {
-        // Even if we don't start a task because no target, we should still update last trigger if we want to honor the "gap"
-        // But usually we only update if a task is actually launched.
         return c.json({ status: "no target found", isEmpty, message: "成功收到消息，但已无更多人物可探索" });
     }
 
@@ -1638,18 +1619,35 @@ app.post("/cron", async (c) => {
     const newTaskId = Date.now();
     await initExplorationState(db, getConfig, setConfig, targetName, 'explorer', newTaskId);
     
-    console.log(`[Cron Init] 初始化状态机: ${targetName}。立即执行第一阶段...`);
+    console.log(`[Cron] Initialized state machine for ${targetName}`);
 
-    try {
-        const state = await advanceExplorationStep(
-            db, callAI, getConfig, setConfig, addRelationship,
-            ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA,
-            fetchMetadataFromWiki, c, true
-        );
-        console.log(`[Cron Init] 第一阶段执行完毕。当前阶段: ${state.phase}`);
-        return c.json({ status: state.status, phase: state.phase, target: state.target });
-    } catch (e: any) {
-        console.error("[Cron Init Error]", e);
-        return c.json({ status: "error", error: e.message });
-    }
+    return streamSSE(c, async (stream) => {
+        await stream.writeSSE({ data: JSON.stringify({ status: "started", message: "探索状态机已启动", taskId: newTaskId, target: targetName }) });
+        const heartbeatTimer = setInterval(() => {
+            stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(()=>{});
+        }, 5000);
+        
+        try {
+            let isDone = false;
+            while (!isDone) {
+                const state = await advanceExplorationStep(
+                    db, callAI, getConfig, setConfig, addRelationship,
+                    ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA,
+                    fetchMetadataFromWiki, c, true
+                );
+                
+                await stream.writeSSE({ data: JSON.stringify({ status: "running", phase: state.phase, target: state.target }) }).catch(()=>{});
+                
+                if (state.status === "success" || state.status === "error" || state.status === "idle") {
+                    isDone = true;
+                }
+            }
+            await stream.writeSSE({ data: JSON.stringify({ status: "completed", target: targetName }) }).catch(()=>{});
+        } catch (e: any) {
+            console.error("[Cron Explore Task Error]", e);
+            await stream.writeSSE({ data: JSON.stringify({ status: "error", target: targetName, message: e.message }) }).catch(()=>{});
+        } finally {
+            clearInterval(heartbeatTimer);
+        }
+    });
 });

@@ -253,6 +253,10 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
   }, [searchQuery, sortField, sortOrder]);
 
   const performArchiveFigure = async (name: string, taskTitle: string, isRegenerating: boolean = false) => {
+    if (activeTask?.isRunning) {
+      showNotification('info', '当前已有任务正在执行中，请耐心等待完成');
+      return false;
+    }
     if (isRegenerating) setRegeneratingName(name);
     setActiveTask({ title: taskTitle, isRunning: true, source: 'list' });
     setActiveTaskLogs([
@@ -316,6 +320,10 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
   };
 
   const expandConnections = async (id: number, name: string) => {
+    if (activeTask?.isRunning) {
+      showNotification('info', '当前已有任务正在执行中，请耐心等待完成');
+      return;
+    }
     setExpandingId(id);
     setActiveTask({ title: `智能扩展联系 [${name}]`, isRunning: true, source: 'list' });
     setActiveTaskLogs([
@@ -881,17 +889,17 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                                 <button 
                                   onClick={() => expandConnections(p.id, p.name)} 
                                   title="智能扩展联系 (库内匹配)" 
-                                  disabled={expandingId === p.id}
-                                  className={`p-2 rounded-lg transition-colors ${expandingId === p.id ? 'text-indigo-600 bg-indigo-50' : 'text-emerald-500 hover:text-emerald-700 hover:bg-emerald-50'}`}
+                                  disabled={expandingId === p.id || activeTask?.isRunning}
+                                  className={`p-2 rounded-lg transition-colors ${(expandingId === p.id || activeTask?.isRunning) ? (expandingId === p.id ? 'text-indigo-600 bg-indigo-50' : 'opacity-50 cursor-not-allowed text-slate-400') : 'text-emerald-500 hover:text-emerald-700 hover:bg-emerald-50'}`}
                                 >
-                                  <UserPlus className={`w-4 h-4 ${expandingId === p.id ? 'animate-pulse' : ''}`} />
+                                  <UserPlus className={`w-4 h-4 ${expandingId === p.id ? 'animate-spin' : ''}`} />
                                 </button>
                             )}
                             <button 
                               onClick={() => regeneratePerson(p.name)} 
                               title="重新生成简介" 
-                              disabled={regeneratingName === p.name}
-                              className={`p-2 rounded-lg transition-colors ${regeneratingName === p.name ? 'text-indigo-600 bg-indigo-50' : 'text-indigo-400 hover:text-indigo-600 hover:bg-indigo-50'}`}
+                              disabled={regeneratingName === p.name || activeTask?.isRunning}
+                              className={`p-2 rounded-lg transition-colors ${(regeneratingName === p.name || activeTask?.isRunning) ? (regeneratingName === p.name ? 'text-indigo-600 bg-indigo-50' : 'opacity-50 cursor-not-allowed text-slate-400') : 'text-indigo-400 hover:text-indigo-600 hover:bg-indigo-50'}`}
                             >
                               <Sparkles className={`w-4 h-4 ${regeneratingName === p.name ? 'animate-spin' : ''}`} />
                             </button>
