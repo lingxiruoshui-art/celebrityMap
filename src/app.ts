@@ -1258,9 +1258,9 @@ app.get("/explore/status", async (c) => {
   
   if (data && data.status === 'running') {
       const diff = data.lastHeartbeat ? (Date.now() - data.lastHeartbeat) : Infinity;
-      if (diff > 600000) { // 600 seconds (10 minutes)
+      if (diff > 300000) { // 300 seconds (5 minutes)
           data.status = 'error';
-          data.error = '探索任务被系统认定为已脱机（持续 >600s 无响应）。可能由于大模型 API 限流或响应过慢导致请求彻底熔断。请检查 API 状态后重试。';
+          data.error = '探索任务被系统认定为已脱机（持续 >300s 无响应）。可能由于大模型 API 限流或响应过慢导致请求彻底熔断。请检查 API 状态后重试。';
           const newState = JSON.stringify(data);
           await setConfig(db, "explore_state", newState);
       }
@@ -1384,7 +1384,7 @@ app.post("/explore/start", async (c) => {
   let currentStr = await getConfig(db, "explore_state", "null");
   if (currentStr !== "null") {
       const current = JSON.parse(currentStr);
-      const isStale = current.status === 'running' && (!current.lastHeartbeat || (Date.now() - current.lastHeartbeat > 600000)); // 600 seconds
+      const isStale = current.status === 'running' && (!current.lastHeartbeat || (Date.now() - current.lastHeartbeat > 300000)); // 300 seconds
       
       if (current.status === 'running' && !isStale) {
           return c.json({ error: "探索正在进行中，请稍候。若任务已长久挂起，请重置状态后重试。" }, 400);
@@ -1507,7 +1507,7 @@ app.post("/cron", async (c) => {
     if (currentStr !== "null") {
         try {
             const current = JSON.parse(currentStr);
-            const isStale = current.status === 'running' && (!current.lastHeartbeat || (Date.now() - current.lastHeartbeat > 600000));
+            const isStale = current.status === 'running' && (!current.lastHeartbeat || (Date.now() - current.lastHeartbeat > 300000));
             
             if (current.status === 'running' && !isStale) {
                 console.log("[Cron Skip] 探索正在进行中，跳过本次触发");

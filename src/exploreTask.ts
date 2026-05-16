@@ -59,26 +59,27 @@ export async function runExplorationTask(
         
         if (currentRaw !== "null") {
             const current = JSON.parse(currentRaw);
-            if (current.status === "error" && current.error === "探索已中止") {
-                throw new Error("AbortError");
+            // If system marked it as error (stale detection), stop the background task
+            if (current.status === "error" && current.taskId === state.taskId) {
+                if (current.error === "探索已中止" || (current.error && current.error.includes("认定为已脱机"))) {
+                    throw new Error("AbortError");
+                }
             }
             
             if (current.status === 'running' && current.taskId && state.taskId && current.taskId > state.taskId) {
+                console.log(`[Explore Task] Aborting taskId ${state.taskId} - newer task ${current.taskId} found`);
                 throw new Error("AbortError");
             }
         }
 
         const stateStr = JSON.stringify(state);
         await setConfig(db, "explore_state", stateStr);
-        
-        // Also sync last task_logs to DB for persistence if needed
-        // For now we use explore_state as the primary source of truth
     };
 
     try {
         await Promise.race([
             doSave(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error("SaveState Timeout")), 5000))
+            new Promise((_, reject) => setTimeout(() => reject(new Error("SaveState Timeout")), 8000))
         ]);
     } catch (e: any) {
         if (e.message === "AbortError") throw e;

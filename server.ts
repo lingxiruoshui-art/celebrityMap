@@ -134,7 +134,7 @@ async function startServer() {
   const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
-  server.setTimeout(600000);
+  server.setTimeout(310000);
 }
 
 startServer();
