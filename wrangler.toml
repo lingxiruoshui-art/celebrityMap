@@ -16,6 +16,3 @@ bucket_name = "historical-portraits"
 # Add other environment variables here
 NODE_ENV = "production"
 
-[observability]
-enabled = true
-head_sampling_rate = 1
