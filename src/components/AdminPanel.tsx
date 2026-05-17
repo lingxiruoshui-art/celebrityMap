@@ -18,6 +18,7 @@ type SortOrder = "asc" | "desc";
 export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: AdminPanelProps) {
   const [activeTab, setActiveTab] = useState<Tab>("archive_plus");
   const [people, setPeople] = useState<Person[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -27,12 +28,21 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
   
   // Archive view states
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [sortField, setSortField] = useState<SortField>("created_at");
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [isFetchingAuto, setIsFetchingAuto] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 20;
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+      setCurrentPage(1);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
   const [colWidths, setColWidths] = useState({
     category: 120,
     views: 100,
@@ -124,18 +134,14 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
   const fetchArchive = async () => {
     setIsRefreshing(true);
     try {
-      const res = await fetch("/api/archive");
+      const res = await fetch(`/api/archive?page=${currentPage}&limit=${itemsPerPage}&search=${encodeURIComponent(debouncedSearch)}`);
       if (!res.ok) {
         console.error("Fetch archive failed", await res.text());
         return;
       }
-      const contentType = res.headers.get("content-type");
-      if (contentType && contentType.includes("application/json")) {
-        const data = await res.json() as any;
-        setPeople(data.people);
-      } else {
-        console.error("Fetch archive returned non-JSON", await res.text());
-      }
+      const data = await res.json() as any;
+      setPeople(data.people);
+      setTotalCount(data.total);
     } catch (e) {
       console.error(e);
     } finally {
@@ -198,7 +204,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
     } else if (activeTab === 'audit') {
       fetchAuditData();
     }
-  }, [activeTab]);
+  }, [activeTab, currentPage, debouncedSearch]);
 
   const fetchAuditData = async () => {
     try {
@@ -685,17 +691,15 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
     );
   }
 
-  const filteredAndSortedPeople = people
-    .filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.category.toLowerCase().includes(searchQuery.toLowerCase()))
-    .sort((a, b) => {
-      let valA: any = a[sortField as keyof Person];
-      let valB: any = b[sortField as keyof Person];
-      
-      if (typeof valA === 'string') {
-        return sortOrder === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
-      }
-      return sortOrder === 'asc' ? (valA as number) - (valB as number) : (valB as number) - (valA as number);
-    });
+  const paginatedPeople = [...people].sort((a, b) => {
+    let valA: any = a[sortField as keyof Person];
+    let valB: any = b[sortField as keyof Person];
+    
+    if (typeof valA === 'string') {
+      return sortOrder === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+    }
+    return sortOrder === 'asc' ? (valA as number) - (valB as number) : (valB as number) - (valA as number);
+  });
 
   const toggleSort = (field: SortField) => {
     if (sortField === field) {
@@ -706,9 +710,10 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
     }
   };
 
-  const totalPages = Math.ceil(filteredAndSortedPeople.length / itemsPerPage);
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const paginatedPeople = filteredAndSortedPeople.slice(startIndex, startIndex + itemsPerPage);
+  const totalPages = Math.ceil(totalCount / itemsPerPage);
+  // Remove client-side slice:
+  // const startIndex = (currentPage - 1) * itemsPerPage;
+  // const paginatedPeopleResult = paginatedPeople.slice(startIndex, startIndex + itemsPerPage);
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 xl:p-8 backdrop-blur-md bg-slate-900/40 font-sans">

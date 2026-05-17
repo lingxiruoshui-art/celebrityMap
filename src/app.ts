@@ -939,20 +939,53 @@ app.post("/admin/repair-images", async (c) => {
 
 app.get("/archive", async (c) => {
   const db = await getDb(c);
-  let people = await db.prepare(`
+  const page = parseInt(c.req.query("page") || "0");
+  const limit = parseInt(c.req.query("limit") || "0");
+  const search = c.req.query("search") || "";
+  
+  let peopleQuery = `
     SELECT p.*, 
     (SELECT COUNT(*) FROM relationships WHERE person1_id = p.id OR person2_id = p.id) as connectionsCount
     FROM people p
-    ORDER BY created_at DESC
-  `).all() as any[];
+  `;
+  
+  const params: any[] = [];
+  if (search) {
+    peopleQuery += ` WHERE p.name LIKE ? OR p.category LIKE ? OR p.biography LIKE ? `;
+    const s = `%${search}%`;
+    params.push(s, s, s);
+  }
+  
+  peopleQuery += ` ORDER BY created_at DESC `;
+  
+  if (limit > 0) {
+    peopleQuery += ` LIMIT ? OFFSET ? `;
+    params.push(limit, (page > 0 ? page - 1 : 0) * limit);
+  }
+
+  let people = await db.prepare(peopleQuery).all(...params) as any[];
   const relationships = await db.prepare("SELECT * FROM relationships").all();
   
+  // Also get total count if paginated
+  let total = people.length;
+  if (limit > 0) {
+    let countQuery = "SELECT COUNT(*) as count FROM people";
+    const countParams: any[] = [];
+    if (search) {
+      countQuery += " WHERE name LIKE ? OR category LIKE ? OR biography LIKE ? ";
+      const s = `%${search}%`;
+      countParams.push(s, s, s);
+    }
+    const countRes = await db.prepare(countQuery).get(...countParams) as any;
+    total = countRes?.count || 0;
+  }
+
   people = people.map(p => ({
     ...p,
     image_url: `/api/portraits/${encodeURIComponent(p.name.toLowerCase())}.jpg`
   }));
 
-  return c.json({ people, relationships });
+  return c.json({ people, relationships, total, page, limit });
 });
 
 app.get("/metadata", async (c) => {
