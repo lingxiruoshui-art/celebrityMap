@@ -574,7 +574,7 @@ export default function NetworkGraph({
         const k = 120 / projection.scale();
         
         let newLat = r[1] - dy * k;
-        // Keep latitude between -90 and 90 to prevent flipping
+        // Keep vertical angle between -90 and 90 to prevent flipping
         if (newLat > 90) newLat = 90;
         if (newLat < -90) newLat = -90;
 

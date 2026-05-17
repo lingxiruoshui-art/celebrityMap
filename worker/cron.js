@@ -120,38 +120,37 @@ export default {
           
           // Generate a unique trace ID for this specific batch execution
           const executionId = Math.random().toString(36).substring(2, 10);
+
+          // Define reportLog outside try to ensure catch block can use it
+          let localLogs = [];
+          const reportLog = async (logMsg, type = 'info', data = null) => {
+              const logPrefix = `[Trace:${executionId}] [${type.toUpperCase()}]`;
+              const traceMsg = `[${executionId}] ${logMsg}`;
+              
+              if (data) {
+                  console.log(`${logPrefix} ${logMsg} | Data:`, JSON.stringify(data));
+              } else {
+                  console.log(`${logPrefix} ${logMsg}`);
+              }
+              
+              const timestamp = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+              localLogs.push({ timestamp, msg: traceMsg, type, data });
+              if (localLogs.length > 50) localLogs.shift();
+              
+              await fetch(`${origin}/api/internal/log`, {
+                  method: "POST",
+                  headers: {
+                      "Authorization": `Bearer ${secret}`,
+                      "Content-Type": "application/json"
+                  },
+                  body: JSON.stringify({ taskId, msg: traceMsg, type, data })
+              }).catch(e => console.error(`[Worker Error] reportLog failed: ${e.message}`));
+          };
           
           try {
               console.log(`\n================================`);
               console.log(`[Worker Trace:${executionId}] Processing message ${msg.id} for task ${taskId}`);
               console.log(`[Worker Trace:${executionId}] Payload:`, JSON.stringify(task));
-              
-              let localLogs = [];
-              const reportLog = async (logMsg, type = 'info', data = null) => {
-                  const logPrefix = `[Trace:${executionId}] [${type.toUpperCase()}]`;
-                  
-                  // Use richer data for trace
-                  const traceMsg = `[${executionId}] ${logMsg}`;
-                  
-                  if (data) {
-                      console.log(`${logPrefix} ${logMsg} | Data:`, JSON.stringify(data));
-                  } else {
-                      console.log(`${logPrefix} ${logMsg}`);
-                  }
-                  
-                const timestamp = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
-                  localLogs.push({ timestamp, msg: traceMsg, type, data });
-                  if (localLogs.length > 50) localLogs.shift();
-                  
-                  await fetch(`${origin}/api/internal/log`, {
-                      method: "POST",
-                      headers: {
-                          "Authorization": `Bearer ${secret}`,
-                          "Content-Type": "application/json"
-                      },
-                      body: JSON.stringify({ taskId, msg: traceMsg, type, data })
-                  }).catch(e => console.error(`[Worker Error] reportLog failed: ${e.message}`));
-              };
               
               // Helper to update Pages global state
               const reportState = async (updates) => {
@@ -343,21 +342,34 @@ export default {
               
               
               // ============ PHASE: AI CORE ============
+              const CATEGORIES = ["哲学家", "艺术家", "科学家/数学家", "发明家", "政治家/君主", "军事家", "思想家/教育家", "文学家/作家", "诗人", "音乐家/作曲家", "歌手/演艺明星", "探险家/航海家", "商业精英/企业家", "医学家", "其他历史名人"];
+              
               const corePrompt = `你是一位研究历史人物的传记专家。请为人物 "${targetName}" 撰写一份既有历史厚度又风趣幽默的传记。
-参考背景资料：${wikiMeta.description}
+参考背景资料（身份线索）：${wikiMeta.description}
 
-要求仅返回合法JSON格式对象：
+注意：该人物的身份已通过背景资料确认，无须再次验证或标准化姓名。
+
+要求：
+- keyword：该人物最经典、最具代表性的一句人生格言短语
+- lifespan：如公元前571年-公元前471年或1879年-1955年
+- birthplace：出生地
+
+请严格返回以下格式的 JSON 对象：
 {
-  "accepted": true/false，判断该人物是否真实已故客观存在，如果有神话虚构元素返回false,
-  "standardChineseName": "标准中文全名",
-  "keyword": "该人物的一句人生格言短语",
-  "lifespan": "生卒年份，如1879年-1955年",
+  "keyword": "该人物最经典、最具代表性的一句人生格言，注意如果包含双引号请转义",
+  "lifespan": "如公元前571年-公元前471年或1879年-1955年",
   "birthplace": "出生地",
-  "category": "从以下选择：[哲学家, 艺术家, 科学家, 发明家, 政治家, 军事家, 思想家, 文学家, 诗人, 音乐家, 医学家, 其他名流]",
-  "biography": "严肃又幽默的传记，不少于200字，必须至少分成2段。在 JSON 字符串内部用 \\n\\n 代表换行，绝不可以直接回车截断字符串。",
-  "latitude": 纬度数字类型的浮点数,
-  "longitude": 经度数字类型的浮点数
-}`;
+  "category": "参考背景资料提取角色身份，或从以下选择：[${CATEGORIES.join("、")}]",
+  "biography": "正规且诙谐幽默的传记。绝对不要写成1大段，至少分2段。必须在 JSON 字符串内部使用字面量 \\n\\n 代表分段，禁止在字符串内直接换行敲回车（导致 JSON 解析错误），不少于300字。禁止使用大家好等开场白。",
+  "accepted": true,
+  "standardChineseName": "${targetName}"
+}
+
+特别要求：
+1. biography 字段绝对不能写成一大段，必须分成 2 段以上。不少于300字。
+2. 所有返回内容必须使用简体中文。
+3. 请确保仅返回一个合法的 JSON 对象。`;
+
               const coreSchema = {
                   type: "OBJECT",
                   properties: {
@@ -367,11 +379,9 @@ export default {
                       lifespan: { type: "STRING" },
                       birthplace: { type: "STRING" },
                       category: { type: "STRING" },
-                      biography: { type: "STRING" },
-                      latitude: { type: "NUMBER" },
-                      longitude: { type: "NUMBER" }
+                      biography: { type: "STRING", description: "正规且诙谐幽默的传记。不少于300字，分段用\\n\\n分隔。" }
                   },
-                  required: ["accepted", "standardChineseName", "keyword", "lifespan", "birthplace", "category", "biography", "latitude", "longitude"]
+                  required: ["accepted", "standardChineseName", "keyword", "lifespan", "birthplace", "category", "biography"]
               };
               
               await reportLog("开始深度分析并构建核心时空档案...", "api");
@@ -389,15 +399,48 @@ export default {
 
               // ============ PHASE: AI EXTRA ============
               await reportLog("启动图谱解析引擎，分析次级关联节点脉络...", "api");
-              const extraPrompt = `你是一位时空档案馆长。已知人物：${targetName}\n背景资料：${coreData.biography}\n\n请在历史长河中检索，找出3-5位与之有一定关联的老少咸宜真实世界历史名人作为关联拓扑节点。要求返回合法的 JSON 格式。`;
+              const extraPrompt = `你是一位资深时空档案馆长。任务目标：提取人物 "${targetName}" 的核心成就，并构建其跨时空关系网络。
+人物传记参考：
+${coreData.biography}
+
+请在历史长河中检索并完成以下任务：
+1. 提取 3-5 条该人物的核心成就（achievements），每条不少于 10 字。
+2. 找出 3-5 位与之有真实历史关联的名人（relationships），并详细说明关系类型。
+
+要求返回严格的 JSON 格式，且 achievements 和 relationships 数组绝对不能为空：
+{
+  "achievements": ["成就1", "成就2", ...],
+  "relationships": [
+    {"personName": "标准中文全名", "relationshipType": "15-25字具体关系描述，禁止换行"}
+  ]
+}
+
+特别要求：
+1. relationships 中提供的必须是真实的已故历史人物。虽然不需要极强交集，但必须逻辑自洽且可查证（如思想继承、处于同一时代、言论提及、对手、后世评价等）。
+2. 请确保返回合法的 JSON 对象，不要包含任何 markdown。`;
+
               const extraSchema = {
                   type: "OBJECT",
                   properties: {
-                      achievements: { type: "ARRAY", items: { type: "STRING", description: "提取的成就点列表" } },
+                      achievements: { 
+                          type: "ARRAY", 
+                          description: "核心成就点列表，严禁为空",
+                          items: { type: "STRING" }
+                      },
                       relationships: {
-                          type: "ARRAY", items: { type: "OBJECT", properties: { personName: { type: "STRING" }, relationshipType: { type: "STRING" } }, required: ["personName", "relationshipType"] }
+                          type: "ARRAY", 
+                          description: "关联的历史人物列表，严禁为空",
+                          items: { 
+                              type: "OBJECT", 
+                              properties: { 
+                                  personName: { type: "STRING" }, 
+                                  relationshipType: { type: "STRING" } 
+                              }, 
+                              required: ["personName", "relationshipType"] 
+                          }
                       }
-                  }
+                  },
+                  required: ["achievements", "relationships"]
               };
               
               const extraResStr = await callAILocally(extraPrompt, true, extraSchema);
@@ -425,6 +468,10 @@ export default {
               }
               
               const submitInfo = await submitRes.json();
+              if (!submitInfo.success) {
+                  throw new Error(submitInfo.error || "中心服务器拒绝入库申请");
+              }
+
               if (submitInfo.serverLogs && Array.isArray(submitInfo.serverLogs)) {
                   for (const sLog of submitInfo.serverLogs) {
                       const sType = (sLog.type || 'SERVER').toUpperCase();

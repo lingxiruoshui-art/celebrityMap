@@ -19,6 +19,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
   const [activeTab, setActiveTab] = useState<Tab>("archive_plus");
   const [people, setPeople] = useState<Person[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isActionLoading, setIsActionLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [adminPassword, setAdminPassword] = useState(localStorage.getItem("admin_password") || "");
   const [isAuthorized, setIsAuthorized] = useState(!!localStorage.getItem("admin_password"));
@@ -71,7 +72,6 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
   const [autoFetchLogs, setAutoFetchLogs] = useState<{type:string, msg:string}[]>([]);
   const logsContainerRef = useRef<HTMLDivElement>(null);
 
-  const [regeneratingName, setRegeneratingName] = useState<string | null>(null);
   const [expandingId, setExpandingId] = useState<number | null>(null);
   const [notification, setNotification] = useState<{ type: 'success' | 'error' | 'info', msg: string } | null>(null);
 
@@ -252,12 +252,11 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
     setCurrentPage(1);
   }, [searchQuery, sortField, sortOrder]);
 
-  const performArchiveFigure = async (name: string, taskTitle: string, isRegenerating: boolean = false) => {
+  const performArchiveFigure = async (name: string, taskTitle: string) => {
     if (activeTask?.isRunning) {
       showNotification('info', '当前已有任务正在执行中，请耐心等待完成');
       return false;
     }
-    if (isRegenerating) setRegeneratingName(name);
     setActiveTask({ title: taskTitle, isRunning: true, source: 'list' });
     setActiveTaskLogs([
       { type: 'step', msg: '初始化数据同步任务...', time: new Date() },
@@ -268,55 +267,33 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
     try {
       const res = await fetch("/api/archive-figure", {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...adminHeaders },
-        body: JSON.stringify({ personName: name, stream: true, source: 'list' })
+        headers: adminHeaders,
+        body: JSON.stringify({ personName: name, source: 'list' })
       });
       
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error("无法建立数据流连接");
-      const decoder = new TextDecoder();
-      let buffer = '';
+      const data = await res.json() as any;
+      if (!res.ok) throw new Error(data.error || "任务提交失败");
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        
-        const lines = buffer.split('\n\n');
-        buffer = lines.pop() || '';
-        
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (data.type === 'error') {
-                 errorMsg = data.msg;
-                 setActiveTaskLogs(prev => [...prev, { type: 'error', msg: errorMsg, time: new Date() }]);
-              } else if (data.type === 'step' || data.type === 'info' || data.type === 'success' || data.type === 'ai-req' || data.type === 'ai-res' || data.type === 'heartbeat') {
-                 setActiveTaskLogs(prev => [...prev, { type: data.type as any, msg: data.msg, time: new Date() }]);
-              } else if (data.type === 'result') {
-                 setActiveTaskLogs(prev => [...prev, { type: 'success', msg: '资料库同步成功。', time: new Date() }]);
-              }
-            } catch(e) {}
-          }
-        }
-      }
-      if (errorMsg) throw new Error(errorMsg);
-      showNotification('success', `人物 [${name}] 已成功${isRegenerating ? '重新生成' : '归档入库'}`);
-      fetchArchive();
+      // Once queued, the background poller (/api/explore/status) will pick up the task and its logs
+      showNotification('success', `任务已加入集群队列: ${name}。后台 Worker 正在接手处理。`);
+      
+      // We keep the task UI open so the user sees the incoming logs from the poller
+      setActiveTask({ 
+        title: `入库任务: ${name}`, 
+        isRunning: true, 
+        source: 'list' 
+      });
+      setActiveTaskLogs([
+        { type: 'step', msg: '归档任务已成功推送至时空队列', time: new Date() },
+        { type: 'info', msg: '等待集群节点 (Worker) 拉取并执行...', time: new Date() }
+      ]);
+      
       return true;
     } catch(e: any) {
-      showNotification('error', e.message || '任务执行失败');
-      setActiveTaskLogs(prev => [...prev, { type: 'error', msg: e.message || '任务中断', time: new Date() }]);
+      showNotification('error', e.message || '任务失败');
+      setActiveTask(null);
       return false;
-    } finally {
-      if (isRegenerating) setRegeneratingName(null);
-      setActiveTask(prev => prev ? { ...prev, isRunning: false } : null);
     }
-  };
-
-  const regeneratePerson = async (name: string) => {
-    await performArchiveFigure(name, `重新生成简介 [${name}]`, true);
   };
 
   const expandConnections = async (id: number, name: string) => {
@@ -403,7 +380,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
       message: "确定要删除此人及其所有关系吗？此操作不可逆。",
       isDanger: true,
       onConfirm: async () => {
-        setIsLoading(true);
+        setIsActionLoading(true);
         try {
           const res = await fetch(`/api/admin/people/${id}`, { 
             method: "DELETE",
@@ -423,7 +400,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
           console.error(e);
           showNotification('error', '连接服务器失败');
         } finally {
-          setIsLoading(false);
+          setIsActionLoading(false);
           setConfirmOpen(false);
         }
       }
@@ -439,7 +416,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
       message: `确定要删除选中的 ${selectedIds.size} 个人物吗？此操作不可撤销。`,
       isDanger: true,
       onConfirm: async () => {
-        setIsLoading(true);
+        setIsActionLoading(true);
         try {
           const res = await fetch("/api/admin/people/batch-delete", {
             method: "POST",
@@ -457,7 +434,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
           console.error(e);
           showNotification('error', '连接服务器失败');
         } finally {
-          setIsLoading(false);
+          setIsActionLoading(false);
           setConfirmOpen(false);
         }
       }
@@ -885,23 +862,13 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-center gap-2">
-                            {((p as any).connectionsCount || 0) < 3 && (
-                                <button 
-                                  onClick={() => expandConnections(p.id, p.name)} 
-                                  title="智能扩展联系 (库内匹配)" 
-                                  disabled={expandingId === p.id || activeTask?.isRunning}
-                                  className={`p-2 rounded-lg transition-colors ${(expandingId === p.id || activeTask?.isRunning) ? (expandingId === p.id ? 'text-indigo-600 bg-indigo-50' : 'opacity-50 cursor-not-allowed text-slate-400') : 'text-emerald-500 hover:text-emerald-700 hover:bg-emerald-50'}`}
-                                >
-                                  <UserPlus className={`w-4 h-4 ${expandingId === p.id ? 'animate-spin' : ''}`} />
-                                </button>
-                            )}
                             <button 
-                              onClick={() => regeneratePerson(p.name)} 
-                              title="重新生成简介" 
-                              disabled={regeneratingName === p.name || activeTask?.isRunning}
-                              className={`p-2 rounded-lg transition-colors ${(regeneratingName === p.name || activeTask?.isRunning) ? (regeneratingName === p.name ? 'text-indigo-600 bg-indigo-50' : 'opacity-50 cursor-not-allowed text-slate-400') : 'text-indigo-400 hover:text-indigo-600 hover:bg-indigo-50'}`}
+                              onClick={() => expandConnections(p.id, p.name)} 
+                              title="智能扩展联系 (库内匹配)" 
+                              disabled={expandingId === p.id || activeTask?.isRunning}
+                              className={`p-2 rounded-lg transition-colors ${(expandingId === p.id || activeTask?.isRunning) ? (expandingId === p.id ? 'text-indigo-600 bg-indigo-50' : 'opacity-50 cursor-not-allowed text-slate-400') : 'text-emerald-500 hover:text-emerald-700 hover:bg-emerald-50'}`}
                             >
-                              <Sparkles className={`w-4 h-4 ${regeneratingName === p.name ? 'animate-spin' : ''}`} />
+                              <UserPlus className={`w-4 h-4 ${expandingId === p.id ? 'animate-spin' : ''}`} />
                             </button>
                             <button onClick={() => deletePerson(p.id)} title="删除" className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
                               <Trash2 className="w-4 h-4" />
@@ -1099,99 +1066,6 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                 </div>
               </div>
 
-              {/* 后台自动探索配置 */}
-              <div className="bg-white p-5 md:p-6 rounded-2xl border-2 border-slate-100 shadow-sm space-y-6">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-50 pb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 shrink-0">
-                      <Activity className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h4 className="text-sm font-bold text-slate-800">后台自动探索控制</h4>
-                      <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest leading-none mt-1">定时任务自动同步</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <label className="flex items-center gap-2 cursor-pointer group">
-                      <div className="relative">
-                        <input 
-                          type="checkbox"
-                          checked={config.cron_interval_enabled === true || config.cron_interval_enabled === 'true'}
-                          onChange={(e) => saveConfig("cron_interval_enabled", e.target.checked ? "true" : "false")}
-                          className="sr-only"
-                        />
-                        <div className={`w-10 h-5 rounded-full transition-colors ${(config.cron_interval_enabled === true || config.cron_interval_enabled === 'true') ? 'bg-indigo-600' : 'bg-slate-200'}`}></div>
-                        <div className={`absolute top-1 left-1 w-3 h-3 bg-white rounded-full transition-transform ${(config.cron_interval_enabled === true || config.cron_interval_enabled === 'true') ? 'translate-x-5' : ''}`}></div>
-                      </div>
-                      <span className="text-xs font-bold text-slate-600 group-hover:text-indigo-600 transition-colors">开启后台自动探索</span>
-                    </label>
-                  </div>
-                </div>
-
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4 items-start">
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                        小时
-                      </label>
-                      <input 
-                        type="number"
-                        min="0"
-                        value={config.cron_interval_hours ?? ''}
-                        onChange={(e) => setConfig({ ...config, cron_interval_hours: e.target.value })}
-                        onBlur={(e) => {
-                           let val = parseInt(e.target.value) || 0;
-                           if (val < 0) val = 0;
-                           setConfig({ ...config, cron_interval_hours: val });
-                           saveConfig("cron_interval_hours", String(val));
-                        }}
-                        className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all appearance-none"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex justify-between">
-                        <span>分钟</span>
-                      </label>
-                      <input 
-                        type="number"
-                        min="0"
-                        max="60"
-                        value={config.cron_interval_minutes ?? ''}
-                        onChange={(e) => setConfig({ ...config, cron_interval_minutes: e.target.value })}
-                        onBlur={(e) => {
-                           let val = parseInt(e.target.value) || 0;
-                           if (val > 60) val = 60;
-                           if (val < 0) val = 0;
-                           setConfig({ ...config, cron_interval_minutes: val });
-                           saveConfig("cron_interval_minutes", String(val));
-                        }}
-                        className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all appearance-none"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-2">
-                         <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
-                         上次成功通讯 (Worker)
-                      </label>
-                      <div className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono font-bold text-slate-700 tracking-tight flex items-center h-[42px] overflow-hidden whitespace-nowrap">
-                         {config.last_cron_message_time ? new Date(parseInt(config.last_cron_message_time)).toLocaleString('zh-CN', {
-                           timeZone: 'Asia/Shanghai',
-                           year: 'numeric',
-                           month: '2-digit',
-                           day: '2-digit',
-                           hour: '2-digit',
-                           minute: '2-digit',
-                           second: '2-digit',
-                           hour12: false
-                         }) : "尚无记录"}
-                      </div>
-                    </div>
-                  </div>
-                  <p className="text-[10px] text-slate-400 leading-relaxed italic">
-                    * 定时探索任务将按照此间隔周期性尝试触发。若手动点击“开启探索”，则不受此处的间隔限制影响。
-                  </p>
-                </div>
-              </div>
             </div>
           </div>
         </div>
@@ -1204,7 +1078,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
         title={confirmData.title}
         message={confirmData.message}
         isDanger={confirmData.isDanger}
-        isLoading={isLoading}
+        isLoading={isActionLoading}
       />
     </div>
   );

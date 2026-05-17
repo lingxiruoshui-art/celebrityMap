@@ -10,8 +10,6 @@ export interface Person {
   achievements: string; // JSON string from DB
   image_url: string | null;
   raw_relationships?: string;
-  latitude?: number;
-  longitude?: number;
   created_at?: string;
 }
 

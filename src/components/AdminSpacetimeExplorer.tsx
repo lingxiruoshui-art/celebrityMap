@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef } from "react";
-import { X, Search, ChevronRight, User, Loader2, Sparkles, AlertCircle, Zap, ChevronDown, ChevronUp, StopCircle, RefreshCw, Save, CheckCircle } from "lucide-react";
+import { X, Search, ChevronRight, User, Loader2, Sparkles, AlertCircle, Zap, ChevronDown, ChevronUp, RefreshCw, Save, CheckCircle, Layers } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { getGemini } from "../services/aiService";
 
@@ -60,7 +60,6 @@ const PendingTimerMessage = ({ msg, startTime }: { msg: string, startTime?: numb
     <span className="flex flex-col">
       <span className="flex items-center gap-2">
         {msg}
-        <span className="opacity-70 ml-1 font-mono text-indigo-400">({seconds}s)</span>
       </span>
       <span className="mt-1 text-[10px] opacity-60 font-normal italic animate-pulse text-indigo-500/70">
         {getStatusTip()}
@@ -232,6 +231,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                    console.error("Status check failed:", res.status, text.slice(0, 100));
                }
                setHasInitialCheckDone(true);
+
                if (isActive) timer = setTimeout(checkStatus, 3000);
                return;
            }
@@ -269,7 +269,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                    setSubStatus(data.subStatus || null);
                    setTargetName(data.target || null);
                    setQueue(data.queue || []);
-                   if (allowAdminControls) {
+                   if (false && allowAdminControls) {
                        if (data.target && source !== data.target) setSource(data.target);
                    } else {
                        if (data.target && target !== data.target) setTarget(data.target);
@@ -308,11 +308,13 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                                onRefreshArchive();
                            }
                            
-                           // Automatically pick next candidate after success
+                           // Automatically pick next candidate if queue is empty and auto-refill is enabled
                            if (allowAdminControls || isAdmin) {
-                               setTimeout(() => {
-                                   handlePickRandomPair();
-                               }, 500); 
+                               if (isAutoRefillEnabled && (!data.queue || data.queue.length === 0)) {
+                                  handlePickRandomPair(true);
+                               } else {
+                                  handlePickRandomPair(false);
+                               }
                            }
                        } else {
                            pollStatusRef.current = false;
@@ -393,17 +395,83 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     setIsLoading(false);
     if (!path) setError("搜索已由管理员中断。");
   };
+  
+  const handleDequeue = async (name: string) => {
+    if (!isAdmin) return;
+    try {
+      const headers: any = { "Content-Type": "application/json" };
+      headers["x-admin-password"] = localStorage.getItem("admin_password") || "";
+      const res = await fetch("/api/explore/dequeue", { 
+        method: "POST", 
+        headers,
+        body: JSON.stringify({ targetName: name })
+      });
+                    if (res.ok) {
+                        // Optimistically update local queue
+                        setQueue(prev => prev.filter(q => q !== name));
+                        setSearchSteps([{ msg: `[${name}] 已从待入库队列中移除`, status: "success", startTime: Date.now() }]);
+                        if (name === targetName) {
+                           // Silent stop backend process if it's the current target
+                           const stopHeaders: any = { "Content-Type": "application/json" };
+                           stopHeaders["x-admin-password"] = localStorage.getItem("admin_password") || "";
+                           fetch("/api/explore/stop", { method: "POST", headers: stopHeaders }).catch(e => console.error(e));
+                           
+                           setTargetName(null);
+                           setIsLoading(false);
+                        }
+                    }
+    } catch (e) {
+      console.error("Failed to dequeue", e);
+    }
+  };
+
+  const [isAutoRefillEnabled, setIsAutoRefillEnabled] = useState(false);
+  
+  // Sync auto-refill state with backend
+  useEffect(() => {
+    if (isAdmin && metadata) {
+      setIsAutoRefillEnabled(!!(metadata as any).auto_refill_enabled);
+    }
+  }, [isAdmin, metadata]);
+
+  const toggleAutoRefill = async (val: boolean) => {
+    setIsAutoRefillEnabled(val);
+    if (!isAdmin) return;
+    try {
+      const headers: any = { "Content-Type": "application/json" };
+      headers["x-admin-password"] = localStorage.getItem("admin_password") || "";
+      await fetch("/api/admin/config", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ auto_refill_enabled: val })
+      });
+    } catch (e) {
+      console.error("Failed to sync auto-refill setting", e);
+    }
+  };
 
   const [isPickingRandom, setIsPickingRandom] = useState(false);
 
-  const handlePickRandomPair = async () => {
-    if (isLoading || pollStatusRef.current || isPickingRandom) return;
+  const handlePickRandomPair = async (autoEnqueue = false) => {
+    // Basic guard: don't double-pick
+    if (isPickingRandom) return;
+    
+    // For non-admins or auto-enqueue cases, avoid interrupting active flows
+    if (!isAdmin && (isLoading || pollStatusRef.current)) return;
+    
+    // If auto-enqueuing, only proceed if we aren't already busy with another active process
+    if (autoEnqueue && (isLoading || pollStatusRef.current)) return;
+
     setIsPickingRandom(true);
-    setError(null);
-    setPath(null);
-    setDetailedLogs([]);
-    setSearchSteps([]);
-    setShowResults(false);
+    
+    // Only clear UI states if nothing is currently active/running in foreground
+    if (!isLoading && !pollStatusRef.current) {
+      setError(null);
+      setPath(null);
+      setDetailedLogs([]);
+      setSearchSteps([]);
+      setShowResults(false);
+    }
     
     try {
       if (allowAdminControls || isAdmin) {
@@ -426,6 +494,9 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
         } else {
           setSource(data.targetName || "");
           setTarget("");
+          if (autoEnqueue && data.targetName) {
+            handleEnqueue(data.targetName);
+          }
         }
       } else {
         const res = await fetch("/api/archiver/random-pair");
@@ -443,39 +514,35 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     }
   };
 
-  const handleSearch = async (overrideSource?: string, overrideTarget?: string) => {
-    const finalSource = overrideSource || source;
+  const handleEnqueue = async (overrideName?: string) => {
+    const finalTarget = overrideName || source;
     
+    if (!finalTarget.trim() || isSubmitting || isPickingRandom) return;
+
     if (isAdmin) {
-      if (isSubmitting) return;
+      // Keep UI state but don't clear source yet to show what's being added
       setIsCollapsed(false);
       setIsLoading(true);
-      setIsSubmitting(true);
       setError(null);
       setPath(null);
       setShowResults(false);
-      setSearchSteps([{ msg: "正在启动时空入库协议...", status: "pending", startTime: Date.now() }]);
-      setDetailedLogs([]);
       
-      const startTaskId = Date.now();
-      activeSearchTaskIdRef.current = startTaskId;
+      // Update local logs immediately
+      setSearchSteps([{ msg: `正在将 [${finalTarget}] 发布至时空任务队列...`, status: "pending", startTime: Date.now() }]);
       
       try {
         const headers: any = { "Content-Type": "application/json" };
         if (isAdmin) headers["x-admin-password"] = localStorage.getItem("admin_password") || "";
         
-        const finalTargetForAI = overrideTarget || target || overrideSource || source;
-
+        setIsSubmitting(true);
         const res = await fetch("/api/explore/enqueue", {
           method: "POST",
           headers,
-          body: JSON.stringify({ targetName: finalTargetForAI, isAdmin: true, clientTaskId: startTaskId, source: 'explorer' })
+          body: JSON.stringify({ targetName: finalTarget, isAdmin: true, source: 'explorer' })
         });
         
-        setIsSubmitting(false);
-
         if (!res.ok) {
-           let errMsg = "探索启动失败";
+           let errMsg = "归档请求发布失败";
            try {
              const errData = await res.json() as any;
              errMsg = errData.error || errMsg;
@@ -484,24 +551,31 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
         }
         
         pollStatusRef.current = true;
-        // Auto-pick next candidate immediately after successful enqueue
-        handlePickRandomPair();
+        
+        // Immediately clear input to prevent duplicate addition of the same target
+        setSource("");
+        
+        // Successfully enqueued. Now pick the NEXT one
+        await handlePickRandomPair();
       } catch (err: any) {
-        setError(err.message || "探索过程中发生未知错误。");
-        setIsLoading(false);
+        setError(err.message || "请求发布过程中发生错误。");
+        // If it failed, source is empty now anyway, which is safer.
+        setSource("");
+      } finally {
         setIsSubmitting(false);
       }
       return;
     }
+    
+    // For non-admin (Public pathfinding), keep it same but rename if needed
+    handleSearch(finalTarget);
+  };
 
+  const handleSearch = async (overrideSource?: string, overrideTarget?: string) => {
+    const finalSource = overrideSource || source;
     const finalTarget = overrideTarget || target;
     
-    console.log("handleSearch executing with:", finalSource, finalTarget);
-
-    if (!finalSource.trim() || !finalTarget.trim()) {
-       console.log("handleSearch aborted: empty source or target");
-       return;
-    }
+    if (!finalSource.trim() || !finalTarget.trim()) return;
     
     setIsCollapsed(false);
     setIsLoading(true);
@@ -647,6 +721,20 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
               <div className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5 sm:px-6 sm:pb-6 space-y-4">
                 {!hideInputs && (
                   <div className="space-y-3 pt-4 pb-6 border-b border-slate-100 mb-2">
+                    {allowAdminControls && (
+                      <div className="flex items-center justify-between py-1 border-b border-slate-100 mb-2">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-2 h-2 rounded-full ${isAutoRefillEnabled ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} />
+                          <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider">自动任务补位</span>
+                        </div>
+                        <button 
+                          onClick={() => toggleAutoRefill(!isAutoRefillEnabled)}
+                          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${isAutoRefillEnabled ? 'bg-indigo-600' : 'bg-slate-200'}`}
+                        >
+                          <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${isAutoRefillEnabled ? 'translate-x-4' : 'translate-x-0'}`} />
+                        </button>
+                      </div>
+                    )}
                     {allowAdminControls ? (
                       <div className="flex flex-col gap-1.5">
                         <div className="flex gap-2 items-center">
@@ -657,16 +745,12 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                               onChange={(e) => setSource(e.target.value)}
                               onFocus={() => setIsSourceFocused(true)}
                               onBlur={() => setTimeout(() => setIsSourceFocused(false), 200)}
-                              placeholder={isLoading ? (subStatus === 'queued' ? "任务正在队列排队..." : "时空节点解析中...") : "输入人名如：朱元璋"}
+                              placeholder="输入人名并按回车入队..."
                               disabled={isPickingRandom}
                               className={`w-full pl-8 pr-10 py-2 border rounded-xl text-[12px] focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 outline-none transition-all font-bold placeholder:text-slate-300 shadow-sm ${isPickingRandom ? 'bg-indigo-50/50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200'}`}
-                              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                              onKeyDown={(e) => e.key === 'Enter' && handleEnqueue()}
                             />
-                            {isLoading ? (
-                              <Loader2 className="absolute left-3 top-2.5 w-3.5 h-3.5 text-indigo-500 animate-spin" />
-                            ) : (
-                              <User className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
-                            )}
+                            <User className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
                             <button 
                               onClick={handlePickRandomPair}
                               disabled={isPickingRandom || isLoading || !hasInitialCheckDone}
@@ -688,7 +772,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                                   {filteredSourceNames.map(name => (
                                     <button
                                       key={name}
-                                      onClick={() => { setSource(name); setIsSourceFocused(false); }}
+                                      onClick={() => { setSource(name); setIsSourceFocused(false); handleEnqueue(name); }}
                                       className="w-full text-left px-3 py-1.5 text-[12px] font-medium hover:bg-indigo-50 hover:text-indigo-600 transition-colors"
                                     >
                                       {name}
@@ -699,12 +783,18 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                             </AnimatePresence>
                           </div>
                           <button 
-                            onClick={() => handleSearch()}
+                            onClick={() => handleEnqueue()}
                             disabled={isPickingRandom || isSubmitting || !source.trim() || !hasInitialCheckDone || queue.length >= 20}
                             className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white h-[38px] px-4 text-[12px] font-black rounded-xl transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-1.5 active:scale-[0.98] group whitespace-nowrap"
                           >
-                            {isSubmitting || !hasInitialCheckDone || isPickingRandom ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 group-hover:animate-pulse" />}
-                            <span>{queue.length >= 20 ? "队列已满" : (isSubmitting ? "正在入队..." : (isLoading ? "继续加入" : "开启探索"))}</span>
+                            {isSubmitting || !hasInitialCheckDone || isPickingRandom ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : queue.length >= 20 ? (
+                              <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+                            ) : (
+                              <CheckCircle className="w-3.5 h-3.5 group-hover:animate-pulse" />
+                            )}
+                            <span>{queue.length >= 20 ? "队列已满" : (isSubmitting ? "发布中..." : "加入队列")}</span>
                           </button>
                         </div>
                       </div>
@@ -824,95 +914,50 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                   </div>
                 )}
   
-              {(isLoading || (allowAdminControls && searchSteps.length > 0 && !error)) && (
+              {(isLoading || (allowAdminControls && searchSteps.length > 0 && !error) || queue.length > 0) && (
                 <div className="flex flex-col animate-in fade-in duration-500">
-                  <div className="flex flex-col space-y-3 font-mono border border-slate-100 bg-slate-50 rounded-xl p-4 relative shadow-sm">
+                  <div className="flex flex-col space-y-3 font-mono relative mt-2">
                     {isLoading && (
-                      <button 
-                        onClick={handleStop}
-                        className="absolute right-3 top-3 z-10 text-slate-400 hover:text-red-500 hover:bg-slate-200/50 p-1 rounded-md transition-all active:scale-90"
-                        title="停止执行"
-                      >
-                         <StopCircle className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="flex flex-col gap-3 mt-1 pl-4">
+                         <div className="flex items-center gap-2 text-indigo-500 text-[11px] font-bold">
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            <span className="animate-pulse">{subStatus === 'queued' ? `等待远端 Worker 承接任务 [${queue[0] || targetName || '...'}]` : `正在解析时空节点 [${targetName || '...'}]`}</span>
+                         </div>
+                      </div>
                     )}
-                    {searchSteps.map((step, i) => (
-                      <motion.div 
-                        key={i}
-                        initial={{ opacity: 0, x: -10 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        className="flex items-start gap-2.5 group"
-                      >
-                        <div className="mt-1 shrink-0">
-                          {step.status === 'success' ? (
-                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 border border-emerald-200" />
-                          ) : step.status === 'error' ? (
-                            <div className="w-1.5 h-1.5 rounded-full bg-red-500 border border-red-200" />
-                          ) : (
-                            <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 border border-indigo-200 animate-pulse" />
-                          )}
-                        </div>
-                        <span className={`text-[11px] font-medium leading-relaxed selection:bg-indigo-100 ${
-                          step.status === 'success' ? 'text-slate-500' : 
-                          step.status === 'error' ? 'text-red-500' : 'text-slate-800'
-                        }`}>
-                          {step.msg}
-                        </span>
-                        {step.startTime && (
-                          <span className="text-[9px] text-slate-300 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
-                            {new Date(step.startTime).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                        )}
-                      </motion.div>
-                    ))}
-                    {isLoading && (
-                       <div className="flex flex-col gap-3 mt-1 pl-4">
-                          <div className="flex items-center gap-2 text-indigo-500 text-[11px] font-bold">
-                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                             <span className="animate-pulse">{subStatus === 'queued' ? `等待远端 Worker 承接任务 [${targetName || '...'}]` : "时空协议深度分析中..."}</span>
-                          </div>
-                          
-                          {queue.length > 0 && (
-                            <div className="mt-2 space-y-1.5 border-t border-slate-100 pt-3">
-                              <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
-                                <RefreshCw size={10} className="animate-spin" />
-                                集群流水线人物列表 ({queue.length})
-                              </div>
-                              <div className="flex flex-wrap gap-1.5 max-h-[120px] overflow-y-auto pr-1 custom-scrollbar">
-                                {queue.map((name, idx) => (
-                                  <div 
-                                    key={name + idx} 
-                                    className={`px-2 py-0.5 rounded-md text-[10px] font-bold border shadow-sm animate-in fade-in slide-in-from-bottom-1 duration-300 ${name === targetName ? 'bg-indigo-50 text-indigo-600 border-indigo-200 ring-2 ring-indigo-500/20' : 'bg-slate-100 text-slate-600 border-slate-200'}`}
-                                    style={{ animationDelay: `${idx * 10}ms` }}
-                                  >
-                                    {name}
-                                    {name === targetName && <span className="ml-1 text-[8px] animate-pulse">●</span>}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
 
-                          {/* Local Activity Logs */}
-                          {detailedLogs.filter(log => (log as any).source !== 'worker').length > 0 && (
-                            <div className="mt-4 pt-3 border-t border-slate-100 space-y-2">
-                               <div className="text-[10px] text-slate-400 font-black uppercase tracking-wider">本地排队状态日志</div>
-                               <div className="space-y-1.5">
-                                 {detailedLogs.filter(log => (log as any).source !== 'worker').slice(-10).map((log, i) => (
-                                   <div key={i} className="flex items-baseline gap-2 text-[10px]">
-                                     <span className="text-slate-300 font-mono tabular-nums shrink-0">[{log.timestamp}]</span>
-                                     <span className={`px-1 rounded-[2px] font-black uppercase tracking-tighter text-[7px] ${
-                                       log.type === 'error' ? 'bg-red-50 text-red-500' : 
-                                       log.type === 'success' ? 'bg-emerald-50 text-emerald-500' : 
-                                       'bg-slate-100 text-slate-400'
-                                     }`}>{log.type}</span>
-                                     <span className={`font-bold truncate ${log.type === 'error' ? 'text-red-600' : 'text-slate-600'}`}>{log.msg}</span>
-                                   </div>
-                                 ))}
-                               </div>
+                    {queue.length > 0 && (
+                      <div className="mt-2 space-y-1.5 border-t border-slate-100 pt-3 pl-4">
+                        <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                          <Layers size={10} />
+                          集群流水线任务队列 ({queue.length})
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {queue.map((name, idx) => (
+                            <div 
+                              key={name + idx} 
+                              className={`group flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold border shadow-sm animate-in fade-in slide-in-from-bottom-1 duration-300 ${name === targetName ? 'bg-indigo-50 text-indigo-600 border-indigo-200 ring-2 ring-indigo-500/20' : 'bg-slate-100 text-slate-600 border-slate-200'}`}
+                              style={{ animationDelay: `${idx * 10}ms` }}
+                            >
+                              <span className="truncate max-w-[80px]">{name}</span>
+                              {isAdmin ? (
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDequeue(name);
+                                  }}
+                                  className={`ml-0.5 ${name === targetName ? 'opacity-50 hover:opacity-100 hover:text-white' : 'opacity-0 group-hover:opacity-100 hover:text-red-500'} transition-opacity p-0.5`}
+                                  title="将此人从待入库队列中移除"
+                                >
+                                  {name === targetName ? <span className="text-[8px] animate-pulse">●</span> : <X size={10} strokeWidth={3} />}
+                                </button>
+                              ) : (
+                                name === targetName && <span className="text-[8px] animate-pulse">●</span>
+                              )}
                             </div>
-                          )}
-                       </div>
+                          ))}
+                        </div>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -1004,14 +1049,14 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
             </div>
           </div>
 
-          {/* Right Column (on Desktop) / Bottom Column (on Mobile): Interaction Process Logs (Worker Only) */}
-          {showLogs && (isLoading || showResults || error || (allowAdminControls && searchSteps.length > 0)) && (
+          {/* Right Column: Interaction Process Logs (Worker Only) */}
+          {showLogs && (
             <div className="flex-1 flex flex-col min-w-0 bg-white overflow-hidden">
-               <div className="px-5 py-4 bg-slate-50/50 border-b border-slate-100 flex items-center justify-between shrink-0">
+               <div className="px-5 py-4 bg-indigo-50/30 border-b border-indigo-100/30 flex items-center justify-between shrink-0">
                   <div className="flex items-center gap-3">
                     <div className="flex items-center gap-2">
-                       <Zap className={`w-3.5 h-3.5 ${isLoading ? 'text-indigo-500' : 'text-indigo-600'} shrink-0`} />
-                      <span className="text-[10px] font-black text-slate-700 uppercase tracking-[0.2em] font-mono">集群运行日志 (Worker)</span>
+                       <Zap className={`w-3.5 h-3.5 ${isLoading ? 'text-indigo-500 animate-pulse' : 'text-indigo-600'} shrink-0`} />
+                      <span className="text-[10px] font-black text-indigo-700 uppercase tracking-[0.2em] font-mono">集群运行日志 / Worker Trace</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -1026,16 +1071,16 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                       className="text-[9px] font-black text-slate-500 hover:text-indigo-600 px-2 py-1 rounded-lg transition-all flex items-center gap-1.5 uppercase tracking-wider border border-slate-100 hover:border-indigo-100 hover:bg-indigo-50/30"
                     >
                       <Save className="w-2.5 h-2.5" />
-                      复制日志
+                      复制记录
                     </button>
                   </div>
                </div>
                
-               <div ref={logsScrollRef} className="flex-1 overflow-y-auto p-4 sm:p-5 custom-scrollbar font-mono text-[11px] space-y-3 select-text bg-white">
+               <div ref={logsScrollRef} className="flex-1 overflow-y-auto p-4 sm:p-5 custom-scrollbar font-mono text-[11px] space-y-3 select-text bg-[#fafbfc]">
                   {detailedLogs.filter(log => (log as any).source === 'worker').length === 0 && (
                     <div className="h-full flex items-center justify-center text-slate-300 italic flex-col gap-2 py-20">
                       <Loader2 className="w-6 h-6 animate-spin opacity-20" />
-                      <span>等待集群追踪数据包中...</span>
+                      <span className="text-[10px] uppercase tracking-widest font-black">等待集群数据包上行...</span>
                     </div>
                   )}
                   <div className="flex flex-col gap-2">
@@ -1043,22 +1088,22 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                       <div key={i} className="animate-in fade-in slide-in-from-left-1 duration-200">
                         <div className="flex flex-col gap-1">
                           <div className="flex items-baseline gap-2.5">
-                            <span className="font-bold text-slate-300 tabular-nums shrink-0 whitespace-nowrap">[{log.timestamp}]</span>
+                            <span className="font-bold text-slate-400 tabular-nums shrink-0 whitespace-nowrap">[{log.timestamp}]</span>
                             <span className={`font-black uppercase tracking-tighter text-[8px] px-1 py-0 rounded shrink-0 flex items-center gap-1 ${
                               log.type === 'error' ? 'text-red-500' :
                               log.type === 'ai-req' || log.type === 'ai-res' ? 'text-amber-500' :
                               log.type === 'api' || log.type === 'success' ? 'text-emerald-500' : 
-                              log.type === 'heartbeat' ? 'text-emerald-500' :
+                              log.type === 'heartbeat' ? 'text-indigo-500' :
                               'text-slate-400'
                             }`}>
-                              {log.type === 'heartbeat' && <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse"></span>}
+                              {log.type === 'heartbeat' && <span className="w-1 h-1 rounded-full bg-indigo-500 animate-pulse"></span>}
                               {log.type === 'api' ? 'SERVER' : (log.type || "").replace('-', ' ')}
                             </span>
                           </div>
                           <div className="pl-0 flex-1 min-w-0">
-                            <span className={`font-bold ${log.type === 'error' ? 'text-red-600' : 'text-slate-700'}`}>{log.msg || ""}</span>
+                            <span className={`font-bold group selection:bg-indigo-100 leading-relaxed ${log.type === 'error' ? 'text-red-600' : 'text-slate-700'}`}>{log.msg || ""}</span>
                             {log.data && (
-                              <div className="mt-1 text-slate-400 font-medium break-all leading-relaxed opacity-80 pl-2 border-l border-slate-100 text-[10px]">
+                              <div className="mt-1 text-slate-400 font-medium break-all leading-relaxed opacity-80 pl-2 border-l-2 border-indigo-100 text-[10px] bg-white/50 p-2 rounded-sm">
                                 {typeof log.data === 'string' ? log.data : JSON.stringify(log.data, null, 2)}
                               </div>
                             )}
@@ -1104,7 +1149,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                 <Zap className={`w-3.5 h-3.5 ${isLoading ? 'text-indigo-500' : 'text-indigo-600'} shrink-0`} />
               </div>
               <div className="flex flex-col">
-                <span className="text-xs font-bold text-slate-800 whitespace-nowrap">时空关系网络探索</span>
+                <span className="text-xs font-bold text-slate-800 whitespace-nowrap">{isAdmin ? "时空入库任务队列" : "时空关系网络探索"}</span>
                 {isCollapsed && isLoading && (
                    <span className="text-[8px] font-bold text-indigo-500 -mt-1 uppercase tracking-tighter opacity-70">
                      {subStatus === 'queued' ? "队列等待中..." : "时空解析中..."}
@@ -1142,8 +1187,8 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                <Search className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h2 className="text-xl font-bold text-slate-800">时空关系网络探索</h2>
-              <p className="text-xs text-slate-500 font-medium tracking-wide">寻找任意两个人物之间的跨时空联系</p>
+              <h2 className="text-xl font-bold text-slate-800">{isAdmin ? "时空入库排队系统" : "时空关系网络探索"}</h2>
+              <p className="text-xs text-slate-500 font-medium tracking-wide">{isAdmin ? "管理集群归档任务与人物入库队列" : "寻找任意两个人物之间的跨时空联系"}</p>
             </div>
           </div>
           <button onClick={onClose} className="p-3 hover:bg-slate-100 rounded-full transition-colors">

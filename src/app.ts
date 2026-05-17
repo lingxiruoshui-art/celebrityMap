@@ -3,8 +3,8 @@ import { streamSSE } from "hono/streaming";
 import { GoogleGenAI } from "@google/genai";
 import { D1DatabaseAdapter, DatabaseAdapter } from "./db.ts";
 import { CATEGORIES, FIGURE_POOL } from "./figuresPool.ts";
-import { ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA, EXPAND_CONNECTIONS_PROMPT, EXPAND_CONNECTIONS_SCHEMA } from "./services/aiService.ts";
-import { initExplorationState, advanceExplorationStep, doFinalizeInsert } from "./exploreStep.ts";
+import { EXPAND_CONNECTIONS_PROMPT, EXPAND_CONNECTIONS_SCHEMA } from "./services/aiService.ts";
+import { initExplorationState, doFinalizeInsert } from "./exploreStep.ts";
 
 const root = new Hono<{ 
   Bindings: { 
@@ -58,8 +58,6 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
         image_url TEXT,
         views INTEGER DEFAULT 0,
         raw_relationships TEXT DEFAULT '[]',
-        latitude REAL DEFAULT 0,
-        longitude REAL DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )`,
       `CREATE TABLE IF NOT EXISTS relationships (
@@ -97,8 +95,6 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
     }
     
     const migrations = [
-      "ALTER TABLE people ADD COLUMN latitude REAL DEFAULT 0",
-      "ALTER TABLE people ADD COLUMN longitude REAL DEFAULT 0",
       "ALTER TABLE people ADD COLUMN image_url TEXT",
       "ALTER TABLE people ADD COLUMN lifespan TEXT",
       "ALTER TABLE people ADD COLUMN birthplace TEXT",
@@ -529,11 +525,7 @@ app.get("/admin/config", async (c) => {
     gemini_model_id: await getConfig(db, "gemini_model_id"),
     aliyun_api_key: await getConfig(db, "aliyun_api_key"),
     aliyun_model_id: await getConfig(db, "aliyun_model_id"),
-    cron_interval_enabled: await getConfig(db, "cron_interval_enabled", "false") === "true",
-    cron_interval_hours: parseInt(await getConfig(db, "cron_interval_hours", "0")),
-    cron_interval_minutes: parseInt(await getConfig(db, "cron_interval_minutes", "0")),
-    last_cron_trigger_time: await getConfig(db, "last_cron_trigger_time", ""),
-    last_cron_message_time: await getConfig(db, "last_cron_message_time", "")
+    auto_refill_enabled: await getConfig(db, "auto_refill_enabled", "false") === "true"
   });
 });
 
@@ -546,10 +538,7 @@ app.post("/admin/config", async (c) => {
   if (body.gemini_model_id !== undefined) await setConfig(db, "gemini_model_id", body.gemini_model_id);
   if (body.aliyun_api_key !== undefined) await setConfig(db, "aliyun_api_key", body.aliyun_api_key);
   if (body.aliyun_model_id !== undefined) await setConfig(db, "aliyun_model_id", body.aliyun_model_id);
-  
-  if (body.cron_interval_enabled !== undefined) await setConfig(db, "cron_interval_enabled", String(body.cron_interval_enabled));
-  if (body.cron_interval_hours !== undefined) await setConfig(db, "cron_interval_hours", String(body.cron_interval_hours));
-  if (body.cron_interval_minutes !== undefined) await setConfig(db, "cron_interval_minutes", String(body.cron_interval_minutes));
+  if (body.auto_refill_enabled !== undefined) await setConfig(db, "auto_refill_enabled", String(body.auto_refill_enabled));
   
   return c.json({ success: true });
 });
@@ -796,17 +785,17 @@ app.post("/save-archive", async (c) => {
   try {
     const portraitUrl = await getPortraitUrl(c, name);
     const stmt = db.prepare(`
-      INSERT INTO people (name, category, keyword, lifespan, birthplace, biography, achievements, image_url, raw_relationships, latitude, longitude)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO people (name, category, keyword, lifespan, birthplace, biography, achievements, image_url, raw_relationships)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(name) DO UPDATE SET 
         category=excluded.category, keyword=excluded.keyword, lifespan=excluded.lifespan, birthplace=excluded.birthplace, biography=excluded.biography, 
-        achievements=excluded.achievements, image_url=excluded.image_url, raw_relationships=excluded.raw_relationships, latitude=excluded.latitude, longitude=excluded.longitude
+        achievements=excluded.achievements, image_url=excluded.image_url, raw_relationships=excluded.raw_relationships
       RETURNING id
     `);
     
     const inserted = await stmt.get(
         name, data.category || "其他", data.keyword || "", data.lifespan || "", data.birthplace || "", data.biography || "",
-        JSON.stringify(data.achievements || []), portraitUrl, JSON.stringify(data.relationships || []), data.latitude || 0, data.longitude || 0
+        JSON.stringify(data.achievements || []), portraitUrl, JSON.stringify(data.relationships || [])
     ) as { id: number };
 
     let connCount = 0;
@@ -948,12 +937,12 @@ export async function pickTarget(db: DatabaseAdapter) {
   const archivedSet = new Set(archivedNames);
   
   // Also exclude people in queue
-  const queuedPeople = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' OR status = 'processing'").all() as any[];
-  queuedPeople.forEach(t => archivedSet.add(t.target_name));
+  const queuedPeopleRows = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' OR status = 'processing'").all() as any[];
+  queuedPeopleRows.forEach(t => archivedSet.add(t.target_name));
   
   const shuffle = (array: any[]) => array.sort(() => 0.5 - Math.random());
   
-  // 1. Get available from pool
+  // Priority 1: From pre-defined Figure Pool (Background Collection)
   const poolUnarchived: string[] = [];
   for (const cat of CATEGORIES) {
       FIGURE_POOL[cat]?.forEach((n: string) => { 
@@ -962,13 +951,12 @@ export async function pickTarget(db: DatabaseAdapter) {
   }
   const uniquePoolUnarchived = Array.from(new Set(poolUnarchived));
 
-  // Priority 1: 1 from pool
   if (uniquePoolUnarchived.length >= 1) {
       const picked = shuffle([...uniquePoolUnarchived])[0];
-      return { targetName: picked, strategy: "pool" };
+      return { targetName: picked, strategy: "图谱预设池" };
   }
 
-  // 2. Get available from relationships
+  // Priority 2: From Relationships (Secondary Nodes / Connected figures)
   const connectedUnarchived = new Set<string>();
   people.forEach(p => {
     try {
@@ -983,7 +971,7 @@ export async function pickTarget(db: DatabaseAdapter) {
 
   if (uniqueRelsUnarchived.length >= 1) {
       const picked = shuffle([...uniqueRelsUnarchived])[0];
-      return { targetName: picked, strategy: "relationships" };
+      return { targetName: picked, strategy: "时空网络次级关联节点" };
   }
   
   // Fallback: Empty state
@@ -1026,222 +1014,43 @@ app.post("/archiver/generate-target", async (c) => {
 
 app.post("/archive-figure", async (c) => {
   const db = await getDb(c);
-  const { personName, stream: isStream, source: reqSource } = await c.req.json();
-  let targetName = personName;
-
-  const samplePeople = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 20").all() as any[];
-  const sampleNames = samplePeople.map(p => p.name).join("、");
-
-  if (isStream) {
-      const pass = c.req.header("x-admin-password");
-      const isAdmin = pass === getAdminPassword(c);
-
-      return streamSSE(c, async (stream) => {
-          const startTime = Date.now();
-          const taskId = Date.now();
-          
-          let state = {
-            status: 'running',
-            target: targetName || '待定',
-            source: reqSource || (targetName && targetName !== '待定' ? 'list' : 'explorer'),
-            taskId,
-            lastHeartbeat: Date.now(),
-            logs: [] as any[],
-            steps: [{ msg: "启动时空入库任务...", status: "pending", startTime: Date.now() }],
-            path: null,
-            error: null,
-            newArrivals: []
-          };
-
-          const updateGlobalState = async (reason?: string) => {
-              state.lastHeartbeat = Date.now();
-              // Non-blocking update to prevent blocking SSE if DB is slow
-              setConfig(db, "explore_state", JSON.stringify(state)).catch(e => console.error("Global state sync failed", e));
-          };
-
-          const send = async (data: any) => {
-              // Add to local state for global tracking
-              const timestamp = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
-              if (data.msg) {
-                state.logs.push({ timestamp, msg: data.msg, type: data.type || 'info' });
-                if (state.logs.length > 50) state.logs.shift();
-              }
-              await updateGlobalState();
-              
-              try {
-                await stream.writeSSE({ data: JSON.stringify(data) });
-              } catch (e) {}
-          };
-
-          // Initial sync
-          await updateGlobalState("init");
-
-          try {
-              if (!targetName) {
-                  await send({ type: 'info', msg: `未指定人物，正在检索图谱以寻找合适目标...` });
-                  const existingSet = new Set(samplePeople.map(p => p.name));
-                  const unarchivedInPool: string[] = [];
-                  for (const cat of CATEGORIES) {
-                      FIGURE_POOL[cat]?.forEach(n => { if (!existingSet.has(n)) unarchivedInPool.push(n); });
-                  }
-                  if (unarchivedInPool.length > 0) {
-                      targetName = unarchivedInPool[Math.floor(Math.random() * unarchivedInPool.length)];
-                      await send({ type: 'info', msg: `从预设池中随机选中: ${targetName}` });
-                  } else {
-                      await send({ type: 'info', msg: `预设池已满，正在进行 AI 随机发散...` });
-                      const prompt = `请从世界历史中选取一位极其著名、具有重大全球影响力且通常被视为正面的真实历史人物。要求不包含在已知列表中：[${sampleNames} ...]`;
-                      const resultText = await callAI(c, db, prompt, "text");
-                      targetName = (resultText || "").trim().replace(/[「」""'']/g, "");
-                      await send({ type: 'info', msg: `AI 随机发散选中: ${targetName}` });
-                  }
-              }
-
-              if (!targetName) throw new Error("无法确定目标");
-
-              await send({ type: 'info', msg: `正在从 Wikidata/Wikipedia 唤醒 ${targetName} 的记忆...`, data: { name: targetName } });
-              const meta = await fetchMetadataFromWiki(targetName);
-              targetName = meta.normalizedName;
-
-              await send({ type: 'info', msg: `确定抓取目标: ${targetName}`, data: { normalizedName: targetName, metaFound: !!meta.description } });
-              if (meta.description) {
-                  await send({ type: 'info', msg: `识别到身份线索: ${meta.description}` });
-              }
-              await send({ type: 'info', msg: `正在利用 AI 深度检索并编织 ${targetName} 的历史时空数据...`, data: { categories: CATEGORIES } });
-              
-              const prompt = ARCHIVE_CORE_PROMPT(targetName, CATEGORIES, sampleNames, meta.description);
-
-              await send({ type: 'ai-req', msg: 'AI 代理请求发送 (基础传记)', data: { prompt: prompt.substring(0, 300) + "..." } });
-              let resultText = await callAI(c, db, prompt, "json", ARCHIVE_CORE_SCHEMA(!!meta.description));
-
-              let coreData: any = {};
-              try { coreData = JSON.parse(resultText || "{}"); } catch(e) {}
-              if (Array.isArray(coreData)) coreData = coreData[0];
-
-              if (!coreData.biography) {
-                  throw new Error("AI未能生成有效传记数据");
-              }
-
-              await send({ type: 'ai-req', msg: 'AI 代理请求发送 (成就与关系)' });
-              const extraPrompt = ARCHIVE_EXTRA_PROMPT(coreData.standardChineseName || targetName, coreData.biography);
-              let extraResultText = await callAI(c, db, extraPrompt, "json", ARCHIVE_EXTRA_SCHEMA);
-
-              let extraData: any = {};
-              try { extraData = JSON.parse(extraResultText || "{}"); } catch(e) {}
-              if (Array.isArray(extraData)) extraData = extraData[0];
-
-              const finalData = { ...coreData, ...extraData };
-              resultText = JSON.stringify(finalData);
-              await send({ type: 'ai-res', msg: 'AI 响应解码成功', data: { rawText: resultText.substring(0, 200) + "..." } });
-
-              let data: any = {};
-              try {
-                  data = JSON.parse(resultText || "{}");
-              } catch (e) {
-                  try {
-                      // Fallback for trailing newlines or control chars in json strings
-                      const sanitizedText = (resultText || "{}")
-                          .replace(/\n/g, ' ')
-                          .replace(/\r/g, '')
-                          .replace(/\t/g, ' ');
-                      data = JSON.parse(sanitizedText);
-                  } catch (e2) {
-                      console.error("Archive parse failed", e2, "\nText:", resultText);
-                      data = { category: "其他", biography: "资料解析失败 (格式有误)", achievements: [], relationships: [], standardChineseName: targetName };
-                  }
-              }
-
-              if (!data.accepted && !isAdmin) {
-                 await send({ type: 'error', msg: `抱歉，${targetName} 可能不符合入库标准（${data.reason || "非真实历史人物"}）` });
-                 return;
-              }
-
-              // Use the standard Chinese name as the canonical record name
-              const finalName = data.standardChineseName || targetName;
-
-              await send({ type: 'info', msg: `正在获取 ${finalName} 的历史肖像...` });
-              const portraitUrlRaw = meta.imageUrl || `https://image.pollinations.ai/prompt/${encodeURIComponent("Historical portrait of " + finalName + ", realistic oil painting style, highly detailed")}`;
-              
-              const portraitUrl = `/api/portraits/${encodeURIComponent(finalName.toLowerCase())}.jpg`;
-
-              await send({ type: 'info', msg: `正在将 ${finalName} 录入时空档案馆...` });
-              
-              const existing = await db.prepare("SELECT id FROM people WHERE name = ?").get(finalName) as any;
-              
-              if (existing) {
-                  await send({ type: 'info', msg: `${finalName} 已存在，正在更新资料...` });
-              }
-              
-              const stmt = db.prepare(`
-                  INSERT INTO people (name, category, keyword, lifespan, birthplace, biography, achievements, image_url, raw_relationships, latitude, longitude)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                  ON CONFLICT(name) DO UPDATE SET 
-                    category=excluded.category, keyword=excluded.keyword, lifespan=excluded.lifespan, birthplace=excluded.birthplace, biography=excluded.biography, 
-                    achievements=excluded.achievements, image_url=excluded.image_url, raw_relationships=excluded.raw_relationships, latitude=excluded.latitude, longitude=excluded.longitude
-                  RETURNING id
-              `);
-              const inserted = await stmt.get(
-                  finalName, data.category || "其他", data.keyword || "", data.lifespan || "", data.birthplace || "", data.biography || "",
-                  JSON.stringify(data.achievements || []), portraitUrl, JSON.stringify(data.relationships || []), data.latitude || 0, data.longitude || 0
-              ) as { id: number };
-              const personId = inserted.id;
-
-              // Try to store the image if we have a bucket
-              if (c.env?.IMAGES && portraitUrlRaw) {
-                  try {
-                    const imgRes = await fetch(portraitUrlRaw);
-                    if (imgRes.ok) {
-                        const buffer = await imgRes.arrayBuffer();
-                        await c.env.IMAGES.put(`portraits/${encodeURIComponent(finalName.toLowerCase())}.jpg`, buffer, {
-                            httpMetadata: { contentType: imgRes.headers.get("content-type") || "image/jpeg" }
-                        });
-                    }
-                  } catch(e) {}
-              }
-
-              let connCount = 0;
-              // 1. 主动连接：检测该人物声明的关系，是否在数据库中已存在
-              if (data.relationships && Array.isArray(data.relationships)) {
-                  for (const rel of data.relationships) {
-                      const matched = await db.prepare("SELECT id FROM people WHERE name = ?").get(rel.personName) as any;
-                      if (matched) {
-                          await addRelationship(db, personId, matched.id, rel.relationshipType);
-                          connCount++;
-                      }
-                  }
-              }
-
-              // 2. 被动追溯：检测库中已有的人物，是否曾经将关系连向了当前这名新入库人物
-              const previousMentions = await db.prepare(`SELECT id, name, raw_relationships FROM people WHERE id != ? AND (raw_relationships LIKE ? OR raw_relationships LIKE ?)`).all(personId, `%${finalName}%`, `%${targetName}%`) as any[];
-              for (const p of previousMentions) {
-                  try {
-                      const rels = JSON.parse(p.raw_relationships || "[]");
-                      const matchingRel = rels.find((r: any) => r.personName === finalName || r.personName === targetName);
-                      if (matchingRel) {
-                          await addRelationship(db, p.id, personId, matchingRel.relationshipType);
-                          connCount++;
-                      }
-                  } catch(e) {}
-              }
-
-              if (connCount > 0) await send({ type: 'info', msg: `成功匹配并建立 ${connCount} 条时空连接。` });
-              else await send({ type: 'info', msg: `未发现即时时空连接，已保留关联索引供后续追溯。` });
-
-
-              await send({ type: 'result', personId });
-              state.status = 'success';
-              await updateGlobalState();
-          } catch (e: any) {
-              await send({ type: 'error', msg: e.message });
-              state.status = 'error';
-              state.error = e.message;
-              await updateGlobalState();
-          } finally {
-              // We could clear it, but keeping success/error for Spacetime Explorer to show is better
-          }
-      });
-  } else {
-      return c.json({ error: "Always use streaming for this endpoint in current UI" }, 400);
+  const { personName, source: reqSource } = await c.req.json();
+  const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
+  
+  if (!isAdmin && await getConfig(db, "demo_mode") === "true") {
+      return c.json({ error: "只读模式，如需演示归档，请访问项目GitHub" }, 403);
   }
+
+  // Use the enqueue logic instead of direct processing
+  const targetName = personName;
+  if (!targetName) return c.json({ error: "Invalid target" }, 400);
+  
+  // Check if already in people table
+  const existingPerson = await db.prepare("SELECT id FROM people WHERE name = ? COLLATE NOCASE").get(targetName) as any;
+  if (existingPerson) {
+      return c.json({ error: `[${targetName}] 已在档案库中，无需重入。`, alreadyExists: true, personId: existingPerson.id }, 400);
+  }
+  
+  // Check if already in queue
+  const existingQueue = await db.prepare("SELECT id FROM explore_queue WHERE target_name = ? AND (status = 'pending' OR status = 'processing') COLLATE NOCASE").get(targetName) as any;
+  if (existingQueue) {
+      return c.json({ error: `[${targetName}] 任务已在队列中执行或等待中。`, alreadyQueued: true }, 400);
+  }
+
+  // Priority 1 for manual admin archival
+  const res = await db.prepare("INSERT INTO explore_queue (target_name, priority) VALUES (?, 1) RETURNING id").get(targetName) as any;
+  const taskId = res.id;
+  
+  await updateExplorationState(db, {
+      status: "running",
+      subStatus: "queued",
+      target: targetName,
+      taskId: taskId,
+      source: reqSource || 'list',
+      error: null
+  }, { msg: `管理员发起入库请求: ${targetName} (已加入集群队列)`, type: "api" });
+  
+  return c.json({ success: true, taskId, targetName });
 });
 
 app.post("/save-relationship", async (c) => {
@@ -1306,8 +1115,8 @@ app.get("/explore/status", async (c) => {
   c.header("Surrogate-Control", "no-store");
 
   let statusStr = await getConfig(db, "explore_state", "null");
-  if (statusStr === "null") return c.json(null);
-  const data = JSON.parse(statusStr);
+  let data = statusStr === "null" ? { status: "idle" } : JSON.parse(statusStr);
+  
   let isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
   const cronSecret = (c.env && c.env.CRON_SECRET) || "update_celeb";
   if (!isAdmin && c.req.header("x-admin-password") === cronSecret) {
@@ -1327,7 +1136,23 @@ app.get("/explore/status", async (c) => {
   data.isOwner = isAdmin;
   
   // Add queue info
-  const pendingTasks = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' OR status = 'processing' ORDER BY priority DESC, created_at ASC").all() as any[];
+  let pendingTasks = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' OR status = 'processing' ORDER BY priority DESC, created_at ASC").all() as any[];
+  
+  const refillEnabled = await getConfig(db, "auto_refill_enabled", "false") === "true";
+  data.autoRefillEnabled = refillEnabled;
+
+  // Proactive Auto-refill logic: if queue empty and refill enabled, fill it
+  if (refillEnabled && pendingTasks.length === 0) {
+      console.log(`[Status] Queue empty and auto-refill enabled. Refilling...`);
+      const { targetName, isEmpty } = await pickTarget(db);
+      if (!isEmpty && targetName) {
+          await db.prepare("INSERT INTO explore_queue (target_name, priority) VALUES (?, 1)").run(targetName);
+          console.log(`[Status] Proactively auto-enqueued: ${targetName}`);
+          // Refresh pending tasks after refill
+          pendingTasks = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' OR status = 'processing' ORDER BY priority DESC, created_at ASC").all() as any[];
+      }
+  }
+
   data.queue = pendingTasks.map(t => t.target_name);
 
   return c.json(data);
@@ -1458,26 +1283,32 @@ app.get("/internal/next-task", async (c) => {
         modelId: await getConfig(db, "gemini_model_id") || "gemini-1.5-flash",
     };
     
-    if (task) {
-        console.log(`[Internal] Task found in queue: ${task.target_name}`);
-        const taskId = task.id;
-        await db.prepare("UPDATE explore_queue SET status = 'processing', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(taskId);
-        await updateExplorationState(db, { status: "running", subStatus: "processing", taskId, target: task.target_name }, { msg: `Worker 集群节点已承接排队任务 [${task.target_name}]`, type: "api" });
-        return c.json({ taskId, targetName: task.target_name, modelConfig });
-    } else {
-        const cronEnabled = await getConfig(db, "cron_interval_enabled", "false") === "true";
-        console.log(`[Internal] No tasks in queue. Cron auto-explore: ${cronEnabled}`);
-        if (!cronEnabled) return c.json({ error: "No pending tasks" }, 404);
-        
-        // Use pickTarget to get a name from our pool/relationships instead of letting AI hallucinate one
-        const picked = await pickTarget(db);
-        if (picked.isEmpty || !picked.targetName) {
-            return c.json({ error: "Pool exhausted or no candidates found" }, 404);
+    let taskToProcess = task;
+    
+    // Auto-fill logic: if queue empty and refill enabled, pick a random target
+    if (!taskToProcess) {
+        const refillEnabled = await getConfig(db, "auto_refill_enabled", "false") === "true";
+        if (refillEnabled) {
+            console.log(`[Internal] Queue empty, auto-refill enabled. Picking random target...`);
+            const { targetName, isEmpty } = await pickTarget(db);
+            if (!isEmpty && targetName) {
+                const res = await db.prepare("INSERT INTO explore_queue (target_name, priority) VALUES (?, 1) RETURNING id").get(targetName) as any;
+                if (res) {
+                    taskToProcess = { id: res.id, target_name: targetName };
+                    console.log(`[Internal] Auto-enqueued: ${targetName}`);
+                }
+            }
         }
-
-        const taskId = `auto-${Date.now()}`;
-        await updateExplorationState(db, { status: "running", subStatus: "processing", taskId, target: picked.targetName }, { msg: `Worker 集群节点正在启动自动探索序列 [${picked.targetName}] (策略: ${picked.strategy})`, type: "api" });
-        return c.json({ taskId, targetName: picked.targetName, modelConfig });
+    }
+    
+    if (taskToProcess) {
+        console.log(`[Internal] Task found/auto-filled: ${taskToProcess.target_name}`);
+        const taskId = taskToProcess.id;
+        await db.prepare("UPDATE explore_queue SET status = 'processing', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(taskId);
+        await updateExplorationState(db, { status: "running", subStatus: "processing", taskId, target: taskToProcess.target_name }, { msg: `Worker 集群节点已承接任务 [${taskToProcess.target_name}]`, type: "api" });
+        return c.json({ taskId, targetName: taskToProcess.target_name, modelConfig });
+    } else {
+        return c.json({ error: "No pending tasks" }, 404);
     }
 });
 
@@ -1512,6 +1343,25 @@ app.post("/internal/submit", async (c) => {
     const { taskId, targetName, success, personData, wikiMeta, error } = body;
     
     if (success) {
+        // Validate effective information before proceeding
+        const achievements = personData?.achievements || [];
+        const relationships = personData?.relationships || [];
+        
+        const hasEffectiveAchievements = Array.isArray(achievements) && achievements.length > 0 && achievements.some((a: any) => String(a).trim().length > 2);
+        const hasEffectiveRelationships = Array.isArray(relationships) && relationships.length > 0 && relationships.some((r: any) => r.personName && String(r.relationshipType).trim().length > 2);
+
+        if (!hasEffectiveAchievements || !hasEffectiveRelationships) {
+             const reason = !hasEffectiveAchievements && !hasEffectiveRelationships 
+                ? "主要成就与时空关系网均无有效信息" 
+                : (!hasEffectiveAchievements ? "主要成就数据缺失或过短" : "时空关系网络数据缺失或无效");
+             
+             if (taskId) {
+                await db.prepare("UPDATE explore_queue SET status = 'error', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(taskId);
+             }
+             await updateExplorationState(db, { status: "error", error: `时空锁死：经 AI 高维扫描，该人物的${reason}。为维持馆藏档案品质，已强制中止本次入库。` }, { msg: `入库强制中止：${reason} [${targetName}]`, type: "error" });
+             return c.json({ success: false, error: reason });
+        }
+
         // Mark task as completed
         if (taskId) {
             await db.prepare("UPDATE explore_queue SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(taskId);
@@ -1591,74 +1441,37 @@ app.post("/explore/enqueue", async (c) => {
     return c.json({ success: true, message: `已将 ${targetName} 加入探索队列！后台 Worker 会自动拉取执行。`, taskId });
 });
 
-app.post("/explore/step", async (c) => {
-  const db = await getDb(c);
-  let isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
-  const cronSecret = (c.env && (c.env as any).CRON_SECRET) || "update_celeb";
-  
-  if (!isAdmin && c.req.header("x-admin-password") === cronSecret) {
-      isAdmin = true;
-  }
-  
-  if (!isAdmin && await getConfig(db, "demo_mode") === "true") {
-      return c.json({ error: "只读模式，如需演示归档，请访问项目GitHub" }, 403);
-  }
-  
-  const newState = await advanceExplorationStep(
-      db, callAI, getConfig, setConfig, addRelationship,
-      ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA,
-      fetchMetadataFromWiki, c, !!isAdmin
-  );
-  
-  return c.json(newState);
-});
-
 app.post("/explore/start", async (c) => {
   const db = await getDb(c);
   const { target, isAdmin, clientTaskId, source: reqSource } = await c.req.json();
-  let currentStr = await getConfig(db, "explore_state", "null");
-  if (currentStr !== "null") {
-      const current = JSON.parse(currentStr);
-      const isStale = current.status === 'running' && (!current.lastHeartbeat || (Date.now() - current.lastHeartbeat > 300000)); // 300 seconds
-      
-      if (current.status === 'running' && !isStale) {
-          return c.json({ error: "探索正在进行中，请稍候。若任务已长久挂起，请重置状态后重试。" }, 400);
-      }
-      
-      if (isStale) {
-          console.warn("Detected stale exploration task, allowing override.");
-      }
-  }
   
-  const newTaskId = clientTaskId || Date.now();
-  await initExplorationState(db, getConfig, setConfig, target, reqSource || 'explorer', newTaskId);
+  if (!isAdmin && await getConfig(db, "demo_mode") === "true") {
+      return c.json({ error: "只读模式，如需演示，请访问项目GitHub" }, 403);
+  }
 
-  return streamSSE(c, async (stream) => {
-      await stream.writeSSE({ data: JSON.stringify({ status: "started", message: "任务状态机已初始化", taskId: newTaskId }) });
-      const heartbeatTimer = setInterval(() => {
-          stream.writeSSE({ data: JSON.stringify({ type: 'ping' }) }).catch(()=>{});
-      }, 5000);
-      
-      try {
-          let isDone = false;
-          while (!isDone) {
-              const state = await advanceExplorationStep(
-                  db, callAI, getConfig, setConfig, addRelationship,
-                  ARCHIVE_CORE_PROMPT, ARCHIVE_CORE_SCHEMA, ARCHIVE_EXTRA_PROMPT, ARCHIVE_EXTRA_SCHEMA,
-                  fetchMetadataFromWiki, c, !!isAdmin
-              );
-              if (state.status === "success" || state.status === "error" || state.status === "idle") {
-                  isDone = true;
-              }
-          }
-          await stream.writeSSE({ data: JSON.stringify({ status: "completed" }) });
-      } catch (e: any) {
-          console.error("[Explore Task Error]", e);
-          await stream.writeSSE({ data: JSON.stringify({ status: "error", message: e.message }) });
-      } finally {
-          clearInterval(heartbeatTimer);
-      }
-  });
+  // Redirection: use enqueue for all exploration starts
+  const targetName = target;
+  if (!targetName) return c.json({ error: "探索目标不能为空" }, 400);
+
+  // Check if already in queue
+  const existingQueue = await db.prepare("SELECT id FROM explore_queue WHERE target_name = ? AND (status = 'pending' OR status = 'processing') COLLATE NOCASE").get(targetName) as any;
+  if (existingQueue) {
+      return c.json({ success: true, message: "该人物已在队列中，任务已激活。" });
+  }
+
+  const res = await db.prepare("INSERT INTO explore_queue (target_name, priority) VALUES (?, 1) RETURNING id").get(targetName) as any;
+  const taskId = res.id;
+  
+  await updateExplorationState(db, {
+      status: "running",
+      subStatus: "queued",
+      target: targetName,
+      taskId: taskId,
+      source: reqSource || 'explorer',
+      error: null
+  }, { msg: `任务已发布至集群: ${targetName}`, type: "api" });
+
+  return c.json({ success: true, taskId, targetName });
 });
 
 app.post("/explore/stop", async (c) => {
@@ -1680,6 +1493,17 @@ app.post("/explore/stop", async (c) => {
          await setConfig(db, "explore_state", stateStr);
       }
   }
+  return c.json({ success: true });
+});
+
+app.post("/explore/dequeue", async (c) => {
+  const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
+  if (!isAdmin) return c.json({ error: "Unauthorized" }, 401);
+  const db = await getDb(c);
+  const { targetName } = await c.req.json();
+  if (!targetName) return c.json({ error: "Missing targetName" }, 400);
+  
+  await db.prepare("DELETE FROM explore_queue WHERE target_name = ? AND status = 'pending'").run(targetName);
   return c.json({ success: true });
 });
 

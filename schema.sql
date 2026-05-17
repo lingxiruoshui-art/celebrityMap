@@ -10,8 +10,6 @@ CREATE TABLE IF NOT EXISTS people (
   image_url TEXT,
   views INTEGER DEFAULT 0,
   raw_relationships TEXT DEFAULT '[]',
-  latitude REAL DEFAULT 0,
-  longitude REAL DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
