@@ -12,7 +12,7 @@ interface AdminPanelProps {
 }
 
 type Tab = "archive" | "archive_plus" | "config";
-type SortField = "created_at" | "views" | "name" | "category";
+type SortField = "created_at" | "views" | "name" | "category" | "connectionsCount";
 type SortOrder = "asc" | "desc";
 
 export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: AdminPanelProps) {
@@ -820,8 +820,8 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                       <th className="py-3 px-4 cursor-pointer hover:text-indigo-600 whitespace-nowrap" onClick={() => toggleSort("category")}>
                         分类 {sortField === 'category' ? (sortOrder === 'asc' ? '↑' : '↓') : ''}
                       </th>
-                      <th className="py-3 px-4 whitespace-nowrap text-center">
-                        连接数
+                      <th className="py-3 px-4 whitespace-nowrap text-center cursor-pointer hover:text-indigo-600" onClick={() => toggleSort("connectionsCount")}>
+                        连接数 {sortField === 'connectionsCount' ? (sortOrder === 'asc' ? '↑' : '↓') : ''}
                       </th>
                       <th className="py-3 px-4 cursor-pointer hover:text-indigo-600 whitespace-nowrap" onClick={() => toggleSort("views")}>
                         访问量 {sortField === 'views' ? (sortOrder === 'asc' ? '↑' : '↓') : ''}

@@ -442,6 +442,9 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
 
   const toggleAutoRefill = async (val: boolean) => {
     setIsAutoRefillEnabled(val);
+    if (!val) {
+      handlePickRandomPair();
+    }
     if (!isAdmin) return;
     try {
       const headers: any = { "Content-Type": "application/json" };
@@ -494,7 +497,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
           setError(
             <div className="flex flex-col gap-1 items-center">
               <p className="font-bold">✨ 所有预置及关联人物均已录入</p>
-              <p className="text-[10px] opacity-70">系统已穷尽所有已知线索。请手动填入新的人物开启探索之旅。</p>
+              <p className="text-[12px] opacity-70">系统已穷尽所有已知线索。请手动填入新的人物开启探索之旅。</p>
             </div>
           );
         } else {
@@ -644,7 +647,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                   e.stopPropagation();
                   clearResults(true);
                 }}
-                className="mt-2 text-[11px] font-bold py-1.5 px-3 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors w-fit border border-indigo-200"
+                className="mt-2 text-[12px] font-bold py-1.5 px-3 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors w-fit border border-indigo-200"
               >
                 立即强制重置状态
               </button>
@@ -763,9 +766,9 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                               onChange={(e) => setSource(e.target.value)}
                               onFocus={() => setIsSourceFocused(true)}
                               onBlur={() => setTimeout(() => setIsSourceFocused(false), 200)}
-                              placeholder="输入人名并按回车入队..."
-                              disabled={isPickingRandom}
-                              className={`w-full pl-8 pr-10 py-2 border rounded-xl text-[12px] focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 outline-none transition-all font-bold placeholder:text-slate-300 shadow-sm ${isPickingRandom ? 'bg-indigo-50/50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200'}`}
+                              placeholder={isAutoRefillEnabled ? "自动补位已开启..." : "输入人名并按回车入队..."}
+                              disabled={isPickingRandom || isAutoRefillEnabled}
+                              className={`w-full pl-8 pr-10 py-2 border rounded-xl text-[12px] focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 outline-none transition-all font-bold placeholder:text-slate-300 shadow-sm ${isPickingRandom || isAutoRefillEnabled ? 'bg-indigo-50/50 border-indigo-200 text-indigo-700/50 cursor-not-allowed opacity-70' : 'bg-slate-50 border-slate-200'}`}
                               onKeyDown={(e) => e.key === 'Enter' && handleEnqueue()}
                             />
                             <User className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
@@ -803,7 +806,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                           </div>
                           <button 
                             onClick={() => handleEnqueue()}
-                            disabled={isPickingRandom || isSubmitting || !source.trim() || !hasInitialCheckDone || queue.length >= 20}
+                            disabled={isPickingRandom || isSubmitting || !source.trim() || !hasInitialCheckDone || queue.length >= 20 || isAutoRefillEnabled}
                             className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white h-[38px] px-4 text-[12px] font-black rounded-xl transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-1.5 active:scale-[0.98] group whitespace-nowrap"
                           >
                             {isSubmitting || !hasInitialCheckDone || isPickingRandom ? (
@@ -861,7 +864,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                             <div className="flex flex-wrap gap-1 mt-1 border border-indigo-100 bg-indigo-50 p-1.5 rounded-lg">
                               <span className="text-[12px] text-slate-500 w-full mb-0.5">您是指：</span>
                               {sourceOptions.map(opt => (
-                                <button key={opt} onClick={() => { setSource(opt); setSourceOptions([]); setError(null); }} className="text-[11px] font-bold bg-white hover:bg-slate-50 px-2 py-0.5 rounded-md text-indigo-600 border border-slate-200 shadow-sm transition-all active:scale-95">
+                                <button key={opt} onClick={() => { setSource(opt); setSourceOptions([]); setError(null); }} className="text-[12px] font-bold bg-white hover:bg-slate-50 px-2 py-0.5 rounded-md text-indigo-600 border border-slate-200 shadow-sm transition-all active:scale-95">
                                   {opt}
                                 </button>
                               ))}
@@ -1041,7 +1044,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                              <div className="flex items-center justify-between gap-2 overflow-hidden">
                                <span className="text-[13px] font-black text-slate-800 break-words">{item.name}</span>
                                {newArrivals.includes(item.name) && (
-                                 <span className="text-[10px] font-black bg-emerald-500 text-white px-1.5 py-0.5 rounded shadow-sm shrink-0">新入库</span>
+                                 <span className="text-[11px] font-black bg-emerald-500 text-white px-1.5 py-0.5 rounded shadow-sm shrink-0">新入库</span>
                                )}
                              </div>
                           </div>
@@ -1094,13 +1097,13 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                           <div className="flex items-baseline gap-2.5">
                             <span className="font-bold text-slate-400 tabular-nums shrink-0 whitespace-nowrap">[{log.timestamp}]</span>
                             
-                            <span className={`font-black uppercase tracking-tighter text-[9px] px-1 py-0.5 rounded-sm shrink-0 border ${
+                            <span className={`font-black uppercase tracking-tighter text-[11px] px-1 py-0.5 rounded-sm shrink-0 border ${
                               (log as any).source === 'worker' ? 'bg-indigo-50 border-indigo-100 text-indigo-500' : 'bg-slate-100 border-slate-200 text-slate-500'
                             }`}>
                               {(log as any).source || 'worker'}
                             </span>
 
-                            <span className={`font-black uppercase tracking-tighter text-[10px] px-1 py-0 rounded shrink-0 flex items-center gap-1 ${
+                            <span className={`font-black uppercase tracking-tighter text-[11px] px-1 py-0 rounded shrink-0 flex items-center gap-1 ${
                               log.type === 'error' ? 'text-red-500' :
                               log.type === 'ai-req' || log.type === 'ai-res' ? 'text-amber-500' :
                               log.type === 'api' || log.type === 'success' ? 'text-emerald-500' : 
@@ -1164,7 +1167,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
               <div className="flex flex-col">
                 <span className="text-xs font-bold text-slate-800 whitespace-nowrap">{isAdmin ? "时空入库任务队列" : "时空关系网络探索"}</span>
                 {isCollapsed && isLoading && (
-                   <span className="text-[10px] font-bold text-indigo-500 -mt-1 uppercase tracking-tighter opacity-70">
+                   <span className="text-[11px] font-bold text-indigo-500 -mt-1 uppercase tracking-tighter opacity-70">
                      {subStatus === 'queued' ? "队列等待中..." : "时空解析中..."}
                    </span>
                 )}

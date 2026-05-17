@@ -1166,9 +1166,11 @@ app.get("/explore/status", async (c) => {
       const now = Date.now();
       const diff = now - (data.lastHeartbeat || now);
       if (diff > 600000) { // 600 seconds (10 minutes)
-          data.status = 'error';
-          data.error = '时空探测集群检测到执行节点心跳丢失 (超时 > 10min)。当前任务已挂起并标记为“陈旧”，系统正等待其他活跃 Worker 节点自动承接并尝试恢复。您可以稍后刷新状态或手动清理队列。';
-          await setConfig(db, "explore_state", JSON.stringify(data));
+          // Just reset to idle or log it, don't set a blocking error message the user called outdated
+          console.log(`[Status Check] Heartbeat stale (diff=${diff}ms). Resetting state to idle.`);
+          await updateExplorationState(db, { status: "idle", subStatus: null, target: null }, { msg: "检测到集群执行节点心跳丢失，系统已重置状态。", type: "error", source: "server" });
+          data.status = 'idle';
+          data.target = null;
       }
   }
 

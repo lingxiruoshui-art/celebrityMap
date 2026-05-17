@@ -91,7 +91,7 @@ export default function App() {
       const json = await res.json() as any;
       setData(json);
       if (json.people.length > 0 && selectedPersonId === null) {
-        setSelectedPersonId(json.people[json.people.length - 1].id);
+        setSelectedPersonId(json.people[0].id);
       }
     } catch (err) {
       console.error(err);
