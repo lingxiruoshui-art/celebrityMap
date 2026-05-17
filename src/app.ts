@@ -720,13 +720,17 @@ app.get("/admin/visitor-stats", async (c) => {
   
   // 1, 2, 3: Optimize DB queries by running them concurrently
   const [totalRes, deviceRes, regionRes] = await Promise.all([
-    db.prepare("SELECT COUNT(*) as count FROM visitor_logs").get() as any,
-    db.prepare("SELECT device, COUNT(*) as count FROM visitor_logs GROUP BY device").all() as any,
+    db.prepare("SELECT COUNT(*) as count FROM (SELECT ip, ua, strftime('%Y-%m-%d %H', timestamp) FROM visitor_logs GROUP BY ip, ua, strftime('%Y-%m-%d %H', timestamp))").get() as any,
+    db.prepare("SELECT device, COUNT(*) as count FROM (SELECT device, ip, ua, strftime('%Y-%m-%d %H', timestamp) FROM visitor_logs GROUP BY device, ip, ua, strftime('%Y-%m-%d %H', timestamp)) GROUP BY device").all() as any,
     db.prepare(`
       SELECT 
         CASE WHEN city != '未知' THEN city ELSE country END as region,
         COUNT(*) as count 
-      FROM visitor_logs 
+      FROM (
+        SELECT city, country, ip, ua, strftime('%Y-%m-%d %H', timestamp) 
+        FROM visitor_logs 
+        GROUP BY city, country, ip, ua, strftime('%Y-%m-%d %H', timestamp)
+      ) 
       GROUP BY region 
       ORDER BY count DESC 
       LIMIT 10
@@ -1136,12 +1140,11 @@ app.get("/archiver/random-pair", async (c) => {
 
 export async function pickTarget(db: DatabaseAdapter) {
   const people = await db.prepare("SELECT name, raw_relationships FROM people").all() as any[];
-  const archivedNames = people.map(p => p.name);
-  const archivedSet = new Set(archivedNames);
+  const archivedSet = new Set(people.map(p => p.name.toLowerCase()));
   
   // Also exclude people in queue
   const queuedPeopleRows = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' OR status = 'processing'").all() as any[];
-  queuedPeopleRows.forEach(t => archivedSet.add(t.target_name));
+  queuedPeopleRows.forEach(t => archivedSet.add(t.target_name.toLowerCase()));
   
   const shuffle = (array: any[]) => {
     for (let i = array.length - 1; i > 0; i--) {
@@ -1155,7 +1158,7 @@ export async function pickTarget(db: DatabaseAdapter) {
   const poolUnarchived: string[] = [];
   for (const cat of CATEGORIES) {
       FIGURE_POOL[cat]?.forEach((n: string) => { 
-          if (!archivedSet.has(n)) poolUnarchived.push(n); 
+          if (!archivedSet.has(n.toLowerCase())) poolUnarchived.push(n); 
       });
   }
   const uniquePoolUnarchived = Array.from(new Set(poolUnarchived));
@@ -1170,7 +1173,7 @@ export async function pickTarget(db: DatabaseAdapter) {
   people.forEach(p => {
     try {
       JSON.parse(p.raw_relationships || "[]").forEach((r: any) => {
-        if (r.personName && !archivedSet.has(r.personName)) {
+        if (r.personName && !archivedSet.has(r.personName.toLowerCase())) {
            connectedUnarchived.add(r.personName);
         }
       });

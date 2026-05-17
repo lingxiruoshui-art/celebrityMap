@@ -111,30 +111,30 @@ export default function FeedbackModal({ onClose }: FeedbackModalProps) {
       <motion.div 
         initial={{ opacity: 0, scale: 0.95, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
-        className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl h-fit max-h-[90vh] md:h-[75vh] flex flex-col md:flex-row overflow-y-auto md:overflow-hidden relative"
+        className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl h-fit max-h-[90vh] flex flex-col md:flex-row overflow-y-auto md:overflow-hidden relative"
       >
         {/* Left Side: Support/Donation */}
         <div className="w-full md:w-[35%] shrink-0 bg-slate-50 p-6 sm:p-8 border-b md:border-b-0 md:border-r border-slate-100 flex flex-col items-center text-center">
-          <div className="w-16 h-16 sm:w-20 sm:h-20 bg-red-50 rounded-full flex items-center justify-center mb-4 md:mb-6 shrink-0">
+          <div className="w-12 h-12 sm:w-16 sm:h-16 bg-red-50 rounded-full flex items-center justify-center mb-4 md:mb-6 shrink-0">
             <Heart className="w-8 h-8 sm:w-10 sm:h-10 text-red-500 fill-red-500" />
           </div>
           <h2 className="text-2xl sm:text-3xl font-black text-slate-800 mb-2 md:mb-4 tracking-tight">支持我们的发展</h2>
-          <p className="text-[11px] sm:text-[13px] text-slate-500 leading-relaxed mb-4 md:mb-6">
+          <p className="text-[11px] sm:text-[13px] text-slate-500 leading-relaxed mb-4 md:mb-6 px-2">
             感谢您使用 <span className="font-bold text-slate-800">名人图谱</span>。本站算力与存储均自费承担。打赏将全额用于抵扣成本，助力项目长存。愿您平安喜乐！
           </p>
           
-          <div className="bg-white p-4 rounded-3xl shadow-xl shadow-slate-200/50 border border-slate-100 mb-4 md:mb-6 w-full max-w-[200px] md:max-w-[240px] shrink-0">
+          <div className="bg-white p-3 md:p-4 rounded-3xl shadow-xl shadow-slate-200/50 border border-slate-100 mb-4 md:mb-6 w-full max-w-[180px] md:max-w-[220px] shrink-0">
             <div className="aspect-square bg-slate-50 rounded-2xl flex flex-col items-center justify-center relative overflow-hidden group">
                <img 
                  src="/payment.jpg" 
                  alt="WeChat Pay"
-                 className="w-full h-full object-cover p-1 md:p-2"
+                 className="w-full h-full object-cover p-1 md:p-1.5"
                />
-               <div className="absolute inset-x-0 bottom-0 bg-indigo-600 py-1.5 text-[10px] font-black text-white uppercase tracking-widest translate-y-full md:group-hover:translate-y-0 transition-transform">
+               <div className="absolute inset-x-0 bottom-0 bg-indigo-600 py-1.5 text-[8px] font-black text-white uppercase tracking-widest translate-y-full md:group-hover:translate-y-0 transition-transform">
                  微信扫码赞助
                </div>
             </div>
-            <div className="mt-4 text-[10px] md:text-[11px] font-bold text-slate-400 tracking-tighter">微信扫码赞助</div>
+            <div className="mt-3 text-[10px] md:text-[11px] font-bold text-slate-400 tracking-tighter">微信扫码赞助</div>
           </div>
 
           <button 
@@ -144,7 +144,7 @@ export default function FeedbackModal({ onClose }: FeedbackModalProps) {
             保存收款码为图片
           </button>
           
-          <div className="mt-6 pt-2 text-[10px] font-medium text-slate-400 shrink-0">
+          <div className="mt-8 pb-4 text-[10px] font-medium text-slate-400 shrink-0">
             您的每一分心意，都是我们继续前行的动力
           </div>
         </div>

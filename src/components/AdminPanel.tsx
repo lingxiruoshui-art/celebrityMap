@@ -807,20 +807,18 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                       placeholder="搜索馆藏..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-48 lg:w-64 pl-9 pr-4 py-2 bg-slate-100 border border-transparent rounded-xl text-xs focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 outline-none transition-all placeholder:text-slate-400 group-hover:bg-slate-200/50"
+                      className="w-48 lg:w-64 pl-9 pr-10 py-2 bg-slate-100 border border-transparent rounded-xl text-xs focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 outline-none transition-all placeholder:text-slate-400 group-hover:bg-slate-200/50"
                     />
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
+                    {searchQuery && (
+                      <button 
+                        onClick={() => setSearchQuery("")}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 p-1 hover:bg-slate-200 rounded-full transition-all text-slate-400 hover:text-red-500"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
-                )}
-                {(activeTab === 'archive' || activeTab === 'stats') && (
-                  <button
-                    onClick={activeTab === 'archive' ? fetchArchive : fetchVisitorStats}
-                    disabled={isRefreshing}
-                    title={activeTab === 'archive' ? "刷新馆藏列表" : "刷新访问统计"}
-                    className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all disabled:opacity-50"
-                  >
-                    <RefreshCw className={`w-5 h-5 ${isRefreshing ? 'animate-spin' : ''}`} />
-                  </button>
                 )}
                 {activeTab === 'config' && (
                   <button
@@ -849,9 +847,17 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                     placeholder="搜索馆藏..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 outline-none transition-all shadow-sm"
+                    className="w-full pl-10 pr-10 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 outline-none transition-all shadow-sm"
                   />
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  {searchQuery && (
+                    <button 
+                      onClick={() => setSearchQuery("")}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 p-1 hover:bg-slate-100 rounded-full transition-all text-slate-400 hover:text-red-500"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1453,13 +1459,13 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                         <div className="p-2 bg-indigo-50 rounded-xl">
                           <UserPlus className="w-5 h-5 text-indigo-600" />
                         </div>
-                        <h4 className="font-bold text-slate-700">总访问量概览</h4>
+                        <h4 className="font-bold text-slate-700">累计访问人次</h4>
                       </div>
                       <div className="py-4">
                         <div className="text-5xl font-black text-slate-800 tracking-tighter mb-1">
                           {visitorStats.totalVisits.toLocaleString()}
                         </div>
-                        <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">全站累计请求</div>
+                        <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">排重会话数 (按小时)</div>
                       </div>
                     </div>
                   </div>
