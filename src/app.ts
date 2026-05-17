@@ -947,6 +947,10 @@ export async function pickTarget(db: DatabaseAdapter) {
   const archivedNames = people.map(p => p.name);
   const archivedSet = new Set(archivedNames);
   
+  // Also exclude people in queue
+  const queuedPeople = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' OR status = 'processing'").all() as any[];
+  queuedPeople.forEach(t => archivedSet.add(t.target_name));
+  
   const shuffle = (array: any[]) => array.sort(() => 0.5 - Math.random());
   
   // 1. Get available from pool
@@ -1541,23 +1545,38 @@ app.post("/explore/enqueue", async (c) => {
     const { targetName } = await c.req.json();
     if (!targetName) return c.json({ error: "Invalid target" }, 400);
     
+    // Check if already in people table
+    const existingPerson = await db.prepare("SELECT id FROM people WHERE name = ? COLLATE NOCASE").get(targetName) as any;
+    if (existingPerson) {
+        return c.json({ error: `[${targetName}] 已在档案库中，无需入队。`, alreadyExists: true }, 400);
+    }
+    
+    // Check if already in queue
+    const existingQueue = await db.prepare("SELECT id FROM explore_queue WHERE target_name = ? AND (status = 'pending' OR status = 'processing') COLLATE NOCASE").get(targetName) as any;
+    if (existingQueue) {
+        return c.json({ error: `[${targetName}] 已在队列中，请勿重复添加。`, alreadyQueued: true }, 400);
+    }
+
+    const queueCount = await db.prepare("SELECT COUNT(*) as count FROM explore_queue WHERE status = 'pending' OR status = 'processing'").get() as { count: number };
+    if (queueCount.count >= 20) {
+        return c.json({ error: "队列已满 (当前最大 20 人)，请等待 Worker 消化。" }, 400);
+    }
+    
     // Priority 1 triggers it ahead of background auto-tasks (priority 0)
     const res = await db.prepare("INSERT INTO explore_queue (target_name, priority) VALUES (?, 1) RETURNING id").get(targetName) as any;
     const taskId = res.id;
     
-    // Initialize state so UI sees the task is queued
+    // Initialize/Update state so UI sees the task is queued
+    // We update the state to the latest queued task, but we also keep the queue info in the response
     await updateExplorationState(db, {
         status: "running",
         subStatus: "queued",
         target: targetName,
         taskId: taskId,
-        steps: [{ msg: `[${targetName}] 已加入任务队列，等待 Worker 连接...`, status: "pending", startTime: Date.now() }],
-        logs: [],
-        path: null,
         error: null
     }, { msg: `任务已入队: ${targetName}`, type: "api" });
     
-    return c.json({ success: true, message: `已将 ${targetName} 加入探索队列！后台 Worker 会自动拉取执行。` });
+    return c.json({ success: true, message: `已将 ${targetName} 加入探索队列！后台 Worker 会自动拉取执行。`, taskId });
 });
 
 app.post("/explore/step", async (c) => {

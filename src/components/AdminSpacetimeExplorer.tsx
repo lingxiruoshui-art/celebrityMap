@@ -479,6 +479,10 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
         }
         
         pollStatusRef.current = true;
+        // Auto-pick next candidate after successful enqueue
+        setTimeout(() => {
+            handlePickRandomPair();
+        }, 500);
       } catch (err: any) {
         setError(err.message || "探索过程中发生未知错误。");
         setIsLoading(false);
@@ -650,8 +654,8 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                               onFocus={() => setIsSourceFocused(true)}
                               onBlur={() => setTimeout(() => setIsSourceFocused(false), 200)}
                               placeholder={isLoading ? (subStatus === 'queued' ? "任务正在队列排队..." : "时空节点解析中...") : "输入人名如：朱元璋"}
-                              disabled={isLoading}
-                              className={`w-full pl-8 pr-10 py-2 border rounded-xl text-[12px] focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 outline-none transition-all font-bold placeholder:text-slate-300 shadow-sm ${isLoading ? 'bg-indigo-50/50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200'}`}
+                              disabled={isPickingRandom}
+                              className={`w-full pl-8 pr-10 py-2 border rounded-xl text-[12px] focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 outline-none transition-all font-bold placeholder:text-slate-300 shadow-sm ${isPickingRandom ? 'bg-indigo-50/50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200'}`}
                               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                             />
                             {isLoading ? (
@@ -692,11 +696,11 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                           </div>
                           <button 
                             onClick={() => handleSearch()}
-                            disabled={isLoading || !source.trim() || !hasInitialCheckDone}
+                            disabled={isPickingRandom || !source.trim() || !hasInitialCheckDone || queue.length >= 20}
                             className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white h-[38px] px-4 text-[12px] font-black rounded-xl transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-1.5 active:scale-[0.98] group whitespace-nowrap"
                           >
-                            {isLoading || !hasInitialCheckDone ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 group-hover:animate-pulse" />}
-                            <span>{isLoading ? (subStatus === 'queued' ? "已入队列" : "正在解析...") : "开启探索"}</span>
+                            {isLoading || !hasInitialCheckDone || isPickingRandom ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 group-hover:animate-pulse" />}
+                            <span>{queue.length >= 20 ? "队列已满" : (isLoading ? (subStatus === 'queued' ? "继续加入" : "继续加入") : "开启探索")}</span>
                           </button>
                         </div>
                       </div>
@@ -863,7 +867,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                              <span className="animate-pulse">{subStatus === 'queued' ? `等待远端 Worker 承接任务 [${targetName || '...'}]` : "时空协议深度分析中..."}</span>
                           </div>
                           
-                          {subStatus === 'queued' && queue.length > 0 && (
+                          {queue.length > 0 && (
                             <div className="mt-2 space-y-1.5 border-t border-slate-100 pt-3">
                               <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
                                 <ChevronRight size={10} />

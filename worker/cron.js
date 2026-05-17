@@ -330,7 +330,7 @@ export default {
 
               // ============ PHASE: AI EXTRA ============
               await reportLog("分析成就并提取时空节点弱关联网络...", "api");
-              const extraPrompt = `人物：${targetName}\n${coreData.biography}\n\n找出3-5位与之有一定关联的老少咸宜真实世界历史名人作为关联拓扑节点。`;
+              const extraPrompt = `人物：${targetName}\n${coreData.biography}\n\n找出3-5位与之有一定关联的老少咸宜真实世界历史名人作为关联拓扑节点。要求返回合法的 JSON 格式。`;
               const extraSchema = {
                   type: "OBJECT",
                   properties: {
