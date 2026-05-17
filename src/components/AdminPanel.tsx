@@ -711,9 +711,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
   };
 
   const totalPages = Math.ceil(totalCount / itemsPerPage);
-  // Remove client-side slice:
-  // const startIndex = (currentPage - 1) * itemsPerPage;
-  // const paginatedPeopleResult = paginatedPeople.slice(startIndex, startIndex + itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 xl:p-8 backdrop-blur-md bg-slate-900/40 font-sans">
@@ -1031,7 +1029,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
               {totalPages > 1 && (
                 <div className="flex items-center justify-between bg-white px-4 py-3 rounded-2xl border border-slate-200 shadow-sm">
                   <div className="text-xs text-slate-500 font-medium">
-                    显示 {startIndex + 1} 到 {Math.min(startIndex + itemsPerPage, filteredAndSortedPeople.length)} 条，共 {filteredAndSortedPeople.length} 条
+                    显示 {startIndex + 1} 到 {Math.min(startIndex + itemsPerPage, totalCount)} 条，共 {totalCount} 条
                   </div>
                   <div className="flex gap-1">
                     <button
