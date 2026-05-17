@@ -104,12 +104,20 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
   const [activeTask, setActiveTask] = useState<{ title: string; isRunning: boolean; source?: 'list' | 'explorer'; target?: string } | null>(null);
   const [activeTaskLogs, setActiveTaskLogs] = useState<{type: 'info' | 'success' | 'error' | 'step' | 'ai-req' | 'ai-res' | 'heartbeat', msg: string, time: Date}[]>([]);
   const taskLogsContainerRef = useRef<HTMLDivElement>(null);
+  const isTaskLogsAtBottomRef = useRef(true);
 
   useEffect(() => {
-    if (taskLogsContainerRef.current) {
+    if (taskLogsContainerRef.current && isTaskLogsAtBottomRef.current) {
       taskLogsContainerRef.current.scrollTop = taskLogsContainerRef.current.scrollHeight;
     }
   }, [activeTaskLogs]);
+
+  const handleTaskLogsScroll = () => {
+    if (taskLogsContainerRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = taskLogsContainerRef.current;
+      isTaskLogsAtBottomRef.current = Math.abs(scrollHeight - clientHeight - scrollTop) < 50;
+    }
+  };
 
   // Confirm dialog state
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -887,6 +895,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                       </div>
                       <div 
                         ref={taskLogsContainerRef}
+                        onScroll={handleTaskLogsScroll}
                         className="max-h-56 overflow-y-auto custom-scrollbar flex flex-col gap-1 text-[11px] font-mono leading-relaxed pb-1 pr-2"
                       >
                         {activeTaskLogs.slice(-50).map((log, i) => (

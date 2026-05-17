@@ -160,6 +160,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const logsScrollRef = useRef<HTMLDivElement>(null);
+  const isLogsAtBottomRef = useRef(true);
   const pollStatusRef = useRef(false);
   const hasLoadedResultRef = useRef(false);
   const hasAutoExpandedRunningRef = useRef(false);
@@ -318,10 +319,10 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                                if (isAutoRefillEnabled && (!data.queue || data.queue.length === 0)) {
                                   // Server proactively handles auto-refill now, no need to trigger from client.
                                   // Just retrieve a random pair for the UI to display in the input box.
-                                  handlePickRandomPair(false);
+                                  handlePickRandomPair(false, true);
                                } else {
                                   // Still pre-fill the input box with a random source if empty
-                                  handlePickRandomPair(false);
+                                  handlePickRandomPair(false, true);
                                }
                            }
                        } else {
@@ -367,10 +368,17 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   }, [isAdmin]);
 
   useEffect(() => {
-    if (logsScrollRef.current) {
+    if (logsScrollRef.current && isLogsAtBottomRef.current) {
       logsScrollRef.current.scrollTop = logsScrollRef.current.scrollHeight;
     }
   }, [detailedLogs]);
+
+  const handleLogsScroll = () => {
+    if (logsScrollRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = logsScrollRef.current;
+      isLogsAtBottomRef.current = Math.abs(scrollHeight - clientHeight - scrollTop) < 50;
+    }
+  };
   const loadingIntervalRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -445,7 +453,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   const toggleAutoRefill = async (val: boolean) => {
     setIsAutoRefillEnabled(val);
     if (!val) {
-      handlePickRandomPair();
+      handlePickRandomPair(false, true);
     }
     if (!isAdmin) return;
     try {
@@ -463,7 +471,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
 
   const [isPickingRandom, setIsPickingRandom] = useState(false);
 
-  const handlePickRandomPair = async (autoEnqueue = false) => {
+  const handlePickRandomPair = async (autoEnqueue = false, onlyIfEmpty = false) => {
     // Basic guard: don't double-pick
     if (isPickingRandom) return;
     
@@ -494,8 +502,8 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
         });
         const data = await res.json() as any;
         if (data.isEmpty) {
-          setSource("");
-          setTarget("");
+          setSource(prev => (onlyIfEmpty && prev) ? prev : "");
+          setTarget(prev => (onlyIfEmpty && prev) ? prev : "");
           setError(
             <div className="flex flex-col gap-1 items-center">
               <p className="font-bold">✨ 所有预置及关联人物均已录入</p>
@@ -503,8 +511,8 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
             </div>
           );
         } else {
-          setSource(data.targetName || "");
-          setTarget("");
+          setSource(prev => (onlyIfEmpty && prev) ? prev : (data.targetName || ""));
+          setTarget(prev => (onlyIfEmpty && prev) ? prev : "");
           if (autoEnqueue && data.targetName) {
             handleEnqueue(data.targetName);
           }
@@ -513,8 +521,8 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
         const res = await fetch("/api/archiver/random-pair");
         const data = await res.json() as any;
         if (data.sourceName && data.targetName) {
-          setSource(data.sourceName);
-          setTarget(data.targetName);
+          setSource(prev => (onlyIfEmpty && prev) ? prev : data.sourceName);
+          setTarget(prev => (onlyIfEmpty && prev) ? prev : data.targetName);
         }
       }
     } catch (e) {
@@ -531,7 +539,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
       // Small delay to ensure any existing state is settled
       const timer = setTimeout(() => {
         if (!source && !isLoading && !pollStatusRef.current && !error && !isPickingRandom) {
-          handlePickRandomPair();
+          handlePickRandomPair(false, true);
         }
       }, 1000);
       return () => clearTimeout(timer);
@@ -704,7 +712,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
      }
      
      if (hasInitialCheckDone && isAdmin && !initialSource && !initialTarget && !source && !target && !isLoading && !pollStatusRef.current) {
-        handlePickRandomPair();
+        handlePickRandomPair(false, true);
      }
   }, [hasInitialCheckDone, isAdmin, autoStart, initialSource, initialTarget]);
 
@@ -1085,7 +1093,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                   </div>
                </div>
                
-               <div ref={logsScrollRef} className="flex-1 overflow-y-auto p-4 sm:p-5 custom-scrollbar font-mono text-[12px] space-y-3 select-text bg-[#fafbfc]">
+               <div ref={logsScrollRef} onScroll={handleLogsScroll} className="flex-1 overflow-y-auto p-4 sm:p-5 custom-scrollbar font-mono text-[12px] space-y-3 select-text bg-[#fafbfc]">
                   {detailedLogs.length === 0 && (
                     <div className="h-full flex items-center justify-center text-slate-300 italic flex-col gap-2 py-20">
                       <Loader2 className="w-6 h-6 animate-spin opacity-20" />
