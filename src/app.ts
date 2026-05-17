@@ -1317,9 +1317,11 @@ app.get("/explore/status", async (c) => {
   }
 
   data.isOwner = isAdmin;
+  
+  // Add queue info
+  const pendingTasks = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' ORDER BY priority DESC, created_at ASC").all() as any[];
+  data.queue = pendingTasks.map(t => t.target_name);
 
-  // We keep logs even for non-admins now for transparency in "Running Logs" UI, but we could strip sensitive data
-  // But since the request asks for ALL back-and-forth communication, we should show them.
   return c.json(data);
 });
 
@@ -1451,13 +1453,14 @@ app.get("/internal/next-task", async (c) => {
     if (task) {
         console.log(`[Internal] Task found in queue: ${task.target_name}`);
         await db.prepare("UPDATE explore_queue SET status = 'processing', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(task.id);
-        await updateExplorationState(db, { status: "running", taskId: task.id, target: task.target_name }, { msg: `Worker (ID: ${task.id}) 已承接任务 [${task.target_name}]`, type: "api" });
+        await updateExplorationState(db, { status: "running", subStatus: "processing", taskId: task.id, target: task.target_name }, { msg: `Worker (ID: ${task.id}) 已承接任务 [${task.target_name}]`, type: "api" });
         return c.json({ taskId: task.id, targetName: task.target_name, modelConfig });
     } else {
         const cronEnabled = await getConfig(db, "cron_interval_enabled", "false") === "true";
         console.log(`[Internal] No tasks in queue. Cron auto-explore: ${cronEnabled}`);
         if (!cronEnabled) return c.json({ error: "No pending tasks" }, 404);
         
+        await updateExplorationState(db, { status: "running", subStatus: "processing" }, { msg: "Worker 正准备自动探索新的人物...", type: "api" });
         return c.json({ taskId: Date.now(), targetName: "", modelConfig });
     }
 });
@@ -1545,9 +1548,10 @@ app.post("/explore/enqueue", async (c) => {
     // Initialize state so UI sees the task is queued
     await updateExplorationState(db, {
         status: "running",
+        subStatus: "queued",
         target: targetName,
         taskId: taskId,
-        steps: [{ msg: "探索任务已加入队列，等待 Worker 连接...", status: "pending", startTime: Date.now() }],
+        steps: [{ msg: `[${targetName}] 已加入任务队列，等待 Worker 连接...`, status: "pending", startTime: Date.now() }],
         logs: [],
         path: null,
         error: null

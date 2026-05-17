@@ -139,6 +139,9 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
       .slice(0, 8);
 
   const [path, setPath] = useState<Step[] | null>(null);
+  const [subStatus, setSubStatus] = useState<string | null>(null);
+  const [targetName, setTargetName] = useState<string | null>(null);
+  const [queue, setQueue] = useState<string[]>([]);
   const [newArrivals, setNewArrivals] = useState<string[]>([]);
   const [error, setError] = useState<React.ReactNode | string | null>(null);
   const [isCollapsed, setIsCollapsed] = useState(() => hideHeader ? false : true);
@@ -262,6 +265,9 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                    setLastActivityTime(data.lastHeartbeat);
                }
                if (data.status === 'running') {
+                   setSubStatus(data.subStatus || null);
+                   setTargetName(data.target || null);
+                   setQueue(data.queue || []);
                    if (allowAdminControls) {
                        if (data.target && source !== data.target) setSource(data.target);
                    } else {
@@ -690,7 +696,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                             className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white h-[38px] px-4 text-[12px] font-black rounded-xl transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-1.5 active:scale-[0.98] group whitespace-nowrap"
                           >
                             {isLoading || !hasInitialCheckDone ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 group-hover:animate-pulse" />}
-                            <span>{isLoading ? "正在编织..." : "开启探索"}</span>
+                            <span>{isLoading ? (subStatus === 'queued' ? "已入队列" : "正在编织...") : "开启探索"}</span>
                           </button>
                         </div>
                       </div>
@@ -802,7 +808,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                           className="flex-1 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-[12px] font-bold rounded-xl transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-1.5 active:scale-[0.98] group"
                         >
                           {isLoading || !hasInitialCheckDone ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 group-hover:animate-pulse" />}
-                          <span>{isLoading ? "正在编织..." : !hasInitialCheckDone ? "检查状态..." : "开启探索"}</span>
+                          <span>{isLoading ? (subStatus === 'queued' ? "任务已入队" : "正在编织...") : !hasInitialCheckDone ? "检查状态..." : "开启探索"}</span>
                         </button>
                       </div>
                     )}
@@ -851,9 +857,27 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                       </motion.div>
                     ))}
                     {isLoading && (
-                       <div className="flex items-center gap-2 text-indigo-500 text-[11px] font-bold mt-1 pl-4">
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          <span className="animate-pulse">实时连接中...</span>
+                       <div className="flex flex-col gap-2 mt-1 pl-4">
+                          <div className="flex items-center gap-2 text-indigo-500 text-[11px] font-bold">
+                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                             <span className="animate-pulse">{subStatus === 'queued' ? `等待远端 Worker 承接任务 [${targetName || '...'}]` : "时空协议深度分析中..."}</span>
+                          </div>
+                          
+                          {subStatus === 'queued' && queue.length > 0 && (
+                            <div className="mt-2 space-y-1.5 border-t border-slate-100 pt-3">
+                              <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                                <ChevronRight size={10} />
+                                即将开始的探索序列 ({queue.length})
+                              </div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {queue.map((name, idx) => (
+                                  <div key={idx} className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded-md text-[10px] font-bold border border-slate-200 shadow-sm animate-in fade-in slide-in-from-bottom-1 duration-300" style={{ animationDelay: `${idx * 50}ms` }}>
+                                    {name}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                        </div>
                     )}
                   </div>

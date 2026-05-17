@@ -197,29 +197,36 @@ export default {
               function safeParseJSON(text) {
                   if (!text) return null;
                   let cleanText = text.trim();
-                  // Strip markdown wrappers
-                  if (cleanText.startsWith('```')) {
-                      const match = cleanText.match(/```json\n([\s\S]*?)\n```/i) || cleanText.match(/```\n?([\s\S]*?)\n```/i);
-                      if (match) cleanText = match[1].trim();
-                      else cleanText = cleanText.replace(/```json/g, "").replace(/```/g, "").trim();
+                  
+                  // Extract code block if present (even if not at the start)
+                  const codeBlockMatch = cleanText.match(/```json\n?([\s\S]*?)\n?```/i) || cleanText.match(/```\n?([\s\S]*?)\n?```/i);
+                  if (codeBlockMatch) {
+                      cleanText = codeBlockMatch[1].trim();
+                  } else if (cleanText.includes('```')) {
+                      // fallback for weird markdown
+                      cleanText = cleanText.replace(/```json/g, "").replace(/```/g, "").trim();
                   }
                   
                   // Try to find the first '{' and last '}'
                   const firstBrace = cleanText.indexOf('{');
                   const lastBrace = cleanText.lastIndexOf('}');
-                  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+                  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace >= firstBrace) {
                       cleanText = cleanText.substring(firstBrace, lastBrace + 1);
                   }
 
                   try {
+                      // Replace escaped newlines if AI used actual newlines in strings
                       return JSON.parse(cleanText.replace(/\n/g, ' '));
                   } catch (e) {
-                      // One more try: remove everything outside brackets if it failed
+                      // One more try: remove control characters and retry
                       try {
-                          const sanited = cleanText.replace(/\r/g, '').replace(/\t/g, ' ');
-                          return JSON.parse(sanited);
+                          const sanitized = cleanText
+                            .replace(/[\u0000-\u001F\u007F-\u009F]/g, "") // remove control chars
+                            .replace(/\\n/g, "\\n") // ensure valid escapes
+                            .replace(/\r/g, "");
+                          return JSON.parse(sanitized);
                       } catch (e2) {
-                          console.error("JSON Parse failed even after cleaning:", e2);
+                          console.error("JSON Parse failed even after cleaning:", e2, "Text:", cleanText);
                           return null;
                       }
                   }
