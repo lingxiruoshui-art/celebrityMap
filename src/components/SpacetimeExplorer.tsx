@@ -29,7 +29,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [path, setPath] = useState<any[] | null>(null);
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(true);
   
   const [sourceOptions, setSourceOptions] = useState<string[]>([]);
   const [targetOptions, setTargetOptions] = useState<string[]>([]);

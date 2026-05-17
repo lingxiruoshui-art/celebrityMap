@@ -314,11 +314,13 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                                onRefreshArchive();
                            }
                            
-                           // Automatically pick next candidate if queue is empty and auto-refill is enabled
                            if (allowAdminControls || isAdmin) {
                                if (isAutoRefillEnabled && (!data.queue || data.queue.length === 0)) {
-                                  handlePickRandomPair(true);
+                                  // Server proactively handles auto-refill now, no need to trigger from client.
+                                  // Just retrieve a random pair for the UI to display in the input box.
+                                  handlePickRandomPair(false);
                                } else {
+                                  // Still pre-fill the input box with a random source if empty
                                   handlePickRandomPair(false);
                                }
                            }
@@ -968,10 +970,10 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                                     e.stopPropagation();
                                     handleDequeue(name);
                                   }}
-                                  className={`ml-0.5 ${name === targetName ? 'opacity-50 hover:opacity-100 hover:text-white' : 'opacity-0 group-hover:opacity-100 hover:text-red-500'} transition-opacity p-0.5`}
+                                  className={`ml-0.5 opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity p-0.5`}
                                   title="将此人从待入库队列中移除"
                                 >
-                                  {name === targetName ? <span className="text-[8px] animate-pulse">●</span> : <X size={10} strokeWidth={3} />}
+                                  <X size={10} strokeWidth={3} />
                                 </button>
                               ) : (
                                 name === targetName && <span className="text-[8px] animate-pulse">●</span>

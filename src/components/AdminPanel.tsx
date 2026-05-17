@@ -1,5 +1,5 @@
 import React, { useState, useEffect, FormEvent, useRef } from "react";
-import { X, RefreshCw, Trash2, Settings, Save, Sparkles, User, Search, Eye, UserPlus, ChevronLeft, ChevronRight, BookOpen, Zap, Info, Database, Library, Activity, PlusCircle, SlidersHorizontal, ShieldCheck } from "lucide-react";
+import { X, RefreshCw, Trash2, Settings, Save, Sparkles, User, Search, Eye, UserPlus, ChevronLeft, ChevronRight, BookOpen, Zap, Info, Database, Library, Activity, PlusCircle, SlidersHorizontal, ShieldCheck, Ban } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Person } from "../types";
 import AdminSpacetimeExplorer, { SpacetimeExplorerHandle } from "./AdminSpacetimeExplorer";
@@ -11,7 +11,7 @@ interface AdminPanelProps {
   onPreviewPerson?: (id: number, name?: string) => void;
 }
 
-type Tab = "archive" | "archive_plus" | "config";
+type Tab = "archive" | "archive_plus" | "config" | "stats" | "audit";
 type SortField = "created_at" | "views" | "name" | "category" | "connectionsCount";
 type SortOrder = "asc" | "desc";
 
@@ -68,6 +68,17 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
 
   // Config states
   const [config, setConfig] = useState<any>({});
+  const [visitorStats, setVisitorStats] = useState<{
+    totalVisits: number;
+    deviceStats: { Desktop: number; Mobile: number };
+    regions: { region: string; count: number }[];
+  } | null>(null);
+
+  // Audit states
+  const [feedbacks, setFeedbacks] = useState<any[]>([]);
+  const [bans, setBans] = useState<any[]>([]);
+  const [selectedFeedbackIds, setSelectedFeedbackIds] = useState<Set<number>>(new Set());
+  const [auditSubTab, setAuditSubTab] = useState<"feedback" | "bans">("feedback");
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [autoFetchLogs, setAutoFetchLogs] = useState<{type:string, msg:string}[]>([]);
   const logsContainerRef = useRef<HTMLDivElement>(null);
@@ -182,8 +193,76 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
   useEffect(() => {
     if (activeTab === 'archive') {
       fetchArchive();
+    } else if (activeTab === 'stats') {
+      fetchVisitorStats();
+    } else if (activeTab === 'audit') {
+      fetchAuditData();
     }
   }, [activeTab]);
+
+  const fetchAuditData = async () => {
+    try {
+      const [fRes, bRes] = await Promise.all([
+        fetch("/api/admin/feedback", { headers: adminHeaders }),
+        fetch("/api/admin/bans", { headers: adminHeaders })
+      ]);
+      if (fRes.ok) setFeedbacks(await fRes.json());
+      if (bRes.ok) setBans(await bRes.json());
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const deleteFeedbacks = async () => {
+    if (selectedFeedbackIds.size === 0) return;
+    setIsActionLoading(true);
+    try {
+      const res = await fetch("/api/admin/feedback", {
+        method: "DELETE",
+        headers: { ...adminHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: Array.from(selectedFeedbackIds) })
+      });
+      if (res.ok) {
+        showNotification("success", `已删除 ${selectedFeedbackIds.size} 条评论`);
+        setSelectedFeedbackIds(new Set());
+        fetchAuditData();
+      }
+    } catch (e) {
+      showNotification("error", "删除失败");
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const removeBan = async (ip: string) => {
+    setIsActionLoading(true);
+    try {
+      const res = await fetch(`/api/admin/bans/${ip}`, {
+        method: "DELETE",
+        headers: adminHeaders
+      });
+      if (res.ok) {
+        showNotification("success", "已解封 IP: " + ip);
+        fetchAuditData();
+      }
+    } catch (e) {
+      showNotification("error", "解封失败");
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const fetchVisitorStats = async () => {
+    try {
+      const res = await fetch("/api/admin/visitor-stats", { headers: adminHeaders });
+      if (res.ok) {
+        const data = await res.json();
+        setVisitorStats(data);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   useEffect(() => {
     if (adminPassword) {
@@ -646,29 +725,43 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
              </button>
           </div>
           
-          <nav className="p-2 md:p-3 flex flex-row md:flex-col gap-1.5 space-y-0 md:space-y-1.5 overflow-x-auto custom-scrollbar shrink-0 bg-white md:bg-transparent">
+          <nav className="p-2 md:p-3 flex flex-row md:flex-col gap-1.5 space-y-0 md:space-y-1.5 overflow-x-auto justify-center md:justify-start custom-scrollbar shrink-0 bg-white md:bg-transparent">
             <button 
               onClick={() => setActiveTab("archive_plus")}
-              className={`flex items-center justify-between gap-2 md:gap-2.5 px-3 py-2 md:px-3 text-xs md:text-[13px] font-bold transition-all whitespace-nowrap rounded-lg md:rounded-xl ${activeTab === 'archive_plus' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100' : 'text-slate-500 hover:bg-white hover:text-slate-800 border border-transparent hover:border-slate-200'}`}
+              className={`flex items-center justify-between gap-2 md:gap-2.5 px-4 py-2.5 md:px-3 md:py-2 text-xs md:text-[13px] font-bold transition-all whitespace-nowrap rounded-lg md:rounded-xl ${activeTab === 'archive_plus' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100' : 'text-slate-500 hover:bg-white hover:text-slate-800 border border-transparent hover:border-slate-200'}`}
             >
               <div className="flex items-center gap-2">
-                <PlusCircle className="w-3.5 h-3.5 shrink-0" />
-                <span>时空入库</span>
+                <PlusCircle className="w-5 h-5 md:w-3.5 md:h-3.5 shrink-0" />
+                <span className="hidden md:inline">时空入库</span>
               </div>
             </button>
             <button 
               onClick={() => setActiveTab("archive")}
-              className={`flex items-center gap-2 md:gap-2.5 px-3 py-2 md:px-3 text-xs md:text-[13px] font-bold transition-all whitespace-nowrap rounded-lg md:rounded-xl ${activeTab === 'archive' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100' : 'text-slate-500 hover:bg-white hover:text-slate-800 border border-transparent hover:border-slate-200'}`}
+              className={`flex items-center gap-2 md:gap-2.5 px-4 py-2.5 md:px-3 md:py-2 text-xs md:text-[13px] font-bold transition-all whitespace-nowrap rounded-lg md:rounded-xl ${activeTab === 'archive' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100' : 'text-slate-500 hover:bg-white hover:text-slate-800 border border-transparent hover:border-slate-200'}`}
             >
-              <Library className="w-3.5 h-3.5 shrink-0" />
-              <span>馆藏管理</span>
+              <Library className="w-5 h-5 md:w-3.5 md:h-3.5 shrink-0" />
+              <span className="hidden md:inline">馆藏管理</span>
             </button>
             <button 
               onClick={() => setActiveTab("config")}
-              className={`flex items-center gap-2 md:gap-2.5 px-3 py-2 md:px-3 text-xs md:text-[13px] font-bold transition-all whitespace-nowrap rounded-lg md:rounded-xl ${activeTab === 'config' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100' : 'text-slate-500 hover:bg-white hover:text-slate-800 border border-transparent hover:border-slate-200'}`}
+              className={`flex items-center gap-2 md:gap-2.5 px-4 py-2.5 md:px-3 md:py-2 text-xs md:text-[13px] font-bold transition-all whitespace-nowrap rounded-lg md:rounded-xl ${activeTab === 'config' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100' : 'text-slate-500 hover:bg-white hover:text-slate-800 border border-transparent hover:border-slate-200'}`}
             >
-              <SlidersHorizontal className="w-3.5 h-3.5 shrink-0" />
-              <span>系统配置</span>
+              <SlidersHorizontal className="w-5 h-5 md:w-3.5 md:h-3.5 shrink-0" />
+              <span className="hidden md:inline">系统配置</span>
+            </button>
+            <button 
+              onClick={() => setActiveTab("stats")}
+              className={`flex items-center gap-2 md:gap-2.5 px-4 py-2.5 md:px-3 md:py-2 text-xs md:text-[13px] font-bold transition-all whitespace-nowrap rounded-lg md:rounded-xl ${activeTab === 'stats' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100' : 'text-slate-500 hover:bg-white hover:text-slate-800 border border-transparent hover:border-slate-200'}`}
+            >
+              <Activity className="w-5 h-5 md:w-3.5 md:h-3.5 shrink-0" />
+              <span className="hidden md:inline">访问统计</span>
+            </button>
+            <button 
+              onClick={() => setActiveTab("audit")}
+              className={`flex items-center gap-2 md:gap-2.5 px-4 py-2.5 md:px-3 md:py-2 text-xs md:text-[13px] font-bold transition-all whitespace-nowrap rounded-lg md:rounded-xl ${activeTab === 'audit' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100' : 'text-slate-500 hover:bg-white hover:text-slate-800 border border-transparent hover:border-slate-200'}`}
+            >
+              <ShieldCheck className="w-5 h-5 md:w-3.5 md:h-3.5 shrink-0" />
+              <span className="hidden md:inline">内容审核</span>
             </button>
           </nav>
         </div>
@@ -701,13 +794,14 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                 {activeTab === 'archive_plus' && <PlusCircle className="w-6 h-6 text-indigo-600" />}
                 {activeTab === 'archive' && <Library className="w-6 h-6 text-indigo-600" />}
                 {activeTab === 'config' && <SlidersHorizontal className="w-6 h-6 text-indigo-600" />}
+                {activeTab === 'stats' && <Activity className="w-6 h-6 text-indigo-600" />}
                 <h3 className="font-bold text-lg text-slate-800 tracking-tight">
-                  {activeTab === 'archive_plus' ? '时空入库' : activeTab === 'archive' ? '馆藏管理' : '系统配置'}
+                  {activeTab === 'archive_plus' ? '时空入库' : activeTab === 'archive' ? '馆藏管理' : activeTab === 'config' ? '系统配置' : '访问统计'}
                 </h3>
               </div>
               <div className="flex items-center gap-2 sm:gap-6">
-                {activeTab === 'archive' && (
-                  <div className="relative group shrink-0 hidden sm:block">
+                {(activeTab === 'archive' || activeTab === 'stats') && (
+                  <div className={`relative group shrink-0 ${activeTab === 'stats' ? 'hidden' : 'hidden sm:block'}`}>
                     <input 
                       type="text"
                       placeholder="搜索馆藏..."
@@ -718,11 +812,11 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
                   </div>
                 )}
-                {activeTab === 'archive' && (
+                {(activeTab === 'archive' || activeTab === 'stats') && (
                   <button
-                    onClick={fetchArchive}
+                    onClick={activeTab === 'archive' ? fetchArchive : fetchVisitorStats}
                     disabled={isRefreshing}
-                    title="刷新馆藏列表"
+                    title={activeTab === 'archive' ? "刷新馆藏列表" : "刷新访问统计"}
                     className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all disabled:opacity-50"
                   >
                     <RefreshCw className={`w-5 h-5 ${isRefreshing ? 'animate-spin' : ''}`} />
@@ -1108,6 +1202,300 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                 </div>
               </div>
 
+            </div>
+            <div className={activeTab === "audit" ? "space-y-6 animate-in fade-in duration-500 pb-8 h-full" : "hidden"}>
+              <div className="flex gap-2 p-1 bg-slate-100 w-fit rounded-xl mb-4">
+                <button 
+                  onClick={() => setAuditSubTab("feedback")}
+                  className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${auditSubTab === 'feedback' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                >
+                  评论管理
+                </button>
+                <button 
+                  onClick={() => setAuditSubTab("bans")}
+                  className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${auditSubTab === 'bans' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                >
+                  封禁列表
+                </button>
+              </div>
+
+              {auditSubTab === 'feedback' && (
+                <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm flex flex-col h-[600px]">
+                  <div className="p-4 bg-slate-50/50 border-b border-slate-200 flex items-center justify-between">
+                    <div className="text-xs font-bold text-slate-500">已选中 {selectedFeedbackIds.size} 条评论</div>
+                    {selectedFeedbackIds.size > 0 && (
+                      <button 
+                        onClick={deleteFeedbacks}
+                        disabled={isActionLoading}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-xl text-xs font-bold transition-all"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        批量删除
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex-1 overflow-y-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead className="sticky top-0 bg-white z-10">
+                        <tr className="border-b border-slate-100">
+                          <th className="p-4 w-10">
+                            <input 
+                              type="checkbox" 
+                              checked={feedbacks.length > 0 && selectedFeedbackIds.size === feedbacks.length}
+                              onChange={(e) => {
+                                if (e.target.checked) setSelectedFeedbackIds(new Set(feedbacks.map(f => f.id)));
+                                else setSelectedFeedbackIds(new Set());
+                              }}
+                              className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                            />
+                          </th>
+                          <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">IP / 位置</th>
+                          <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">内容</th>
+                          <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">时间</th>
+                          <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">操作</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-50">
+                        {feedbacks.length === 0 ? (
+                          <tr><td colSpan={5} className="p-10 text-center text-slate-400 italic">暂无评论数据</td></tr>
+                        ) : (
+                          feedbacks.map((f) => (
+                            <tr key={f.id} className="hover:bg-slate-50 group transition-colors">
+                              <td className="p-4">
+                                <input 
+                                  type="checkbox" 
+                                  checked={selectedFeedbackIds.has(f.id)}
+                                  onChange={() => {
+                                    const next = new Set(selectedFeedbackIds);
+                                    if (next.has(f.id)) next.delete(f.id);
+                                    else next.add(f.id);
+                                    setSelectedFeedbackIds(next);
+                                  }}
+                                  className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                />
+                              </td>
+                              <td className="p-4">
+                                <div className="flex flex-col">
+                                  <span className="text-xs font-bold text-slate-700 font-mono">{f.ip}</span>
+                                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">{f.city}, {f.country}</span>
+                                </div>
+                              </td>
+                              <td className="p-4">
+                                <p className="text-sm text-slate-600 line-clamp-2 max-w-md">{f.content}</p>
+                              </td>
+                              <td className="p-4 text-xs text-slate-400 font-mono">
+                                {(() => {
+                                  const dateStr = f.created_at;
+                                  if (!dateStr) return "-";
+                                  const utcDate = new Date(dateStr.replace(" ", "T") + "Z");
+                                  return utcDate.toLocaleString('zh-CN', { 
+                                    timeZone: 'Asia/Shanghai', 
+                                    year: 'numeric', 
+                                    month: '2-digit', 
+                                    day: '2-digit', 
+                                    hour: '2-digit', 
+                                    minute: '2-digit', 
+                                    second: '2-digit', 
+                                    hour12: false 
+                                  });
+                                })()}
+                              </td>
+                              <td className="p-4 text-right">
+                                <button 
+                                  onClick={() => {
+                                    setConfirmData({
+                                      title: "封禁 IP",
+                                      message: `确定要永久封禁 IP [${f.ip}] 吗？该用户将无法再提交评论。`,
+                                      isDanger: true,
+                                      onConfirm: async () => {
+                                        setIsActionLoading(true);
+                                        try {
+                                          const res = await fetch("/api/admin/bans", {
+                                            method: "POST",
+                                            headers: { ...adminHeaders, "Content-Type": "application/json" },
+                                            body: JSON.stringify({ ip: f.ip, reason: "From Feedback Audit" })
+                                          });
+                                          if (res.ok) {
+                                            showNotification("success", "已封禁 IP: " + f.ip);
+                                            fetchAuditData();
+                                          } else {
+                                            showNotification("error", "封禁失败");
+                                          }
+                                        } catch (e) {
+                                          showNotification("error", "封禁失败");
+                                        } finally {
+                                          setIsActionLoading(false);
+                                          setConfirmOpen(false);
+                                        }
+                                      }
+                                    });
+                                    setConfirmOpen(true);
+                                  }}
+                                  className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                                  title="封禁此 IP"
+                                >
+                                  <Ban className="w-4 h-4" />
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {auditSubTab === 'bans' && (
+                <div className="space-y-6">
+                  <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-100 bg-slate-50/50">
+                          <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">封禁 IP</th>
+                          <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">原因</th>
+                          <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">封禁时间</th>
+                          <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">操作</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-50">
+                        {bans.length === 0 ? (
+                          <tr><td colSpan={4} className="p-10 text-center text-slate-400 italic">封禁名单为空</td></tr>
+                        ) : (
+                          bans.map((b) => (
+                            <tr key={b.ip} className="hover:bg-slate-50 group transition-colors text-sm">
+                              <td className="p-4 font-mono font-bold text-slate-700">{b.ip}</td>
+                              <td className="p-4 text-slate-500">{b.reason || '-'}</td>
+                              <td className="p-4 text-xs text-slate-400 font-mono">
+                                {(() => {
+                                  const dateStr = b.created_at;
+                                  if (!dateStr) return "-";
+                                  const utcDate = new Date(dateStr.replace(" ", "T") + "Z");
+                                  return utcDate.toLocaleString('zh-CN', { 
+                                    timeZone: 'Asia/Shanghai', 
+                                    year: 'numeric', 
+                                    month: '2-digit', 
+                                    day: '2-digit', 
+                                    hour: '2-digit', 
+                                    minute: '2-digit', 
+                                    second: '2-digit', 
+                                    hour12: false 
+                                  });
+                                })()}
+                              </td>
+                              <td className="p-4 text-right">
+                                <button 
+                                  onClick={() => removeBan(b.ip)}
+                                  disabled={isActionLoading}
+                                  className="px-3 py-1.5 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-xl text-xs font-bold transition-all"
+                                >
+                                  解除封禁
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className={activeTab === "stats" ? "space-y-6 animate-in fade-in duration-500 pb-8 h-full" : "hidden"}>
+              {!visitorStats ? (
+                <div className="flex flex-col items-center justify-center py-20 gap-4">
+                  <RefreshCw className="w-10 h-10 text-indigo-200 animate-spin" />
+                  <p className="text-slate-400 text-sm font-medium">正在读取时空访问链路...</p>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {/* Top Stats */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-sm">
+                      <div className="flex items-center gap-3 mb-4">
+                        <div className="p-2 bg-indigo-50 rounded-xl">
+                          <Library className="w-5 h-5 text-indigo-600" />
+                        </div>
+                        <h4 className="font-bold text-slate-700">设备分布</h4>
+                      </div>
+                      <div className="space-y-4">
+                        <div>
+                          <div className="flex justify-between text-xs font-bold mb-1.5">
+                            <span className="text-slate-600">Desktop</span>
+                            <span className="text-slate-400">{visitorStats.totalVisits ? ((visitorStats.deviceStats.Desktop / visitorStats.totalVisits) * 100).toFixed(1) : 0}%</span>
+                          </div>
+                          <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                            <motion.div 
+                              initial={{ width: 0 }}
+                              animate={{ width: `${visitorStats.totalVisits ? (visitorStats.deviceStats.Desktop / visitorStats.totalVisits) * 100 : 0}%` }}
+                              className="h-full bg-emerald-400 rounded-full"
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <div className="flex justify-between text-xs font-bold mb-1.5">
+                            <span className="text-slate-600">Mobile</span>
+                            <span className="text-slate-400">{visitorStats.totalVisits ? ((visitorStats.deviceStats.Mobile / visitorStats.totalVisits) * 100).toFixed(1) : 0}%</span>
+                          </div>
+                          <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                            <motion.div 
+                              initial={{ width: 0 }}
+                              animate={{ width: `${visitorStats.totalVisits ? (visitorStats.deviceStats.Mobile / visitorStats.totalVisits) * 100 : 0}%` }}
+                              className="h-full bg-emerald-400 rounded-full"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-sm flex flex-col justify-center items-center text-center">
+                       <div className="flex items-center gap-3 w-full mb-2">
+                        <div className="p-2 bg-indigo-50 rounded-xl">
+                          <UserPlus className="w-5 h-5 text-indigo-600" />
+                        </div>
+                        <h4 className="font-bold text-slate-700">总访问量概览</h4>
+                      </div>
+                      <div className="py-4">
+                        <div className="text-5xl font-black text-slate-800 tracking-tighter mb-1">
+                          {visitorStats.totalVisits.toLocaleString()}
+                        </div>
+                        <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">全站累计请求</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Regions Table */}
+                  <div className="bg-white border border-slate-100 rounded-3xl overflow-hidden shadow-sm">
+                    <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+                      <h4 className="font-bold text-slate-800">全球客源地</h4>
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">展示 {visitorStats.regions.length} 个地区</span>
+                    </div>
+                    <div className="p-2 sm:p-5 h-[340px] md:h-[400px] overflow-y-auto">
+                      <div className="space-y-4 mt-2">
+                        {visitorStats.regions.map((reg, idx) => (
+                          <div key={idx} className="flex items-center gap-3 sm:gap-4 group">
+                            <div className="w-7 h-7 shrink-0 bg-slate-50 flex items-center justify-center rounded-lg text-[10px] font-black text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors">
+                              {idx + 1}
+                            </div>
+                            <div className="w-16 sm:w-24 shrink-0 text-xs sm:text-sm font-bold text-slate-700 truncate">{reg.region}</div>
+                            <div className="flex-1 h-2 sm:h-2 bg-slate-50 rounded-full overflow-hidden relative">
+                              <motion.div 
+                                initial={{ width: 0 }}
+                                animate={{ width: `${(reg.count / Math.max(...visitorStats.regions.map(r => r.count))) * 100}%` }}
+                                className="h-full bg-indigo-500/80 rounded-full"
+                              />
+                            </div>
+                            <div className="w-32 shrink-0 flex items-center justify-end gap-2 text-[10px] sm:text-xs">
+                              <span className="text-slate-400 font-bold">占比 {(reg.count / visitorStats.totalVisits * 100).toFixed(1)}%</span>
+                              <span className="text-slate-800 font-black w-8 text-right">{reg.count}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

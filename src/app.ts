@@ -20,6 +20,40 @@ const root = new Hono<{
 
 export const app = root.basePath('/api');
 
+app.use('*', async (c, next) => {
+  const path = c.req.path;
+  const db = await getDb(c);
+  const ip = c.req.header('cf-connecting-ip') || c.req.header('x-real-ip') || '';
+
+  // Check for banned IP
+  if (ip) {
+    const isBanned = await db.prepare("SELECT 1 FROM banned_ips WHERE ip = ?").get(ip);
+    if (isBanned) {
+      return c.json({ error: "Access denied from your IP address" }, 403);
+    }
+  }
+
+  // Skip static assets and internal calls to keep logs relevant
+  if (path.includes('/portraits/') || path.includes('/internal/') || path.includes('/health')) {
+    return await next();
+  }
+
+  const ua = c.req.header('user-agent') || '';
+  const device = /mobile|android|iphone|ipad/i.test(ua) ? 'Mobile' : 'Desktop';
+  
+  // Cloudflare specific geolocation
+  const cf = (c.req.raw as any).cf;
+  const city = cf?.city || '未知';
+  const country = cf?.country || '未知';
+  
+  // Async log (non-blocking)
+  db.prepare("INSERT INTO visitor_logs (ip, ua, device, city, country, path) VALUES (?, ?, ?, ?, ?, ?)")
+    .run(ip, ua, device, city, country, path)
+    .catch(() => {});
+    
+  await next();
+});
+
 app.onError((err, c) => {
   console.error("Hono error:", err);
   return c.json({ error: err.message || "Internal Server Error", stack: typeof process !== 'undefined' && process.env.NODE_ENV === 'development' ? err.stack : undefined }, 500);
@@ -88,6 +122,29 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
       `CREATE TABLE IF NOT EXISTS config (
         key TEXT PRIMARY KEY,
         value TEXT
+      )`,
+      `CREATE TABLE IF NOT EXISTS visitor_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ip TEXT,
+        ua TEXT,
+        device TEXT,
+        city TEXT,
+        country TEXT,
+        path TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS feedback (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        content TEXT NOT NULL,
+        ip TEXT,
+        city TEXT,
+        country TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS banned_ips (
+        ip TEXT PRIMARY KEY,
+        reason TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )`
     ];
     for (const q of initQueries) {
@@ -398,6 +455,29 @@ export async function addRelationship(db: DatabaseAdapter, p1: number, p2: numbe
   } catch(e) {}
 }
 
+app.get("/sitemap.xml", async (c) => {
+  const db = await getDb(c);
+  // Get main URL from request
+  const urlObj = new URL(c.req.url);
+  const baseUrl = `${urlObj.protocol}//${urlObj.host}`;
+  
+  // Just creating a basic index sitemap to help index the entry point
+  const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>${baseUrl}/</loc>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <!-- As this is an SPA, the main discovery happens at / -->
+</urlset>`;
+
+  return c.text(sitemap, 200, {
+    "Content-Type": "application/xml",
+    "Cache-Control": "public, max-age=86400"
+  });
+});
+
 app.get("/health", (c) => c.json({ status: "ok" }));
 
 async function fetchAndStoreImage(c: any, filename: string) {
@@ -548,6 +628,105 @@ app.get("/admin/people", async (c) => {
   const db = await getDb(c);
   const people = await db.prepare("SELECT id, name, category, created_at FROM people ORDER BY created_at DESC").all();
   return c.json(people);
+});
+
+app.get("/feedback", async (c) => {
+  const db = await getDb(c);
+  const feedback = await db.prepare("SELECT id, content, city, country, ip, created_at FROM feedback ORDER BY created_at DESC LIMIT 100").all();
+  return c.json(feedback);
+});
+
+app.post("/feedback", async (c) => {
+  const { content } = await c.req.json();
+  if (!content || content.trim().length < 2) return c.json({ error: "内容太短了" }, 400);
+  
+  const db = await getDb(c);
+  const ip = c.req.header('cf-connecting-ip') || c.req.header('x-real-ip') || '';
+  
+  // Rate limit check: max 2 feedbacks per day per IP
+  const countRes = await db.prepare("SELECT COUNT(*) as count FROM feedback WHERE ip = ? AND created_at > datetime('now', '-1 day')").get(ip) as any;
+  if (countRes?.count >= 2) return c.json({ error: "每人每天限发2条，请明天再来吧" }, 429);
+
+  const cf = (c.req.raw as any).cf;
+  const city = cf?.city || '未知';
+  const country = cf?.country || '未知';
+
+  await db.prepare("INSERT INTO feedback (content, ip, city, country) VALUES (?, ?, ?, ?)").run(content.trim(), ip, city, country);
+  return c.json({ success: true });
+});
+
+app.get("/admin/feedback", async (c) => {
+  if (c.req.header("x-admin-password") !== getAdminPassword(c)) return c.json({ error: "Unauthorized" }, 401);
+  const db = await getDb(c);
+  const feedback = await db.prepare("SELECT * FROM feedback ORDER BY created_at DESC").all();
+  return c.json(feedback);
+});
+
+app.delete("/admin/feedback", async (c) => {
+  if (c.req.header("x-admin-password") !== getAdminPassword(c)) return c.json({ error: "Unauthorized" }, 401);
+  const { ids } = await c.req.json();
+  const db = await getDb(c);
+  if (Array.isArray(ids) && ids.length > 0) {
+    const placeholders = ids.map(() => '?').join(',');
+    await db.prepare(`DELETE FROM feedback WHERE id IN (${placeholders})`).run(...ids);
+  }
+  return c.json({ success: true });
+});
+
+app.get("/admin/bans", async (c) => {
+  if (c.req.header("x-admin-password") !== getAdminPassword(c)) return c.json({ error: "Unauthorized" }, 401);
+  const db = await getDb(c);
+  const bans = await db.prepare("SELECT * FROM banned_ips ORDER BY created_at DESC").all();
+  return c.json(bans);
+});
+
+app.post("/admin/bans", async (c) => {
+  if (c.req.header("x-admin-password") !== getAdminPassword(c)) return c.json({ error: "Unauthorized" }, 401);
+  const { ip, reason } = await c.req.json();
+  const db = await getDb(c);
+  await db.prepare("INSERT OR REPLACE INTO banned_ips (ip, reason) VALUES (?, ?)").run(ip, reason);
+  return c.json({ success: true });
+});
+
+app.delete("/admin/bans/:ip", async (c) => {
+  if (c.req.header("x-admin-password") !== getAdminPassword(c)) return c.json({ error: "Unauthorized" }, 401);
+  const ip = c.req.param("ip");
+  const db = await getDb(c);
+  await db.prepare("DELETE FROM banned_ips WHERE ip = ?").run(ip);
+  return c.json({ success: true });
+});
+app.get("/admin/visitor-stats", async (c) => {
+  if (c.req.header("x-admin-password") !== getAdminPassword(c)) return c.json({ error: "Unauthorized" }, 401);
+  const db = await getDb(c);
+  
+  // 1. Total visits (Total Request)
+  const totalRes = await db.prepare("SELECT COUNT(*) as count FROM visitor_logs").get() as any;
+  const totalVisits = totalRes?.count || 0;
+
+  // 2. Device distribution
+  const deviceRes = await db.prepare("SELECT device, COUNT(*) as count FROM visitor_logs GROUP BY device").all() as any[];
+  const deviceStats = {
+    Mobile: deviceRes.find(r => r.device === 'Mobile')?.count || 0,
+    Desktop: deviceRes.find(r => r.device === 'Desktop')?.count || 0,
+  };
+
+  // 3. Global visitor sources (Region/City)
+  // We prioritize City if available, else Country, for more granularity like "Shanghai"
+  const regionRes = await db.prepare(`
+    SELECT 
+      CASE WHEN city != '未知' THEN city ELSE country END as region,
+      COUNT(*) as count 
+    FROM visitor_logs 
+    GROUP BY region 
+    ORDER BY count DESC 
+    LIMIT 20
+  `).all() as any[];
+
+  return c.json({
+    totalVisits,
+    deviceStats,
+    regions: regionRes
+  });
 });
 
 app.delete("/admin/people/:id", async (c) => {
@@ -1175,8 +1354,12 @@ app.get("/explore/status", async (c) => {
           // Check if already in processing to avoid picking the same thing
           const inProcessing = await db.prepare("SELECT COUNT(*) as count FROM explore_queue WHERE target_name = ? AND status = 'processing'").get(targetName) as any;
           if (inProcessing.count === 0) {
-              await db.prepare("INSERT INTO explore_queue (target_name, priority) VALUES (?, 1)").run(targetName);
-              // Refresh pending tasks after refill
+              // Prevent concurrent polling race conditions where multiple requests yielded during pickTarget
+              const doubleCheck = (await db.prepare("SELECT COUNT(*) as count FROM explore_queue WHERE status = 'pending'").get() as any).count;
+              if (doubleCheck === 0) {
+                  await db.prepare("INSERT INTO explore_queue (target_name, priority) VALUES (?, 1)").run(targetName);
+              }
+              // Refresh pending tasks after refill (whether we inserted or another request inserted)
               pendingTasks = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' ORDER BY priority DESC, created_at ASC").all() as any[];
           }
       }

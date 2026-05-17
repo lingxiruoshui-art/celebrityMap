@@ -8,6 +8,7 @@ import {
   X,
   Search,
   User,
+  Heart,
   ChevronRight,
   ChevronLeft,
   CircleDashed,
@@ -20,6 +21,7 @@ import { Person, ArchiveData } from "./types";
 import NetworkGraph from "./components/NetworkGraph";
 import AdminPanel from "./components/AdminPanel";
 import SpacetimeExplorer from "./components/SpacetimeExplorer";
+import FeedbackModal from "./components/FeedbackModal";
 
 import AnimatedLogo from "./components/AnimatedLogo";
 
@@ -40,6 +42,7 @@ export default function App() {
     { name: string; type?: string }[] | null
   >(null);
   const [pendingSelectName, setPendingSelectName] = useState<string | null>(null);
+  const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
 
   useEffect(() => {
     if (pendingSelectName && data.people.length > 0) {
@@ -196,11 +199,11 @@ export default function App() {
       {/* Header: Navigation & System Status */}
       <header className="h-[50px] sm:h-16 shrink-0 border-b border-slate-200/50 bg-white/60 backdrop-blur-xl z-[70] shadow-sm transition-all duration-500">
         <div className="max-w-[1800px] w-full mx-auto h-full px-3 sm:px-6 flex items-center justify-between">
-          <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-shrink-0">
+          <div className="flex items-center gap-4 sm:gap-8 min-w-0 flex-shrink-0">
             <div className="scale-110 sm:scale-150 origin-left flex shrink-0">
               <AnimatedLogo />
             </div>
-            <div className="flex flex-col w-[76px] sm:w-[92px]">
+            <div className="flex flex-col w-[80px] sm:w-[100px]">
               <h1 className="text-[17px] sm:text-xl font-bold text-slate-800 drop-shadow-sm leading-none sm:leading-tight flex justify-between">
                 <span>名</span><span>人</span><span>图</span><span>谱</span>
               </h1>
@@ -213,6 +216,13 @@ export default function App() {
             <div className="flex text-[10px] sm:text-sm px-2.5 sm:px-4 py-1 sm:py-1.5 rounded-lg sm:rounded-xl border border-slate-200 text-indigo-600 font-medium bg-white/80 shadow-sm whitespace-nowrap items-center justify-center">
               共收录：{data.people.length} 位
             </div>
+            <button
+               onClick={() => setIsFeedbackOpen(true)}
+               className="p-1.5 sm:p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors border border-transparent hover:border-red-100"
+               title="支持与反馈"
+            >
+               <Heart className="w-4 h-4 sm:w-5 sm:h-5 fill-red-400 text-red-500" />
+            </button>
             <button
               onClick={() => setIsAdminOpen(true)}
               className="p-1.5 sm:p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors border border-transparent hover:border-indigo-100"
@@ -246,7 +256,7 @@ export default function App() {
                   placeholder="输入人名搜索..."
                   className="w-full pl-10 pr-4 py-2.5 bg-slate-100/50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all shadow-inner group-hover:bg-slate-100/80"
                 />
-                <Sparkles className="w-4 h-4 absolute left-3.5 top-3 text-slate-400 pointer-events-none group-focus-within:text-indigo-500 transition-colors" />
+                <User className="w-4 h-4 absolute left-3.5 top-3 text-slate-400 pointer-events-none group-focus-within:text-indigo-500 transition-colors" />
               </div>
               <div className="relative flex-1 min-w-0 group">
                 <select
@@ -641,10 +651,10 @@ export default function App() {
               “世间万物，皆有联系。” —— 莱昂纳多·达·芬奇
             </p>
           </div>
-          <div className="flex items-center gap-3 text-[8px] font-bold uppercase tracking-[0.2em] text-slate-300 mt-0.5">
+          <div className="flex items-center gap-3 text-[8px] font-bold uppercase tracking-[0.2em] text-slate-400/80 mt-0.5">
             <span>© 2024 时空关系探索平台</span>
             <span className="opacity-40">•</span>
-            <span className="text-slate-400 opacity-80">
+            <span>
               AI 驱动的历史长河与关系脉络还原
             </span>
           </div>
@@ -683,6 +693,9 @@ export default function App() {
             referrerPolicy="no-referrer"
           />
         </div>
+      )}
+      {isFeedbackOpen && (
+        <FeedbackModal onClose={() => setIsFeedbackOpen(false)} />
       )}
     </div>
   );
