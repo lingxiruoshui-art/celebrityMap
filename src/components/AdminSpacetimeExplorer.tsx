@@ -142,6 +142,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   const [subStatus, setSubStatus] = useState<string | null>(null);
   const [targetName, setTargetName] = useState<string | null>(null);
   const [queue, setQueue] = useState<string[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [newArrivals, setNewArrivals] = useState<string[]>([]);
   const [error, setError] = useState<React.ReactNode | string | null>(null);
   const [isCollapsed, setIsCollapsed] = useState(() => hideHeader ? false : true);
@@ -446,8 +447,10 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     const finalSource = overrideSource || source;
     
     if (isAdmin) {
+      if (isSubmitting) return;
       setIsCollapsed(false);
       setIsLoading(true);
+      setIsSubmitting(true);
       setError(null);
       setPath(null);
       setShowResults(false);
@@ -469,6 +472,8 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
           body: JSON.stringify({ targetName: finalTargetForAI, isAdmin: true, clientTaskId: startTaskId, source: 'explorer' })
         });
         
+        setIsSubmitting(false);
+
         if (!res.ok) {
            let errMsg = "探索启动失败";
            try {
@@ -479,13 +484,12 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
         }
         
         pollStatusRef.current = true;
-        // Auto-pick next candidate after successful enqueue
-        setTimeout(() => {
-            handlePickRandomPair();
-        }, 500);
+        // Auto-pick next candidate immediately after successful enqueue
+        handlePickRandomPair();
       } catch (err: any) {
         setError(err.message || "探索过程中发生未知错误。");
         setIsLoading(false);
+        setIsSubmitting(false);
       }
       return;
     }
@@ -638,7 +642,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     <div className={`flex flex-col flex-1 min-h-0 w-full overflow-hidden transition-all duration-300 ${!isCollapsed ? (isInline ? "p-0" : "p-6") : "p-0"}`}>
       {!isCollapsed && (
         <div className={`flex-1 flex flex-col lg:flex-row items-stretch overflow-hidden min-h-0 bg-white`}>
-          {/* Main Controls & Results Column (Responsive Width - Now on Left) */}
+            {/* Main Controls & Results Column (Responsive Width - Now on Left) */}
           <div className={`${showLogs ? "w-full lg:w-[360px] xl:w-[400px] lg:border-r border-slate-100 bg-slate-50/20 shadow-[-10px_0_20px_-10px_rgba(0,0,0,0.05)_inset]" : "w-full max-w-[440px] mx-auto"} flex flex-col flex-1 lg:flex-none lg:shrink-0 overflow-hidden min-h-0 max-h-full`}>
               <div className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5 sm:px-6 sm:pb-6 space-y-4">
                 {!hideInputs && (
@@ -696,15 +700,16 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                           </div>
                           <button 
                             onClick={() => handleSearch()}
-                            disabled={isPickingRandom || !source.trim() || !hasInitialCheckDone || queue.length >= 20}
+                            disabled={isPickingRandom || isSubmitting || !source.trim() || !hasInitialCheckDone || queue.length >= 20}
                             className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white h-[38px] px-4 text-[12px] font-black rounded-xl transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-1.5 active:scale-[0.98] group whitespace-nowrap"
                           >
-                            {isLoading || !hasInitialCheckDone || isPickingRandom ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 group-hover:animate-pulse" />}
-                            <span>{queue.length >= 20 ? "队列已满" : (isLoading ? (subStatus === 'queued' ? "继续加入" : "继续加入") : "开启探索")}</span>
+                            {isSubmitting || !hasInitialCheckDone || isPickingRandom ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 group-hover:animate-pulse" />}
+                            <span>{queue.length >= 20 ? "队列已满" : (isSubmitting ? "正在入队..." : (isLoading ? "继续加入" : "开启探索"))}</span>
                           </button>
                         </div>
                       </div>
                     ) : (
+
                       <div className="flex flex-col sm:grid sm:grid-cols-2 md:flex md:flex-col gap-3">
                         <div className="space-y-1.5">
                           <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1 font-mono">起点人物</label>
@@ -808,11 +813,11 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                         </button>
                         <button 
                           onClick={() => handleSearch()}
-                          disabled={isLoading || !source.trim() || !target.trim() || !hasInitialCheckDone}
+                          disabled={isPickingRandom || isSubmitting || !source.trim() || !target.trim() || !hasInitialCheckDone}
                           className="flex-1 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-[12px] font-bold rounded-xl transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-1.5 active:scale-[0.98] group"
                         >
-                          {isLoading || !hasInitialCheckDone ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 group-hover:animate-pulse" />}
-                          <span>{isLoading ? (subStatus === 'queued' ? "任务已入队" : "正在解析...") : !hasInitialCheckDone ? "检查状态..." : "开启探索"}</span>
+                          {isSubmitting || !hasInitialCheckDone ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 group-hover:animate-pulse" />}
+                          <span>{isSubmitting ? "正在入队..." : (isLoading ? "正在解析..." : !hasInitialCheckDone ? "检查状态..." : "开启探索")}</span>
                         </button>
                       </div>
                     )}
@@ -861,7 +866,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                       </motion.div>
                     ))}
                     {isLoading && (
-                       <div className="flex flex-col gap-2 mt-1 pl-4">
+                       <div className="flex flex-col gap-3 mt-1 pl-4">
                           <div className="flex items-center gap-2 text-indigo-500 text-[11px] font-bold">
                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
                              <span className="animate-pulse">{subStatus === 'queued' ? `等待远端 Worker 承接任务 [${targetName || '...'}]` : "时空协议深度分析中..."}</span>
@@ -870,16 +875,41 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                           {queue.length > 0 && (
                             <div className="mt-2 space-y-1.5 border-t border-slate-100 pt-3">
                               <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
-                                <ChevronRight size={10} />
-                                即将开始的探索序列 ({queue.length})
+                                <RefreshCw size={10} className="animate-spin" />
+                                集群流水线人物列表 ({queue.length})
                               </div>
-                              <div className="flex flex-wrap gap-1.5">
+                              <div className="flex flex-wrap gap-1.5 max-h-[120px] overflow-y-auto pr-1 custom-scrollbar">
                                 {queue.map((name, idx) => (
-                                  <div key={idx} className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded-md text-[10px] font-bold border border-slate-200 shadow-sm animate-in fade-in slide-in-from-bottom-1 duration-300" style={{ animationDelay: `${idx * 50}ms` }}>
+                                  <div 
+                                    key={name + idx} 
+                                    className={`px-2 py-0.5 rounded-md text-[10px] font-bold border shadow-sm animate-in fade-in slide-in-from-bottom-1 duration-300 ${name === targetName ? 'bg-indigo-50 text-indigo-600 border-indigo-200 ring-2 ring-indigo-500/20' : 'bg-slate-100 text-slate-600 border-slate-200'}`}
+                                    style={{ animationDelay: `${idx * 10}ms` }}
+                                  >
                                     {name}
+                                    {name === targetName && <span className="ml-1 text-[8px] animate-pulse">●</span>}
                                   </div>
                                 ))}
                               </div>
+                            </div>
+                          )}
+
+                          {/* Local Activity Logs */}
+                          {detailedLogs.filter(log => (log as any).source !== 'worker').length > 0 && (
+                            <div className="mt-4 pt-3 border-t border-slate-100 space-y-2">
+                               <div className="text-[10px] text-slate-400 font-black uppercase tracking-wider">本地排队状态日志</div>
+                               <div className="space-y-1.5">
+                                 {detailedLogs.filter(log => (log as any).source !== 'worker').slice(-10).map((log, i) => (
+                                   <div key={i} className="flex items-baseline gap-2 text-[10px]">
+                                     <span className="text-slate-300 font-mono tabular-nums shrink-0">[{log.timestamp}]</span>
+                                     <span className={`px-1 rounded-[2px] font-black uppercase tracking-tighter text-[7px] ${
+                                       log.type === 'error' ? 'bg-red-50 text-red-500' : 
+                                       log.type === 'success' ? 'bg-emerald-50 text-emerald-500' : 
+                                       'bg-slate-100 text-slate-400'
+                                     }`}>{log.type}</span>
+                                     <span className={`font-bold truncate ${log.type === 'error' ? 'text-red-600' : 'text-slate-600'}`}>{log.msg}</span>
+                                   </div>
+                                 ))}
+                               </div>
                             </div>
                           )}
                        </div>
@@ -940,25 +970,15 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                   {/* Stylized Results List */}
                   <div className="relative pt-2">
                     <div className="absolute top-[20px] bottom-[20px] left-[26px] w-[2px] bg-slate-100 z-0"></div>
-                    
                     {path.map((item, idx) => (
                       <div key={idx} className="relative z-10">
-                        {idx > 0 && (item.type || "").trim() !== "" && (
+                        {idx > 0 && (
                           <div className="py-3 pl-12 pr-2">
                             <div className="bg-indigo-50/60 p-2.5 rounded-md border border-indigo-100/30 text-[10px] font-bold text-indigo-500 text-center leading-tight shadow-sm">
-                              {item.type}
+                              {item.type || "时空关联"}
                             </div>
                           </div>
                         )}
-                        
-                        {idx > 0 && !(item.type || "").trim() && (
-                           <div className="py-3 pl-12 pr-2">
-                            <div className="bg-slate-50/60 p-2.5 rounded-md border border-slate-100 border-dashed text-[10px] font-bold text-slate-400 text-center leading-tight">
-                              时空关联
-                            </div>
-                          </div>
-                        )}
-                        
                         <motion.div 
                           whileHover={{ x: 3 }}
                           onClick={() => onSelectPerson(-1, item.name)}
@@ -984,27 +1004,21 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
             </div>
           </div>
 
-          {/* Right Column (on Desktop) / Bottom Column (on Mobile): Interaction Process Logs */}
+          {/* Right Column (on Desktop) / Bottom Column (on Mobile): Interaction Process Logs (Worker Only) */}
           {showLogs && (isLoading || showResults || error || (allowAdminControls && searchSteps.length > 0)) && (
             <div className="flex-1 flex flex-col min-w-0 bg-white overflow-hidden">
                <div className="px-5 py-4 bg-slate-50/50 border-b border-slate-100 flex items-center justify-between shrink-0">
                   <div className="flex items-center gap-3">
                     <div className="flex items-center gap-2">
                        <Zap className={`w-3.5 h-3.5 ${isLoading ? 'text-indigo-500' : 'text-indigo-600'} shrink-0`} />
-                      <span className="text-[10px] font-black text-slate-700 uppercase tracking-[0.2em] font-mono">运行日志</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 bg-white/80 px-2 py-0.5 rounded-full border border-slate-200 shadow-sm">
-                         <RefreshCw className={`w-2.5 h-2.5 ${pulseActive ? 'text-emerald-500 animate-spin' : 'text-rose-500'}`} />
-                         <span className={`text-[9px] font-bold ${pulseActive ? 'text-slate-500' : 'text-rose-600 animate-pulse'}`}>
-                           {Math.max(0, Math.floor((Date.now() - (lastActivityTime || Date.now())) / 1000))}s 前活跃
-                           {!pulseActive && " (连接可能已断开)"}
-                         </span>
+                      <span className="text-[10px] font-black text-slate-700 uppercase tracking-[0.2em] font-mono">集群运行日志 (Worker)</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <button 
                       onClick={() => {
                         const content = detailedLogs
+                          .filter(log => (log as any).source === 'worker')
                           .map(log => `[${log.timestamp}] [${log.type.toUpperCase()}] ${log.msg}${log.data ? '\n' + JSON.stringify(log.data, null, 2) : ''}`)
                           .join('\n' + '-'.repeat(30) + '\n');
                         navigator.clipboard.writeText(content);
@@ -1018,32 +1032,34 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                </div>
                
                <div ref={logsScrollRef} className="flex-1 overflow-y-auto p-4 sm:p-5 custom-scrollbar font-mono text-[11px] space-y-3 select-text bg-white">
-                  {detailedLogs.length === 0 && (
+                  {detailedLogs.filter(log => (log as any).source === 'worker').length === 0 && (
                     <div className="h-full flex items-center justify-center text-slate-300 italic flex-col gap-2 py-20">
                       <Loader2 className="w-6 h-6 animate-spin opacity-20" />
-                      <span>等待追踪数据包中...</span>
+                      <span>等待集群追踪数据包中...</span>
                     </div>
                   )}
                   <div className="flex flex-col gap-2">
-                    {detailedLogs.map((log, i) => (
+                    {detailedLogs.filter(log => (log as any).source === 'worker').map((log, i) => (
                       <div key={i} className="animate-in fade-in slide-in-from-left-1 duration-200">
-                        <div className="flex items-baseline gap-2.5">
-                          <span className="font-bold text-slate-300 tabular-nums shrink-0 whitespace-nowrap">[{log.timestamp}]</span>
-                          <span className={`font-black uppercase tracking-tighter text-[8px] px-1 py-0 rounded shrink-0 flex items-center gap-1 ${
-                            log.type === 'error' ? 'text-red-500' :
-                            log.type === 'ai-req' || log.type === 'ai-res' ? 'text-amber-500' :
-                            log.type === 'api' ? 'text-indigo-500' : 
-                            log.type === 'heartbeat' ? 'text-emerald-500' :
-                            'text-slate-400'
-                          }`}>
-                            {log.type === 'heartbeat' && <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse"></span>}
-                            {log.type === 'api' ? 'SERVER' : (log.type || "").replace('-', ' ')}
-                          </span>
-                          <div className="flex-1 min-w-0">
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-baseline gap-2.5">
+                            <span className="font-bold text-slate-300 tabular-nums shrink-0 whitespace-nowrap">[{log.timestamp}]</span>
+                            <span className={`font-black uppercase tracking-tighter text-[8px] px-1 py-0 rounded shrink-0 flex items-center gap-1 ${
+                              log.type === 'error' ? 'text-red-500' :
+                              log.type === 'ai-req' || log.type === 'ai-res' ? 'text-amber-500' :
+                              log.type === 'api' || log.type === 'success' ? 'text-emerald-500' : 
+                              log.type === 'heartbeat' ? 'text-emerald-500' :
+                              'text-slate-400'
+                            }`}>
+                              {log.type === 'heartbeat' && <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse"></span>}
+                              {log.type === 'api' ? 'SERVER' : (log.type || "").replace('-', ' ')}
+                            </span>
+                          </div>
+                          <div className="pl-0 flex-1 min-w-0">
                             <span className={`font-bold ${log.type === 'error' ? 'text-red-600' : 'text-slate-700'}`}>{log.msg || ""}</span>
                             {log.data && (
-                              <div className="mt-1 text-slate-400 font-medium break-all leading-relaxed opacity-80 pl-2 border-l border-slate-100">
-                                {JSON.stringify(log.data)}
+                              <div className="mt-1 text-slate-400 font-medium break-all leading-relaxed opacity-80 pl-2 border-l border-slate-100 text-[10px]">
+                                {typeof log.data === 'string' ? log.data : JSON.stringify(log.data, null, 2)}
                               </div>
                             )}
                           </div>

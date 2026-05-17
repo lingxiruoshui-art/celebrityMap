@@ -1272,7 +1272,7 @@ app.post("/ai/proxy", async (c) => {
 });
 
 // Helper to update global exploration state with logs
-async function updateExplorationState(db: DatabaseAdapter, updates: any, newLog?: { msg: string, type: string, data?: any }) {
+async function updateExplorationState(db: DatabaseAdapter, updates: any, newLog?: { msg: string, type: string, data?: any, source?: string }) {
     let currentStr = await getConfig(db, "explore_state", "null");
     let state: any = currentStr === "null" ? { status: 'idle', logs: [], steps: [] } : JSON.parse(currentStr);
     
@@ -1283,7 +1283,11 @@ async function updateExplorationState(db: DatabaseAdapter, updates: any, newLog?
     if (newLog) {
         const timestamp = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
         if (!state.logs) state.logs = [];
-        state.logs.push({ timestamp, ...newLog });
+        state.logs.push({ 
+            timestamp, 
+            source: newLog.source || "server", // Default to server/local
+            ...newLog 
+        });
         if (state.logs.length > 50) state.logs.shift();
     }
     
@@ -1323,7 +1327,7 @@ app.get("/explore/status", async (c) => {
   data.isOwner = isAdmin;
   
   // Add queue info
-  const pendingTasks = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' ORDER BY priority DESC, created_at ASC").all() as any[];
+  const pendingTasks = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' OR status = 'processing' ORDER BY priority DESC, created_at ASC").all() as any[];
   data.queue = pendingTasks.map(t => t.target_name);
 
   return c.json(data);
@@ -1456,16 +1460,24 @@ app.get("/internal/next-task", async (c) => {
     
     if (task) {
         console.log(`[Internal] Task found in queue: ${task.target_name}`);
-        await db.prepare("UPDATE explore_queue SET status = 'processing', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(task.id);
-        await updateExplorationState(db, { status: "running", subStatus: "processing", taskId: task.id, target: task.target_name }, { msg: `Worker (ID: ${task.id}) 已承接任务 [${task.target_name}]`, type: "api" });
-        return c.json({ taskId: task.id, targetName: task.target_name, modelConfig });
+        const taskId = task.id;
+        await db.prepare("UPDATE explore_queue SET status = 'processing', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(taskId);
+        await updateExplorationState(db, { status: "running", subStatus: "processing", taskId, target: task.target_name }, { msg: `Worker 集群节点已承接排队任务 [${task.target_name}]`, type: "api" });
+        return c.json({ taskId, targetName: task.target_name, modelConfig });
     } else {
         const cronEnabled = await getConfig(db, "cron_interval_enabled", "false") === "true";
         console.log(`[Internal] No tasks in queue. Cron auto-explore: ${cronEnabled}`);
         if (!cronEnabled) return c.json({ error: "No pending tasks" }, 404);
         
-        await updateExplorationState(db, { status: "running", subStatus: "processing" }, { msg: "Worker 正准备自动探索新的人物...", type: "api" });
-        return c.json({ taskId: Date.now(), targetName: "", modelConfig });
+        // Use pickTarget to get a name from our pool/relationships instead of letting AI hallucinate one
+        const picked = await pickTarget(db);
+        if (picked.isEmpty || !picked.targetName) {
+            return c.json({ error: "Pool exhausted or no candidates found" }, 404);
+        }
+
+        const taskId = `auto-${Date.now()}`;
+        await updateExplorationState(db, { status: "running", subStatus: "processing", taskId, target: picked.targetName }, { msg: `Worker 集群节点正在启动自动探索序列 [${picked.targetName}] (策略: ${picked.strategy})`, type: "api" });
+        return c.json({ taskId, targetName: picked.targetName, modelConfig });
     }
 });
 
@@ -1484,10 +1496,10 @@ app.post("/internal/log", async (c) => {
     if (!checkInternalSecret(c)) return c.json({ error: "Unauthorized" }, 401);
     const db = await getDb(c);
     const { taskId, type, msg, data } = await c.req.json();
-    console.log(`[Internal Log] [${type}] ${msg}`);
+    console.log(`[Internal Log] [Worker] [${type}] ${msg}`);
     try {
         await db.prepare("INSERT INTO task_logs (task_id, type, msg, data) VALUES (?, ?, ?, ?)").run(String(taskId), type, msg, data ? JSON.stringify(data) : null);
-        await updateExplorationState(db, {}, { msg, type, data });
+        await updateExplorationState(db, {}, { msg, type, data, source: "worker" });
     } catch (e) {}
     return c.json({ success: true });
 });

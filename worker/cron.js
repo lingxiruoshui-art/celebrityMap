@@ -19,7 +19,7 @@ export default {
     const origin = new URL(targetUrl).origin;
     const taskUrl = `${origin}/api/internal/next-task`;
     
-    console.log(`[Worker] Triggered. Target app: ${origin}. Checking for tasks...`);
+    console.log(`[Worker] [Scheduled] Triggered. Target app: ${origin}. Checking for tasks...`);
     
     try {
         const res = await fetch(taskUrl, {
@@ -30,30 +30,86 @@ export default {
         
         if (!res.ok) {
             const errorText = await res.text();
-            console.error(`[Worker Error] Pages App returned ${res.status}: ${errorText}`);
+            console.error(`[Worker Error] [Scheduled] Pages App returned ${res.status}: ${errorText}`);
             return;
         }
         
         const task = await res.json();
         
         if (task && task.taskId) {
-            console.log(`[Worker] Task found! Target: ${task.targetName || 'RANDOM'}, ID: ${task.taskId}. Handing off to Queue...`);
+            console.log(`[Worker] [Scheduled] Task found! Target: ${task.targetName || 'RANDOM'}, ID: ${task.taskId}. Handing off to Queue...`);
+            
+            // Notify Pages that we've seen the task and are queuing it
+            await fetch(`${origin}/api/internal/log`, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${secret}`,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ 
+                    taskId: task.taskId, 
+                    msg: `[Worker] 调度程序已捕获任务，正在准备进入集群队列 [Worker -> Queue]`, 
+                    type: 'info' 
+                })
+            }).catch(()=>{});
+
             if (env.EXPLORE_QUEUE) {
-                await env.EXPLORE_QUEUE.send(task);
-                console.log(`[Worker] Hand-off successful.`);
+                try {
+                    await env.EXPLORE_QUEUE.send(task);
+                    console.log(`[Worker] [Scheduled] Queue hand-off successful for task ${task.taskId}.`);
+                    
+                    await fetch(`${origin}/api/internal/log`, {
+                        method: "POST",
+                        headers: {
+                            "Authorization": `Bearer ${secret}`,
+                            "Content-Type": "application/json"
+                        },
+                        body: JSON.stringify({ 
+                            taskId: task.taskId, 
+                            msg: `[Worker] 任务已成功推入高速队列，等待分发执行 [Queue OK]`, 
+                            type: 'success' 
+                        })
+                    }).catch(()=>{});
+                } catch (queueErr) {
+                    console.error(`[Worker Error] [Scheduled] Failed to send to Queue: ${queueErr.message}`);
+                    await fetch(`${origin}/api/internal/log`, {
+                        method: "POST",
+                        headers: {
+                            "Authorization": `Bearer ${secret}`,
+                            "Content-Type": "application/json"
+                        },
+                        body: JSON.stringify({ 
+                            taskId: task.taskId, 
+                            msg: `[Worker] 任务排队失败: ${queueErr.message}`, 
+                            type: 'error' 
+                        })
+                    }).catch(()=>{});
+                }
             } else {
-                console.error(`[Worker Error] EXPLORE_QUEUE binding is missing! Check your wrangler.toml or Worker settings.`);
+                console.error(`[Worker Error] [Scheduled] EXPLORE_QUEUE binding is missing!`);
+                await fetch(`${origin}/api/internal/log`, {
+                    method: "POST",
+                    headers: {
+                        "Authorization": `Bearer ${secret}`,
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({ 
+                        taskId: task.taskId, 
+                        msg: `[Worker Error] EXPLORE_QUEUE 绑定缺失，无法执行任务`, 
+                        type: 'error' 
+                    })
+                }).catch(()=>{});
             }
         } else {
-            console.log(`[Worker] No work to do at this time.`);
+            console.log(`[Worker] [Scheduled] No work to do at this time.`);
         }
     } catch (e) {
-        console.error(`[Worker Error] Failed to connect to Pages App: ${e.message}`);
+        console.error(`[Worker Error] [Scheduled] Connection failure: ${e.message}`);
     }
   },
   
   async queue(batch, env, ctx) {
-      console.log(`[Worker Queue] Received ${batch.messages.length} messages.`);
+      console.log(`[Worker Queue] Received batch with ${batch.messages.length} messages.`);
       const origin = new URL(env.CRON_TARGET_URL).origin;
       const secret = env.CRON_SECRET;
       
@@ -62,13 +118,21 @@ export default {
           const { taskId, modelConfig } = task;
           let targetName = task.targetName;
           
+          // Generate a unique trace ID for this specific batch execution
+          const executionId = Math.random().toString(36).substring(2, 10);
+          
           try {
               console.log(`\n================================`);
-              console.log(`[Worker Queue] Task Start: target=${targetName}, id=${taskId}`);
+              console.log(`[Worker Trace:${executionId}] Processing message ${msg.id} for task ${taskId}`);
+              console.log(`[Worker Trace:${executionId}] Payload:`, JSON.stringify(task));
               
               let localLogs = [];
               const reportLog = async (logMsg, type = 'info', data = null) => {
-                  const logPrefix = `[Log ${type.toUpperCase()}]`;
+                  const logPrefix = `[Trace:${executionId}] [${type.toUpperCase()}]`;
+                  
+                  // Use richer data for trace
+                  const traceMsg = `[${executionId}] ${logMsg}`;
+                  
                   if (data) {
                       console.log(`${logPrefix} ${logMsg} | Data:`, JSON.stringify(data));
                   } else {
@@ -76,7 +140,7 @@ export default {
                   }
                   
                 const timestamp = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
-                  localLogs.push({ timestamp, msg: logMsg, type, data });
+                  localLogs.push({ timestamp, msg: traceMsg, type, data });
                   if (localLogs.length > 50) localLogs.shift();
                   
                   await fetch(`${origin}/api/internal/log`, {
@@ -85,15 +149,14 @@ export default {
                           "Authorization": `Bearer ${secret}`,
                           "Content-Type": "application/json"
                       },
-                      body: JSON.stringify({ taskId, msg: logMsg, type, data })
-                  }).catch(()=>{});
-                  
-                  // reportState is now managed by the backend's /internal/log endpoint for better consistency
+                      body: JSON.stringify({ taskId, msg: traceMsg, type, data })
+                  }).catch(e => console.error(`[Worker Error] reportLog failed: ${e.message}`));
               };
               
               // Helper to update Pages global state
               const reportState = async (updates) => {
                   try {
+                      console.log(`[Worker Queue] [State Update] Phase: ${updates.phase || 'N/A'}`);
                       // Fetch current state to avoid overwriting other fields unnecessarily
                       const statusRes = await fetch(`${origin}/api/explore/status`, { headers: {"x-admin-password": secret} });
                       let currentState = {};
@@ -119,12 +182,14 @@ export default {
                               "Content-Type": "application/json"
                           },
                           body: JSON.stringify(newState)
-                      }).catch(()=>{});
-                  } catch(e) {}
+                      }).catch(e => console.error(`[Worker Error] reportState failed: ${e.message}`));
+                  } catch(e) {
+                      console.error(`[Worker Error] reportState exception: ${e.message}`);
+                  }
               };
               
+              await reportLog(`[Worker Cluster] 成功捕获分发任务，初始化时空节点生命周期 [ID: ${taskId}]`, "info");
               await reportState({ phase: "init", steps: [{ msg: "探索序列启动中...", status: "pending", startTime: Date.now() }] });
-              await reportLog("Worker 开始处理探索任务", "info");
               
               // Define callAI helper
               const callAILocally = async (prompt, isJson = true, schema = null) => {
@@ -132,13 +197,13 @@ export default {
                   const apiKey = isAliyun ? modelConfig.aliyunApiKey : modelConfig.apiKey;
                   const modelId = isAliyun ? (modelConfig.aliyunModelId || "qwen-max") : (modelConfig.modelId || "gemini-1.5-flash");
                   
-                  if (!apiKey) throw new Error(`Missing ${isAliyun ? 'Aliyun' : 'Gemini'} API Key in worker.`);
+                  if (!apiKey) throw new Error(`时空协议中断：检测到 ${isAliyun ? 'Aliyun' : 'Gemini'} 通讯密钥缺失，请检查配置。`);
 
                   const url = isAliyun 
                     ? "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
                     : `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
                   
-                  await reportLog(`请求 AI (${isAliyun ? 'Aliyun' : 'Gemini'}): ${modelId}`, "ai-req", { prompt: prompt.substring(0, 100) + "..." });
+                  await reportLog(`正在请求高维 AI 节点 (${isAliyun ? 'Aliyun' : 'Gemini'}): ${modelId}`, "ai-req", { prompt: prompt });
                   
                   // Simple retry logic
                   for (let i = 0; i < 3; i++) {
@@ -154,12 +219,12 @@ export default {
                                   body: JSON.stringify({
                                       model: modelId,
                                       messages: [
-                                          { role: "system", content: "You are a helpful assistant." },
+                                          { role: "system", content: "你是一个历史学和百科知识专家。请直接返回 JSON 格式结果，不带 Markdown 格式。" },
                                           { role: "user", content: prompt }
                                       ],
                                       ...(isJson ? { response_format: { type: "json_object" } } : {})
                                   })
-                              });
+                               });
                           } else {
                               const requestBody = {
                                   contents: [{ parts: [{ text: prompt }] }],
@@ -184,12 +249,12 @@ export default {
                               content = data.candidates[0].content.parts[0].text;
                           }
                           
-                          await reportLog(`AI 响应成功 (${isAliyun ? 'Aliyun' : 'Gemini'})`, "ai-res", { preview: content.substring(0, 100) + "..." });
+                          await reportLog(`AI 时空映射响应成功 (${isAliyun ? 'Aliyun' : 'Gemini'})`, "ai-res", { preview: content });
                           return content;
                       } catch (e) {
                           if (i === 2) throw e;
                           await new Promise(r => setTimeout(r, 2000 * (i+1))); 
-                          await reportLog(`AI 请求失败 (${isAliyun ? 'Aliyun' : 'Gemini'})，正在重试 (${i+1}/3)...: ${e.message}`, "heartbeat");
+                          await reportLog(`通讯链路不稳定 (${isAliyun ? 'Aliyun' : 'Gemini'})，正在执行应急重试策略 (${i+1}/3)...: ${e.message}`, "heartbeat");
                       }
                   }
               };
@@ -235,13 +300,7 @@ export default {
 
               // ============ PHASE: INIT & WIKI ============
               if (!targetName) {
-                  await reportLog("[System] 目标为空，AI 开始发散思考新目标...", "info");
-                  
-                  const prompt = `请从世界历史中随机选取一位极其著名、具有重大全球影响力且通常被视为正面的真实历史人物(不可以出现神话小说虚构人物)。要求直接返回其最常用的标准中文名，仅包含名字，不含标点或多余文字。`;
-                  const resultText = await callAILocally(prompt, false);
-                  targetName = (resultText || "").trim().replace(/[「」""'']/g, "");
-                  
-                  await reportLog(`AI 发散思考锁定新目标: ${targetName}`, "success");
+                  throw new Error(`时空协议失效：任务报文中未包含有效人物标识码 [targetName is empty]`);
               }
               
               await reportState({ target: targetName });
@@ -329,8 +388,8 @@ export default {
 
 
               // ============ PHASE: AI EXTRA ============
-              await reportLog("分析成就并提取时空节点弱关联网络...", "api");
-              const extraPrompt = `人物：${targetName}\n${coreData.biography}\n\n找出3-5位与之有一定关联的老少咸宜真实世界历史名人作为关联拓扑节点。要求返回合法的 JSON 格式。`;
+              await reportLog("启动图谱解析引擎，分析次级关联节点脉络...", "api");
+              const extraPrompt = `你是一位时空档案馆长。已知人物：${targetName}\n背景资料：${coreData.biography}\n\n请在历史长河中检索，找出3-5位与之有一定关联的老少咸宜真实世界历史名人作为关联拓扑节点。要求返回合法的 JSON 格式。`;
               const extraSchema = {
                   type: "OBJECT",
                   properties: {
@@ -345,16 +404,16 @@ export default {
               let extraData = safeParseJSON(extraResStr);
               
               if (!extraData) {
-                  await reportLog("关联网计算异常，将尝试空值兼容。", "error");
+                  await reportLog("时空拓扑映射异常（JSON 损坏），正在启用紧急冗余容错机制...", "error");
                   extraData = { achievements: [], relationships: [] };
               }
               
-              await reportLog("关联网计算完成。", "success");
+              await reportLog(`拓扑网络构建完成，发现 ${extraData.relationships?.length || 0} 个关联奇点。`, "success");
               const finalPersonData = { ...coreData, ...extraData };
               
               
               // ============ PHASE: SUBMIT ============
-              await reportLog("向核心服务器请求最终验证及落库...", "heartbeat");
+              await reportLog("任务阶段全部达成。正在向核心档案馆发起入库同步申请 [Syncing...]", "heartbeat");
               const submitRes = await fetch(`${origin}/api/internal/submit`, {
                   method: "POST",
                   headers: { "Authorization": `Bearer ${secret}`, "Content-Type": "application/json" },
@@ -362,7 +421,7 @@ export default {
               });
               
               if (!submitRes.ok) {
-                  throw new Error(`入库异常: ` + await submitRes.text());
+                  throw new Error(`同步握手失败 (Pages App 响应异常): ` + await submitRes.text());
               }
               
               const submitInfo = await submitRes.json();
@@ -373,12 +432,14 @@ export default {
                   }
               }
               
-              await reportLog(`网络载体固化成功，${targetName} 已进入时空史册全息库`, "success");
-              await reportState({ status: "success", target: targetName, newArrivals: [targetName], path: [{ name: targetName, type: "入库协议完成" }] });
+              await reportLog(`核心服务器已响应同步成功，${targetName} 全息镜像已固化于史册库。`, "success");
+              await reportState({ status: "success", target: targetName, newArrivals: [targetName], path: [{ name: targetName, type: "镜像加载完成" }] });
               
           } catch (e) {
-              console.error(`[Worker Queue] Error processing ${targetName}:`, e.message);
+              console.error(`[Worker Cluster Fatal] Error processing ${targetName}:`, e.message);
               // Report error
+              await reportLog(`探索序列发生不可逆熔断: ${e.message}`, "error");
+
               await fetch(`${origin}/api/internal/submit`, {
                   method: "POST",
                   headers: { "Authorization": `Bearer ${secret}`, "Content-Type": "application/json" },
