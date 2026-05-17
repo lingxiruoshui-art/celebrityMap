@@ -102,46 +102,46 @@ export default function FeedbackModal({ onClose }: FeedbackModalProps) {
       <motion.div 
         initial={{ opacity: 0, scale: 0.95, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
-        className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl h-[90vh] sm:h-[80vh] flex flex-col md:flex-row overflow-hidden"
+        className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl h-fit max-h-[90vh] md:h-[80vh] flex flex-col md:flex-row overflow-y-auto md:overflow-hidden relative"
       >
         {/* Left Side: Support/Donation */}
-        <div className="w-full md:w-[35%] bg-slate-50 p-6 sm:p-8 border-r border-slate-100 flex flex-col items-center text-center">
-          <div className="w-16 h-16 sm:w-20 sm:h-20 bg-red-50 rounded-full flex items-center justify-center mb-6">
+        <div className="w-full md:w-[35%] shrink-0 bg-slate-50 p-6 sm:p-8 border-b md:border-b-0 md:border-r border-slate-100 flex flex-col items-center text-center">
+          <div className="w-16 h-16 sm:w-20 sm:h-20 bg-red-50 rounded-full flex items-center justify-center mb-4 md:mb-6 shrink-0">
             <Heart className="w-8 h-8 sm:w-10 sm:h-10 text-red-500 fill-red-500" />
           </div>
-          <h2 className="text-2xl sm:text-3xl font-black text-slate-800 mb-4 tracking-tight">支持我们的发展</h2>
-          <p className="text-[11px] sm:text-[13px] text-slate-500 leading-relaxed mb-6">
+          <h2 className="text-2xl sm:text-3xl font-black text-slate-800 mb-2 md:mb-4 tracking-tight">支持我们的发展</h2>
+          <p className="text-[11px] sm:text-[13px] text-slate-500 leading-relaxed mb-4 md:mb-6">
             感谢您使用 <span className="font-bold text-slate-800">名人图谱</span>。本站算力与存储均自费承担。打赏将全额用于抵扣成本，助力项目长存。愿您平安喜乐！
           </p>
           
-          <div className="bg-white p-4 rounded-3xl shadow-xl shadow-slate-200/50 border border-slate-100 mb-6 w-full max-w-[240px]">
+          <div className="bg-white p-4 rounded-3xl shadow-xl shadow-slate-200/50 border border-slate-100 mb-4 md:mb-6 w-full max-w-[200px] md:max-w-[240px] shrink-0">
             <div className="aspect-square bg-slate-50 rounded-2xl flex flex-col items-center justify-center relative overflow-hidden group">
                <img 
                  src="/payment.jpg" 
                  alt="WeChat Pay"
-                 className="w-full h-full object-cover p-2"
+                 className="w-full h-full object-cover p-1 md:p-2"
                />
-               <div className="absolute inset-x-0 bottom-0 bg-indigo-600 py-1.5 text-[10px] font-black text-white uppercase tracking-widest translate-y-full group-hover:translate-y-0 transition-transform">
+               <div className="absolute inset-x-0 bottom-0 bg-indigo-600 py-1.5 text-[10px] font-black text-white uppercase tracking-widest translate-y-full md:group-hover:translate-y-0 transition-transform">
                  微信扫码赞助
                </div>
             </div>
-            <div className="mt-4 text-[11px] font-bold text-slate-400 tracking-tighter">微信扫码赞助</div>
+            <div className="mt-4 text-[10px] md:text-[11px] font-bold text-slate-400 tracking-tighter">微信扫码赞助</div>
           </div>
 
-          <button className="w-full py-3 bg-slate-800 text-white rounded-xl font-bold text-sm hover:bg-slate-700 transition-all shadow-lg shadow-slate-200">
+          <button className="w-full py-3 bg-slate-800 text-white rounded-xl font-bold text-sm hover:bg-slate-700 transition-all shadow-lg shadow-slate-200 shrink-0">
             保存收款码为图片
           </button>
           
-          <div className="mt-auto pt-6 text-[10px] font-medium text-slate-400">
+          <div className="mt-4 md:mt-auto pt-6 text-[10px] font-medium text-slate-400 shrink-0">
             您的每一分心意，都是我们继续前行的动力
           </div>
         </div>
 
         {/* Right Side: Comments */}
-        <div className="flex-1 flex flex-col p-6 sm:p-10 relative h-full min-h-0">
+        <div className="flex-1 flex flex-col p-6 sm:p-10 relative md:h-full md:min-h-0 overflow-visible md:overflow-hidden">
           <button 
             onClick={onClose}
-            className="absolute right-6 top-6 p-2 text-slate-300 hover:text-slate-600 hover:bg-slate-50 rounded-full transition-all"
+            className="absolute right-4 top-4 md:right-6 md:top-6 p-2 text-slate-300 hover:text-slate-600 hover:bg-slate-50 rounded-full transition-all z-10"
           >
             <X className="w-6 h-6" />
           </button>
@@ -157,7 +157,7 @@ export default function FeedbackModal({ onClose }: FeedbackModalProps) {
           </div>
 
           {/* Feedback List */}
-          <div className="flex-1 overflow-y-auto my-6 pr-2 space-y-4 min-h-0">
+          <div className="flex-1 md:overflow-y-auto my-6 pr-2 space-y-4 min-h-0">
             {feedbacks.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-slate-300 gap-4 italic opacity-80">
                 <p>暂无评论，留下您的第一条足迹吧</p>

@@ -25,15 +25,6 @@ app.use('*', async (c, next) => {
   const db = await getDb(c);
   const ip = c.req.header('cf-connecting-ip') || c.req.header('x-real-ip') || '';
 
-  // Check for banned IP
-  const isAdminRequest = c.req.header('x-admin-password') === getAdminPassword(c);
-  if (ip && !isAdminRequest) {
-    const isBanned = await db.prepare("SELECT 1 FROM banned_ips WHERE ip = ?").get(ip);
-    if (isBanned) {
-      return c.json({ error: "Access denied from your IP address" }, 403);
-    }
-  }
-
   // Skip static assets and internal calls to keep logs relevant
   if (path.includes('/portraits/') || path.includes('/internal/') || path.includes('/health')) {
     return await next();
@@ -48,9 +39,18 @@ app.use('*', async (c, next) => {
   const country = cf?.country || '未知';
   
   // Async log (non-blocking)
-  db.prepare("INSERT INTO visitor_logs (ip, ua, device, city, country, path) VALUES (?, ?, ?, ?, ?, ?)")
+  const logPromise = db.prepare("INSERT INTO visitor_logs (ip, ua, device, city, country, path) VALUES (?, ?, ?, ?, ?, ?)")
     .run(ip, ua, device, city, country, path)
     .catch(() => {});
+    
+  try {
+    const ctx = (c as any).executionCtx;
+    if (ctx?.waitUntil) {
+      ctx.waitUntil(logPromise);
+    }
+  } catch (e) {
+    // Non-Cloudflare environment, logPromise runs in background
+  }
     
   await next();
 });
@@ -68,6 +68,7 @@ app.notFound((c) => {
 // Global for Node fallback
 let nodeDbInstance: DatabaseAdapter | null = null;
 let dbInitialized = false;
+let initPromise: Promise<void> | null = null;
 
 export async function getDb(c: any): Promise<DatabaseAdapter> {
   let db: DatabaseAdapter;
@@ -79,89 +80,94 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
     throw new Error(`No database adapter provided. Ensure D1 is bound as 'DB'. Environment keys available: ${c.env ? Object.keys(c.env).join(', ') : 'none'}`);
   }
   
-  if (!(db as any)._initialized) {
-    const initQueries = [
-      `CREATE TABLE IF NOT EXISTS people (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT UNIQUE NOT NULL,
-        category TEXT NOT NULL,
-        keyword TEXT,
-        lifespan TEXT,
-        birthplace TEXT,
-        biography TEXT NOT NULL,
-        achievements TEXT NOT NULL,
-        image_url TEXT,
-        views INTEGER DEFAULT 0,
-        raw_relationships TEXT DEFAULT '[]',
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )`,
-      `CREATE TABLE IF NOT EXISTS relationships (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        person1_id INTEGER NOT NULL,
-        person2_id INTEGER NOT NULL,
-        relationship_type TEXT NOT NULL,
-        FOREIGN KEY(person1_id) REFERENCES people(id),
-        FOREIGN KEY(person2_id) REFERENCES people(id),
-        UNIQUE(person1_id, person2_id)
-      )`,
-      `CREATE TABLE IF NOT EXISTS task_logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        task_id TEXT,
-        type TEXT,
-        msg TEXT,
-        data TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )`,
-      `CREATE TABLE IF NOT EXISTS explore_queue (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        target_name TEXT NOT NULL,
-        priority INTEGER DEFAULT 0,
-        status TEXT DEFAULT 'pending',
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )`,
-      `CREATE TABLE IF NOT EXISTS config (
-        key TEXT PRIMARY KEY,
-        value TEXT
-      )`,
-      `CREATE TABLE IF NOT EXISTS visitor_logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        ip TEXT,
-        ua TEXT,
-        device TEXT,
-        city TEXT,
-        country TEXT,
-        path TEXT,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-      )`,
-      `CREATE TABLE IF NOT EXISTS feedback (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        content TEXT NOT NULL,
-        ip TEXT,
-        city TEXT,
-        country TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )`,
-      `CREATE TABLE IF NOT EXISTS banned_ips (
-        ip TEXT PRIMARY KEY,
-        reason TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )`
-    ];
-    for (const q of initQueries) {
-      await db.prepare(q).run();
+  if (!dbInitialized) {
+    if (!initPromise) {
+      initPromise = (async () => {
+        const initQueries = [
+          `CREATE TABLE IF NOT EXISTS people (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            category TEXT NOT NULL,
+            keyword TEXT,
+            lifespan TEXT,
+            birthplace TEXT,
+            biography TEXT NOT NULL,
+            achievements TEXT NOT NULL,
+            image_url TEXT,
+            views INTEGER DEFAULT 0,
+            raw_relationships TEXT DEFAULT '[]',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )`,
+          `CREATE TABLE IF NOT EXISTS relationships (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            person1_id INTEGER NOT NULL,
+            person2_id INTEGER NOT NULL,
+            relationship_type TEXT NOT NULL,
+            FOREIGN KEY(person1_id) REFERENCES people(id),
+            FOREIGN KEY(person2_id) REFERENCES people(id),
+            UNIQUE(person1_id, person2_id)
+          )`,
+          `CREATE TABLE IF NOT EXISTS task_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT,
+            type TEXT,
+            msg TEXT,
+            data TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )`,
+          `CREATE TABLE IF NOT EXISTS explore_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            target_name TEXT NOT NULL,
+            priority INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'pending',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )`,
+          `CREATE TABLE IF NOT EXISTS config (
+            key TEXT PRIMARY KEY,
+            value TEXT
+          )`,
+          `CREATE TABLE IF NOT EXISTS visitor_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ip TEXT,
+            ua TEXT,
+            device TEXT,
+            city TEXT,
+            country TEXT,
+            path TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+          )`,
+          `CREATE TABLE IF NOT EXISTS feedback (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content TEXT NOT NULL,
+            ip TEXT,
+            city TEXT,
+            country TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )`,
+          `CREATE TABLE IF NOT EXISTS banned_ips (
+            ip TEXT PRIMARY KEY,
+            reason TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )`
+        ];
+        for (const q of initQueries) {
+          await db.prepare(q).run();
+        }
+        
+        const migrations = [
+          "ALTER TABLE people ADD COLUMN image_url TEXT",
+          "ALTER TABLE people ADD COLUMN lifespan TEXT",
+          "ALTER TABLE people ADD COLUMN birthplace TEXT",
+          "CREATE INDEX IF NOT EXISTS idx_relationships_person2 ON relationships(person2_id)"
+        ];
+        for (const m of migrations) {
+          try { await db.prepare(m).run(); } catch (e) {}
+        }
+        dbInitialized = true;
+      })();
     }
-    
-    const migrations = [
-      "ALTER TABLE people ADD COLUMN image_url TEXT",
-      "ALTER TABLE people ADD COLUMN lifespan TEXT",
-      "ALTER TABLE people ADD COLUMN birthplace TEXT",
-      "CREATE INDEX IF NOT EXISTS idx_relationships_person2 ON relationships(person2_id)"
-    ];
-    for (const m of migrations) {
-      try { await db.prepare(m).run(); } catch (e) {}
-    }
-    (db as any)._initialized = true;
+    await initPromise;
   }
   return db;
 }
@@ -643,6 +649,13 @@ app.post("/feedback", async (c) => {
   
   const db = await getDb(c);
   const ip = c.req.header('cf-connecting-ip') || c.req.header('x-real-ip') || '';
+
+  if (ip) {
+    const isBanned = await db.prepare("SELECT 1 FROM banned_ips WHERE ip = ?").get(ip);
+    if (isBanned) {
+      return c.json({ error: "您已被禁止提交评论" }, 403);
+    }
+  }
   
   // Rate limit check: max 2 feedbacks per day per IP
   const countRes = await db.prepare("SELECT COUNT(*) as count FROM feedback WHERE ip = ? AND created_at > datetime('now', '-1 day')").get(ip) as any;
@@ -668,8 +681,12 @@ app.post("/admin/feedback/batch-delete", async (c) => {
   const { ids } = await c.req.json();
   const db = await getDb(c);
   if (Array.isArray(ids) && ids.length > 0) {
-    const placeholders = ids.map(() => '?').join(',');
-    await db.prepare(`DELETE FROM feedback WHERE id IN (${placeholders})`).run(...ids);
+    const CHUNK_SIZE = 50;
+    for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+      const chunk = ids.slice(i, i + CHUNK_SIZE);
+      const placeholders = chunk.map(() => '?').join(',');
+      await db.prepare(`DELETE FROM feedback WHERE id IN (${placeholders})`).run(...chunk);
+    }
   }
   return c.json({ success: true });
 });
@@ -696,37 +713,37 @@ app.delete("/admin/bans/:ip", async (c) => {
   await db.prepare("DELETE FROM banned_ips WHERE ip = ?").run(ip);
   return c.json({ success: true });
 });
+
 app.get("/admin/visitor-stats", async (c) => {
   if (c.req.header("x-admin-password") !== getAdminPassword(c)) return c.json({ error: "Unauthorized" }, 401);
   const db = await getDb(c);
   
-  // 1. Total visits (Total Request)
-  const totalRes = await db.prepare("SELECT COUNT(*) as count FROM visitor_logs").get() as any;
+  // 1, 2, 3: Optimize DB queries by running them concurrently
+  const [totalRes, deviceRes, regionRes] = await Promise.all([
+    db.prepare("SELECT COUNT(*) as count FROM visitor_logs").get() as any,
+    db.prepare("SELECT device, COUNT(*) as count FROM visitor_logs GROUP BY device").all() as any,
+    db.prepare(`
+      SELECT 
+        CASE WHEN city != '未知' THEN city ELSE country END as region,
+        COUNT(*) as count 
+      FROM visitor_logs 
+      GROUP BY region 
+      ORDER BY count DESC 
+      LIMIT 10
+    `).all() as any
+  ]);
+
   const totalVisits = totalRes?.count || 0;
 
-  // 2. Device distribution
-  const deviceRes = await db.prepare("SELECT device, COUNT(*) as count FROM visitor_logs GROUP BY device").all() as any[];
   const deviceStats = {
-    Mobile: deviceRes.find(r => r.device === 'Mobile')?.count || 0,
-    Desktop: deviceRes.find(r => r.device === 'Desktop')?.count || 0,
+    Mobile: (deviceRes as any[]).find((r: any) => r.device === 'Mobile')?.count || 0,
+    Desktop: (deviceRes as any[]).find((r: any) => r.device === 'Desktop')?.count || 0,
   };
-
-  // 3. Global visitor sources (Region/City)
-  // We prioritize City if available, else Country, for more granularity like "Shanghai"
-  const regionRes = await db.prepare(`
-    SELECT 
-      CASE WHEN city != '未知' THEN city ELSE country END as region,
-      COUNT(*) as count 
-    FROM visitor_logs 
-    GROUP BY region 
-    ORDER BY count DESC 
-    LIMIT 20
-  `).all() as any[];
 
   return c.json({
     totalVisits,
     deviceStats,
-    regions: regionRes
+    regions: regionRes || []
   });
 });
 
@@ -756,24 +773,29 @@ app.post("/admin/people/batch-delete", async (c) => {
   const db = await getDb(c);
   const { ids } = await c.req.json();
   if (!Array.isArray(ids) || ids.length === 0) return c.json({ error: "No ids provided" }, 400);
-  
-  const placeholders = ids.map(() => "?").join(",");
-  
-  // Get people names for R2 deletion
-  const people = await db.prepare(`SELECT name FROM people WHERE id IN (${placeholders})`).all(...ids) as any[];
-  if (c.env?.IMAGES) {
-    for (const person of people) {
-      try {
-        const key = `portraits/${encodeURIComponent(person.name.toLowerCase())}.jpg`;
-        await c.env.IMAGES.delete(key);
-      } catch (e) {
-        console.error(`Failed to delete portrait from R2 for ${person.name}:`, e);
+
+  const CHUNK_SIZE = 50;
+  for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+    const chunk = ids.slice(i, i + CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(",");
+    
+    // Get people names for R2 deletion
+    const people = await db.prepare(`SELECT name FROM people WHERE id IN (${placeholders})`).all(...chunk) as any[];
+    if (c.env?.IMAGES) {
+      for (const person of people) {
+        try {
+          const key = `portraits/${encodeURIComponent(person.name.toLowerCase())}.jpg`;
+          await c.env.IMAGES.delete(key);
+        } catch (e) {
+          console.error(`Failed to delete portrait from R2 for ${person.name}:`, e);
+        }
       }
     }
+
+    await db.prepare(`DELETE FROM relationships WHERE person1_id IN (${placeholders}) OR person2_id IN (${placeholders})`).run(...chunk, ...chunk);
+    await db.prepare(`DELETE FROM people WHERE id IN (${placeholders})`).run(...chunk);
   }
 
-  await db.prepare(`DELETE FROM relationships WHERE person1_id IN (${placeholders}) OR person2_id IN (${placeholders})`).run(...ids, ...ids);
-  await db.prepare(`DELETE FROM people WHERE id IN (${placeholders})`).run(...ids);
   return c.json({ success: true });
 });
 

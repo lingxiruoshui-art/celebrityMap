@@ -23,7 +23,7 @@ View your app in AI Studio: https://ai.studio/apps/309319c0-ccbb-434d-afc5-4fc77
 
 #### 核心配置与入口
 *   `server.ts`: Node.js 开发环境入口。初始化 Express 容器，挂载 Hono API 路由和 Vite 中间件（用于预览联调）。
-*   `wrangler.toml`: Cloudflare 部署配置文件，定义了 D1, R2, KV 等资源的绑定关系。
+*   `wrangler.toml`: Cloudflare 部署配置文件，定义了 D1, R2 等资源的绑定关系。
 *   `schema.sql`: 数据库初始化脚本，定义了 `people` (人物), `connections` (关联), `logs` (任务日志) 等核心表结构。
 *   `package.json`: 定义工程全量依赖及构建脚本。
 
@@ -71,10 +71,6 @@ View your app in AI Studio: https://ai.studio/apps/309319c0-ccbb-434d-afc5-4fc77
 2.  **创建 R2 存储桶**：
     *   进入 `R2` -> `Create bucket`。
     *   名称建议填：`historical-portraits`。
-
-3.  **创建 KV 命名空间** (用于跨端同步时空探索状态)：
-    *   进入 `Workers & Pages` -> `KV` -> `Create a namespace`。
-    *   名称建议填：`explore_state_kv`。
 
 ### 2. 在 Cloudflare Pages 中进行 Git 关联
 
