@@ -1,0 +1,25 @@
+# /worker/wrangler.toml
+name = "celebrity-explore-worker"
+main = "cron.js"
+compatibility_date = "2024-03-20"
+
+# 定时触发器配置 (例如每10分钟触发一次)
+[triggers]
+crons = ["*/10 * * * *"]
+
+# Queue 生产者（Worker 内部发起探索并写入 Queue）
+[[queues.producers]]
+binding = "EXPLORE_QUEUE"
+queue = "explore-queue"
+
+# Queue 消费者（处理从 Queue 接收到的探索任务）
+[[queues.consumers]]
+queue = "explore-queue"
+max_batch_size = 1
+max_batch_timeout = 5
+max_retries = 3
+
+[vars]
+# 这里的 URL 需要替换成你实际部署好的 Pages App 的线上地址
+CRON_TARGET_URL = "https://your-pages-app.pages.dev"
+CRON_SECRET = "update_celeb"

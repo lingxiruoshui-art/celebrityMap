@@ -1,156 +1,312 @@
 // Cloudflare Worker: worker/cron.js
 export default {
-  async fetch(request, env, ctx) {
-    return new Response("Cron worker 运行正常！此 Worker 主要在后台定期执行。", { status: 200 });
-  },
-
   async scheduled(event, env, ctx) {
     const targetUrl = env.CRON_TARGET_URL;
     const secret = env.CRON_SECRET;
     
-    console.log(`[Worker] 定时任务触发. URL: ${targetUrl || "未配置"}`);
-
     if (!targetUrl || !secret) {
-      console.error("[Worker] 错误: 未配置环境变量 CRON_TARGET_URL 或 CRON_SECRET");
+      console.error("[Worker] Error: Missing CRON_TARGET_URL or CRON_SECRET");
       return;
     }
-
-    const deliver = async () => {
-      try {
-        const url = new URL(targetUrl);
-        url.searchParams.set("secret", secret);
-        
-        console.log(`[Worker] 正在发送请求到: ${url.hostname}`);
-        const response = await fetch(url.toString(), { 
-          method: "POST",
-          headers: { "User-Agent": "Cloudflare-Cron-Worker" }
+    
+    const origin = new URL(targetUrl).origin;
+    const taskUrl = `${origin}/api/internal/next-task`;
+    
+    console.log(`[Worker] Running scheduled trigger. Fetching from ${taskUrl}`);
+    
+    try {
+        const res = await fetch(taskUrl, {
+            headers: {
+                "Authorization": `Bearer ${secret}`
+            }
         });
         
-        let finished = false;
-        const targetHost = new URL(targetUrl).origin;
-
-        const contentType = response.headers.get("content-type") || "";
-        if (contentType.includes("application/json")) {
-            const data = await response.json().catch(()=>({}));
-            console.log(`[Worker] 返回 JSON: ${JSON.stringify(data)}`);
+        if (!res.ok) {
+            console.error(`[Worker] Fetch next-task failed: ${res.status}`);
             return;
         }
-
-        // Asynchronously consume the streaming response to keep the backend function alive
-        let buffer = "";
-        const consumeStream = async () => {
-            try {
-                const reader = response.body?.getReader();
-                if (!reader) {
-                    console.log(`[Worker] 响应无 body, 无法流式读取`);
-                    return;
-                }
-                const decoder = new TextDecoder("utf-8");
-                while (!finished) {
-                    const { done, value } = await reader.read();
-                    if (done) {
-                        console.log(`[Worker] 服务器主动关闭了 SSE 连接`);
-                        break;
-                    }
-                    
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop() || "";
-                    
-                    for (const line of lines) {
-                        const trimmedLine = line.trim();
-                        if (!trimmedLine) continue;
-
-                        const rawEvents = trimmedLine.split('data:').filter(p => p.trim());
-                        
-                        for (const rawEvent of rawEvents) {
-                            try {
-                                const data = JSON.parse(rawEvent.trim());
-                                console.log(`[Worker SSE] 收到消息:`, JSON.stringify(data));
-                                
-                                if (data.status === "skipped" || data.status === "no target found") {
-                                    console.log(`[Worker] 任务跳过或无需执行:`, data.message);
-                                    finished = true;
-                                } else if (data.status === "started") {
-                                    console.log(`[Worker] 成功触发任务:`, data.message || "探索已启动");
-                                } else if (data.status === "running") {
-                                    console.log(`[Worker] 任务推进 -> Phase: ${data.phase}, Target: ${data.target}`);
-                                } else if (data.status === "completed") {
-                                    console.log(`[Worker] 后端长连接提示任务完成!`);
-                                    finished = true;
-                                } else if (data.status === "error") {
-                                    console.error(`[Worker] 后端长连接报告错误:`, data.message || "未知错误");
-                                    finished = true;
-                                } else if (data.type === "ping") {
-                                    // Heartbeat - keep going
-                                    console.log(`[Worker SSE] 心跳 (ping)`);
-                                }
-                            } catch(e) {
-                                console.log(`[Worker] 无法解析状态数据行或被截断: ${rawEvent.substring(0, 50)}...`);
-                            }
-                        }
-                    }
-                }
-            } catch (err) {
-                console.error(`[Worker] 流读取发生异常:`, err.message);
+        
+        const task = await res.json();
+        
+        if (task && task.taskId) {
+            console.log(`[Worker] Got task: ${task.targetName || 'AUTO_REVEAL'} (ID: ${task.taskId}). Sending to EXPLORE_QUEUE.`);
+            if (env.EXPLORE_QUEUE) {
+                await env.EXPLORE_QUEUE.send(task);
+                console.log(`[Worker] Sent task to queue successfully!`);
+            } else {
+                console.error(`[Worker] env.EXPLORE_QUEUE not bound! Cannot defer work.`);
             }
-        };
-
-        consumeStream(); // Non-blocking
-
-        console.log(`[Worker] 开始每 8 秒轮询任务执行状态 作为兜底...`);
-
-        const startTime = Date.now();
-        const maxWaitTime = 14 * 60 * 1000; // 14分钟
-        
-        while (!finished && (Date.now() - startTime < maxWaitTime)) {
-           await new Promise(r => setTimeout(r, 8000));
-           if (finished) break;
-           
-           try {
-             // Polling as a secondary check in case SSE disconnects but task is still running
-             const statusUrl = new URL(`${targetHost}/api/explore/status`);
-             const statusRes = await fetch(statusUrl.toString(), {
-                headers: { "x-admin-password": secret }
-             });
-             
-             if (statusRes.ok) {
-                 const statusData = await statusRes.json();
-                 if (!statusData) {
-                    console.log(`[Worker Poll] 收到空答复: 探索任务似乎已结束`);
-                    finished = true;
-                    break;
-                 }
-                 
-                 console.log(`[Worker Poll] 最新状态: ${JSON.stringify(statusData).substring(0, 300)}`);
-                 
-                 if (statusData.status === "running") {
-                    console.log(`[Worker Poll] 任务仍在后端进行中 -> Phase: ${statusData.phase}, Target: ${statusData.target || '未知'}`);
-                 } else if (statusData.status === "success") {
-                    console.log(`[Worker Poll] 轮询确认任务已成功完成!`);
-                    finished = true;
-                 } else if (statusData.status === "error") {
-                    console.error(`[Worker Poll] 轮询发现任务错误:`, statusData.error || "未知错误");
-                    finished = true;
-                 }
-             } else {
-                 console.warn(`[Worker Poll] 请求状态失败，状态码: ${statusRes.status}`);
-             }
-           } catch(pollErr) {
-             console.error(`[Worker Poll] 轮询过程出错:`, pollErr.message);
-           }
+        } else {
+            console.log(`[Worker] No task returned.`);
         }
-        
-        if (!finished) {
-            console.warn(`[Worker] 达到 Worker 最大运行时长 (14min)，主动退出。`);
-        }
-        
-        console.log(`[Worker] 流程彻底结束，退出。`);
-      } catch (e) {
-        console.error(`[Worker] 请求执行异常:`, e.stack || e.message);
+    } catch (e) {
+        console.error(`[Worker] Exception in scheduled:`, e.message);
+    }
+  },
+  
+  async queue(batch, env, ctx) {
+      console.log(`[Worker Queue] Received ${batch.messages.length} messages.`);
+      const origin = new URL(env.CRON_TARGET_URL).origin;
+      const secret = env.CRON_SECRET;
+      
+      for (const msg of batch.messages) {
+          const task = msg.body;
+          const { taskId, modelConfig } = task;
+          let targetName = task.targetName;
+          
+          try {
+              console.log(`\n================================`);
+              console.log(`[Worker Queue] Task Start: target=${targetName}, id=${taskId}`);
+              
+              let localLogs = [];
+              const reportLog = async (logMsg, type = 'info', data = null) => {
+                  console.log(`[Log ${type}] ${logMsg}`);
+                  const timestamp = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+                  localLogs.push({ timestamp, msg: logMsg, type, data });
+                  if (localLogs.length > 50) localLogs = localLogs.slice(-50);
+                  
+                  await fetch(`${origin}/api/internal/log`, {
+                      method: "POST",
+                      headers: {
+                          "Authorization": `Bearer ${secret}`,
+                          "Content-Type": "application/json"
+                      },
+                      body: JSON.stringify({ taskId, msg: logMsg, type, data })
+                  }).catch(()=>{});
+                  
+                  // Also update global state immediately so UI can see
+                  await reportState({});
+              };
+              
+              // Helper to update Pages global state
+              const reportState = async (updates) => {
+                  try {
+                      // Fetch current state to avoid overwriting other fields unnecessarily
+                      const statusRes = await fetch(`${origin}/api/explore/status`, { headers: {"x-admin-password": secret} });
+                      let currentState = {};
+                      if (statusRes.ok) {
+                         const json = await statusRes.json();
+                         if (json) currentState = json;
+                      }
+                      
+                      const newState = {
+                          ...currentState,
+                          status: "running",
+                          taskId,
+                          target: targetName,
+                          ...updates,
+                          logs: localLogs,
+                          lastHeartbeat: Date.now()
+                      };
+                      
+                      await fetch(`${origin}/api/internal/state`, {
+                          method: "POST",
+                          headers: {
+                              "Authorization": `Bearer ${secret}`,
+                              "Content-Type": "application/json"
+                          },
+                          body: JSON.stringify(newState)
+                      }).catch(()=>{});
+                  } catch(e) {}
+              };
+              
+              await reportState({ phase: "init", steps: [{ msg: "探索序列启动中...", status: "pending", startTime: Date.now() }] });
+              await reportLog("Worker 开始处理探索任务", "info");
+              
+              // Define callAI helper
+              const callAILocally = async (prompt, isJson = true, schema = null) => {
+                  if (modelConfig.provider !== "gemini") {
+                      throw new Error(`Worker currently supports Gemini provider only.`);
+                  }
+                  
+                  const apiKey = modelConfig.apiKey;
+                  const modelId = modelConfig.modelId || "gemini-1.5-flash";
+                  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
+                  
+                  // Simple retry logic
+                  for (let i = 0; i < 3; i++) {
+                      try {
+                          const requestBody = {
+                              contents: [{ parts: [{ text: prompt }] }],
+                              generationConfig: isJson ? { responseMimeType: "application/json" } : {}
+                          };
+                          
+                          if (isJson && schema) {
+                              requestBody.generationConfig.responseSchema = schema;
+                          }
+                          
+                          const res = await fetch(url, {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify(requestBody)
+                          });
+                          
+                          const data = await res.json();
+                          if (data.error) throw new Error(data.error.message || "Unknown API error");
+                          
+                          return data.candidates[0].content.parts[0].text;
+                      } catch (e) {
+                          if (i === 2) throw e;
+                          await new Promise(r => setTimeout(r, 2000 * (i+1))); // wait
+                          await reportLog(`AI 请求失败，正在重试 (${i+1}/3)...`, "heartbeat");
+                      }
+                  }
+              };
+
+              // ============ PHASE: INIT & WIKI ============
+              if (!targetName) {
+                  await reportLog("[System] 目标为空，AI 开始发散思考新目标...", "info");
+                  
+                  const prompt = `请从世界历史中随机选取一位极其著名、具有重大全球影响力且通常被视为正面的真实历史人物(不可以出现神话小说虚构人物)。要求直接返回其最常用的标准中文名，仅包含名字，不含标点或多余文字。`;
+                  const resultText = await callAILocally(prompt, false);
+                  targetName = (resultText || "").trim().replace(/[「」""'']/g, "");
+                  
+                  await reportLog(`AI 发散思考锁定新目标: ${targetName}`, "success");
+              }
+              
+              await reportState({ target: targetName });
+              await reportLog(`检索维基数据：${targetName}`, "info");
+              
+              // Wikipedia fetch
+              const headers = { "User-Agent": "HistoricalArchiveApp/1.0" };
+              let wikiMeta = { normalizedName: targetName, description: "", imageUrl: null };
+              try {
+                  const searchRes = await fetch(`https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(targetName)}&language=zh&format=json`, { headers });
+                  const searchData = await searchRes.json();
+                  const entity = searchData.search?.[0];
+                  
+                  if (entity) {
+                      const entityRes = await fetch(`https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${entity.id}&props=claims|descriptions|labels&languages=zh|en&format=json`, { headers });
+                      const entityData = await entityRes.json();
+                      const item = entityData.entities[entity.id];
+                      
+                      wikiMeta.normalizedName = item.labels?.zh?.value || entity.label || targetName;
+                      wikiMeta.description = item.descriptions?.zh?.value || item.descriptions?.en?.value || entity.description || "";
+                      
+                      if (item.claims?.P18) {
+                          const imageName = item.claims.P18[0].mainsnak?.datavalue?.value;
+                          if (imageName) {
+                              wikiMeta.imageUrl = `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(imageName.replace(/ /g, '_'))}?width=500`;
+                          }
+                      }
+                  }
+              } catch (e) {
+                  console.error("Wiki Error", e);
+              }
+              
+              if (!wikiMeta.imageUrl) {
+                  throw new Error(`缺少真实相片影像或档案：为了确保连通网络的品质，中心服务器拒绝接收此请求。`);
+              }
+              
+              targetName = wikiMeta.normalizedName;
+              await reportState({ target: targetName, phase: "ai_core", wikiMeta });
+              await reportLog(`[WIKI] 特征采集成功：${wikiMeta.description.substring(0, 100)}`, "success");
+              
+              
+              // ============ PHASE: AI CORE ============
+              const corePrompt = `你是一位研究历史人物的传记专家。请为人物 "${targetName}" 撰写一份既有历史厚度又风趣幽默的传记。
+参考背景资料：${wikiMeta.description}
+
+要求仅返回合法JSON格式对象：
+{
+  "accepted": true/false，判断该人物是否真实已故客观存在，如果有神话虚构元素返回false,
+  "standardChineseName": "标准中文全名",
+  "keyword": "该人物的一句人生格言短语",
+  "lifespan": "生卒年份，如1879年-1955年",
+  "birthplace": "出生地",
+  "category": "从以下选择：[哲学家, 艺术家, 科学家, 发明家, 政治家, 军事家, 思想家, 文学家, 诗人, 音乐家, 医学家, 其他名流]",
+  "biography": "严肃又幽默的传记，不少于200字，必须至少分成2段。在 JSON 字符串内部用 \\n\\n 代表换行，绝不可以直接回车截断字符串。",
+  "latitude": 纬度数字类型的浮点数,
+  "longitude": 经度数字类型的浮点数
+}`;
+              const coreSchema = {
+                  type: "OBJECT",
+                  properties: {
+                      accepted: { type: "BOOLEAN" },
+                      standardChineseName: { type: "STRING" },
+                      keyword: { type: "STRING" },
+                      lifespan: { type: "STRING" },
+                      birthplace: { type: "STRING" },
+                      category: { type: "STRING" },
+                      biography: { type: "STRING" },
+                      latitude: { type: "NUMBER" },
+                      longitude: { type: "NUMBER" }
+                  },
+                  required: ["accepted", "standardChineseName", "keyword", "lifespan", "birthplace", "category", "biography", "latitude", "longitude"]
+              };
+              
+              await reportLog("开始深度分析并构建核心时空档案...", "api");
+              const coreResStr = await callAILocally(corePrompt, true, coreSchema);
+              let coreData = JSON.parse(coreResStr.replace(/\n/g, ' '));
+              
+              if (coreData.accepted === false) {
+                  throw new Error(`目标似乎并非受支持的绝对真实历史人物大图鉴内容。`);
+              }
+              
+              await reportLog("核心档案确立。", "success");
+              await reportState({ phase: "ai_extra", coreData, target: coreData.standardChineseName || targetName });
+              targetName = coreData.standardChineseName || targetName;
+
+
+              // ============ PHASE: AI EXTRA ============
+              await reportLog("分析成就并提取时空节点弱关联网络...", "api");
+              const extraPrompt = `人物：${targetName}\n${coreData.biography}\n\n找出3-5位与之有一定关联的老少咸宜真实世界历史名人作为关联拓扑节点。`;
+              const extraSchema = {
+                  type: "OBJECT",
+                  properties: {
+                      achievements: { type: "ARRAY", items: { type: "STRING", description: "提取的成就点列表" } },
+                      relationships: {
+                          type: "ARRAY", items: { type: "OBJECT", properties: { personName: { type: "STRING" }, relationshipType: { type: "STRING" } }, required: ["personName", "relationshipType"] }
+                      }
+                  }
+              };
+              
+              const extraResStr = await callAILocally(extraPrompt, true, extraSchema);
+              let extraData = JSON.parse(extraResStr.replace(/\n/g, ' '));
+              
+              await reportLog("关联网计算完成。", "success");
+              const finalPersonData = { ...coreData, ...extraData };
+              
+              
+              // ============ PHASE: SUBMIT ============
+              await reportLog("向核心服务器请求最终验证及落库...", "heartbeat");
+              const submitRes = await fetch(`${origin}/api/internal/submit`, {
+                  method: "POST",
+                  headers: { "Authorization": `Bearer ${secret}`, "Content-Type": "application/json" },
+                  body: JSON.stringify({ taskId, targetName, success: true, personData: finalPersonData, wikiMeta })
+              });
+              
+              if (!submitRes.ok) {
+                  throw new Error(`入库异常: ` + await submitRes.text());
+              }
+              
+              await reportLog(`网络载体固化成功，${targetName} 已进入时空史册全息库`, "success");
+              await reportState({ status: "success", target: targetName, newArrivals: [targetName], path: [{ name: targetName, type: "入库协议完成" }] });
+              
+          } catch (e) {
+              console.error(`[Worker Queue] Error processing ${targetName}:`, e.message);
+              // Report error
+              await fetch(`${origin}/api/internal/submit`, {
+                  method: "POST",
+                  headers: { "Authorization": `Bearer ${secret}`, "Content-Type": "application/json" },
+                  body: JSON.stringify({ taskId, targetName, success: false, error: e.message })
+              }).catch(()=>{});
+              
+              await fetch(`${origin}/api/internal/state`, {
+                      method: "POST",
+                      headers: { "Authorization": `Bearer ${secret}`, "Content-Type": "application/json" },
+                      body: JSON.stringify({ status: "error", error: e.message, taskId, target: targetName })
+              }).catch(()=>{});
+              
+              await fetch(`${origin}/api/internal/log`, {
+                  method: "POST",
+                  headers: { "Authorization": `Bearer ${secret}`, "Content-Type": "application/json" },
+                  body: JSON.stringify({ taskId, msg: `探索发生致命熔断错误: ${e.message}`, type: 'error' })
+              }).catch(()=>{});
+          }
+          
+          msg.ack();
+          console.log(`[Worker Queue] Ack'd message`);
       }
-    };
-
-    await deliver();
   }
 };

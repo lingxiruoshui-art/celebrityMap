@@ -12,7 +12,6 @@ database_id = "b805d7ec-6522-446a-a9be-0553983c088d"
 binding = "IMAGES"
 bucket_name = "historical-portraits"
 
-
 [vars]
 # Add other environment variables here
 NODE_ENV = "production"

@@ -28,6 +28,55 @@ export async function initExplorationState(
   return state;
 }
 
+export async function doFinalizeInsert(db: DatabaseAdapter, finalName: string, personData: any, wikiMeta: any, c: any, addRelationship: any, addLog: any) {
+    const portraitUrlRaw = wikiMeta?.imageUrl;
+    const portraitUrl = `/api/portraits/${encodeURIComponent(finalName.toLowerCase())}.jpg`;
+    if (c.env && c.env.IMAGES && portraitUrlRaw) {
+        try {
+            console.log(`[doFinalizeInsert] 正在抓取画像 -> ${portraitUrlRaw}`);
+            const imgRes = await fetch(portraitUrlRaw);
+            if (imgRes.ok) {
+                const buffer = await imgRes.arrayBuffer();
+                await c.env.IMAGES.put(`portraits/${encodeURIComponent(finalName.toLowerCase())}.jpg`, buffer, {
+                    httpMetadata: { contentType: imgRes.headers.get("content-type") || "image/jpeg" }
+                });
+                if (addLog) addLog(`肖像同步成功`, "success");
+            }
+        } catch(e) {
+            console.log(`[doFinalizeInsert] 画像抓取失败，略过`, e);
+        }
+    }
+    
+    const res = await db.prepare(
+        `INSERT INTO people (name, category, keyword, biography, achievements, raw_relationships, lifespan, birthplace, latitude, longitude, image_url)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(name) DO UPDATE SET 
+           category=excluded.category, keyword=excluded.keyword, biography=excluded.biography, image_url=excluded.image_url,
+           achievements=excluded.achievements, raw_relationships=excluded.raw_relationships, lifespan=excluded.lifespan, birthplace=excluded.birthplace,
+           latitude=excluded.latitude, longitude=excluded.longitude RETURNING id`
+    ).get(finalName, personData.category || "未知", personData.keyword || "", personData.biography || "", JSON.stringify(personData.achievements || []), JSON.stringify(personData.relationships || []), personData.lifespan || "", personData.birthplace || "", personData.latitude || 0, personData.longitude || 0, portraitUrl);
+    
+    let newId = (res as any)?.id;
+    if (!newId) newId = (await db.prepare("SELECT id FROM people WHERE name = ? COLLATE NOCASE").get(finalName) as any)?.id;
+    
+    if (newId) {
+        if (personData.relationships) {
+            for (const rel of personData.relationships) {
+                const matched = await db.prepare("SELECT id FROM people WHERE name = ?").get(rel.personName) as any;
+                if (matched) await addRelationship(db, newId, matched.id, rel.relationshipType);
+            }
+        }
+        const previousMentions = await db.prepare(`SELECT id, name, raw_relationships FROM people WHERE id != ? AND raw_relationships LIKE ?`).all(newId, `%${finalName}%`) as any[];
+        for (const p of previousMentions) {
+            try {
+                const rels = JSON.parse(p.raw_relationships || "[]");
+                const matchingRel = rels.find((r: any) => r.personName === finalName);
+                if (matchingRel) await addRelationship(db, p.id, newId, matchingRel.relationshipType);
+            } catch(e) {}
+        }
+    }
+}
+
 export async function advanceExplorationStep(
   db: DatabaseAdapter,
   callAI: any,
@@ -137,7 +186,7 @@ export async function advanceExplorationStep(
             const prompt = ARCHIVE_CORE_PROMPT(state.target, CATEGORIES, state.sampleNames || "", state.wikiMeta.description);
             let resultText = "";
             try {
-                resultText = await callAI(c, db, prompt, "json", ARCHIVE_CORE_SCHEMA(!!state.wikiMeta.description), async () => { addLog("AI 仍在思考并构建基础档案中 (已触发 10s 底层网络强保活)...", "heartbeat"); await saveState({}); });
+                resultText = await callAI(c, db, prompt, "json", ARCHIVE_CORE_SCHEMA(!!state.wikiMeta.description));
             } catch (e: any) { throw new Error(e.message.includes("超时") ? "AI 探索思考时间过长" : e.message); }
 
             let coreData: any = {};
@@ -165,7 +214,7 @@ export async function advanceExplorationStep(
             const extraPrompt = ARCHIVE_EXTRA_PROMPT(state.target, state.coreData.biography);
             let extraResultText = "";
             try {
-                extraResultText = await callAI(c, db, extraPrompt, "json", ARCHIVE_EXTRA_SCHEMA, async () => { addLog("AI 正在提取成就和关联人物 (已触发 10s 底层网络强保活)...", "heartbeat"); await saveState({}); });
+                extraResultText = await callAI(c, db, extraPrompt, "json", ARCHIVE_EXTRA_SCHEMA);
             } catch (e: any) { throw new Error(e.message); }
             
             let extraData: any = {};
@@ -182,51 +231,15 @@ export async function advanceExplorationStep(
             const personData = { ...state.coreData, ...state.extraData };
             const finalName = state.target;
             
-            const portraitUrlRaw = state.wikiMeta.imageUrl;
-            const portraitUrl = `/api/portraits/${encodeURIComponent(finalName.toLowerCase())}.jpg`;
-            if (c.env && c.env.IMAGES && portraitUrlRaw) {
-                try {
-                    console.log(`[exploreStep] 正在抓取画像 -> ${portraitUrlRaw}`);
-                    const imgRes = await fetch(portraitUrlRaw);
-                    if (imgRes.ok) {
-                        const buffer = await imgRes.arrayBuffer();
-                        await c.env.IMAGES.put(`portraits/${encodeURIComponent(finalName.toLowerCase())}.jpg`, buffer, {
-                            httpMetadata: { contentType: imgRes.headers.get("content-type") || "image/jpeg" }
-                        });
-                        addLog(`肖像同步成功`, "success");
-                    }
-                } catch(e) {
-                    console.log(`[exploreStep] 画像抓取失败，略过`, e);
-                }
-            }
-            
-            const res = await db.prepare(
-                `INSERT INTO people (name, category, keyword, biography, achievements, raw_relationships, lifespan, birthplace, latitude, longitude, image_url)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT(name) DO UPDATE SET 
-                   category=excluded.category, keyword=excluded.keyword, biography=excluded.biography, image_url=excluded.image_url,
-                   achievements=excluded.achievements, raw_relationships=excluded.raw_relationships, lifespan=excluded.lifespan, birthplace=excluded.birthplace,
-                   latitude=excluded.latitude, longitude=excluded.longitude RETURNING id`
-            ).get(finalName, personData.category || "未知", personData.keyword || "", personData.biography || "", JSON.stringify(personData.achievements || []), JSON.stringify(personData.relationships || []), personData.lifespan || "", personData.birthplace || "", personData.latitude || 0, personData.longitude || 0, portraitUrl);
-            
-            let newId = (res as any)?.id;
-            if (!newId) newId = (await db.prepare("SELECT id FROM people WHERE name = ? COLLATE NOCASE").get(finalName) as any)?.id;
-            
-            if (newId) {
-                if (personData.relationships) {
-                    for (const rel of personData.relationships) {
-                        const matched = await db.prepare("SELECT id FROM people WHERE name = ?").get(rel.personName) as any;
-                        if (matched) await addRelationship(db, newId, matched.id, rel.relationshipType);
-                    }
-                }
-                const previousMentions = await db.prepare(`SELECT id, name, raw_relationships FROM people WHERE id != ? AND raw_relationships LIKE ?`).all(newId, `%${finalName}%`) as any[];
-                for (const p of previousMentions) {
-                    try {
-                        const rels = JSON.parse(p.raw_relationships || "[]");
-                        const matchingRel = rels.find((r: any) => r.personName === finalName);
-                        if (matchingRel) await addRelationship(db, p.id, newId, matchingRel.relationshipType);
-                    } catch(e) {}
-                }
+            if (state.source === "auto") {
+                console.log(`[exploreStep] 发现来源是 auto, 延迟入库，写入 pending_auto_result`);
+                await setConfig(db, "pending_auto_result", JSON.stringify({ finalName, personData, wikiMeta: state.wikiMeta }));
+                updateLastStep("success", `AI 处理完成，等待下一次触发时自动入库：${finalName}`);
+                addLog(`AI 分析完毕：${finalName}（等待随后入库）`, "success");
+                await saveState({ status: "success", target: finalName, newArrivals: [...state.newArrivals, finalName], path: [{ name: finalName, type: "等待入库" }] });
+                return state;
+            } else {
+                await doFinalizeInsert(db, finalName, personData, state.wikiMeta, c, addRelationship, addLog);
             }
             
             updateLastStep("success", `时空节点建立成功：${finalName}`);

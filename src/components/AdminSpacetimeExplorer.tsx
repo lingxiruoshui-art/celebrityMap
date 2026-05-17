@@ -457,10 +457,10 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
         
         const finalTargetForAI = overrideTarget || target || overrideSource || source;
 
-        const res = await fetch("/api/explore/start", {
+        const res = await fetch("/api/explore/enqueue", {
           method: "POST",
           headers,
-          body: JSON.stringify({ target: finalTargetForAI, isAdmin: true, clientTaskId: startTaskId, source: 'explorer' })
+          body: JSON.stringify({ targetName: finalTargetForAI, isAdmin: true, clientTaskId: startTaskId, source: 'explorer' })
         });
         
         if (!res.ok) {
@@ -471,22 +471,6 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
            } catch(e) {}
            throw new Error(errMsg);
         }
-        
-        // Consume stream to keep task alive and let backend drive state machine
-        const consumeStream = async () => {
-           try {
-             const reader = res.body?.getReader();
-             if (reader) {
-                while (activeSearchTaskIdRef.current === startTaskId) {
-                   const { done } = await reader.read();
-                   if (done) break;
-                }
-             }
-           } catch(e) {
-               console.error("Stream reading error:", e);
-           }
-        };
-        consumeStream();
         
         pollStatusRef.current = true;
       } catch (err: any) {
