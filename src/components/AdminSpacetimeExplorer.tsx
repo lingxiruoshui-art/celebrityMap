@@ -237,6 +237,12 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
            }
 
            const data = await res.json() as any;
+            if (data) {
+                if (data.queue) setQueue(data.queue);
+                if (data.autoRefillEnabled !== undefined) setIsAutoRefillEnabled(data.autoRefillEnabled);
+                if (data.logs) setDetailedLogs(data.logs.slice(-50));
+                if (data.steps) setSearchSteps(data.steps);
+            }
            
            if (!isActive) return;
            setHasInitialCheckDone(true);
@@ -760,18 +766,10 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                               onBlur={() => setTimeout(() => setIsSourceFocused(false), 200)}
                               placeholder="输入人名并按回车入队..."
                               disabled={isPickingRandom}
-                              className={`w-full pl-8 pr-10 py-2 border rounded-xl text-[12px] focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 outline-none transition-all font-bold placeholder:text-slate-300 shadow-sm ${isPickingRandom ? 'bg-indigo-50/50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200'}`}
+                              className={`w-full pl-8 pr-3 py-2 border rounded-xl text-[12px] focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 outline-none transition-all font-bold placeholder:text-slate-300 shadow-sm ${isPickingRandom ? 'bg-indigo-50/50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200'}`}
                               onKeyDown={(e) => e.key === 'Enter' && handleEnqueue()}
                             />
                             <User className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
-                            <button 
-                              onClick={handlePickRandomPair}
-                              disabled={isPickingRandom || isLoading || !hasInitialCheckDone}
-                              className="absolute right-2 top-2 text-slate-400 hover:text-indigo-600 transition-colors bg-white/50 p-1 rounded-md hover:bg-white shadow-sm border border-slate-100"
-                              title="随机人物"
-                            >
-                              <RefreshCw size={12} className={isPickingRandom ? 'animate-spin' : ''} />
-                            </button>
                             
                             {/* Autocomplete Dropdown */}
                             <AnimatePresence>
@@ -927,7 +925,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                   </div>
                 )}
   
-              {(isLoading || (allowAdminControls && searchSteps.length > 0 && !error) || queue.length > 0) && (
+              {(isLoading || (allowAdminControls && searchSteps.length > 0) || queue.length > 0) && (
                 <div className="flex flex-col animate-in fade-in duration-500">
                   <div className="flex flex-col space-y-3 font-mono relative mt-2">
                     {isLoading && (

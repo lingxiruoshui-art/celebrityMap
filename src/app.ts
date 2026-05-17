@@ -1167,7 +1167,7 @@ app.get("/explore/status", async (c) => {
       const diff = now - (data.lastHeartbeat || now);
       if (diff > 600000) { // 600 seconds (10 minutes)
           data.status = 'error';
-          data.error = '探索任务被系统认定为已脱机（持续 >10min 无响应）。可能由于大模型 API 限流、网络波动或响应过慢导致。请检查 API 状态或网络连接后重试。';
+          data.error = '时空探测集群检测到执行节点心跳丢失 (超时 > 10min)。当前任务已挂起并标记为“陈旧”，系统正等待其他活跃 Worker 节点自动承接并尝试恢复。您可以稍后刷新状态或手动清理队列。';
           await setConfig(db, "explore_state", JSON.stringify(data));
       }
   }
@@ -1175,28 +1175,29 @@ app.get("/explore/status", async (c) => {
   data.isOwner = isAdmin;
   
   // Add queue info
-  let pendingTasks = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' OR status = 'processing' ORDER BY priority DESC, created_at ASC").all() as any[];
+  let pendingTasks = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' ORDER BY priority DESC, created_at ASC").all() as any[];
   
   const refillEnabled = await getConfig(db, "auto_refill_enabled", "false") === "true";
   data.autoRefillEnabled = refillEnabled;
 
-  // Proactive Auto-refill logic: if queue empty and refill enabled, fill it
-  if (refillEnabled && pendingTasks.length === 0) {
+  // Proactive Auto-refill logic: ensure at least 1 person is ALWAYS waiting (pending) in the queue if refill is enabled.
+  // We check if there are no 'pending' tasks (regardless of whether one is 'processing').
+  const actualPendingCount = (await db.prepare("SELECT COUNT(*) as count FROM explore_queue WHERE status = 'pending'").get() as any).count;
+  
+  if (refillEnabled && actualPendingCount === 0) {
       const { targetName, isEmpty } = await pickTarget(db);
       if (!isEmpty && targetName) {
-          await db.prepare("INSERT INTO explore_queue (target_name, priority) VALUES (?, 1)").run(targetName);
-          // Refresh pending tasks after refill
-          pendingTasks = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' OR status = 'processing' ORDER BY priority DESC, created_at ASC").all() as any[];
+          // Check if already in processing to avoid picking the same thing
+          const inProcessing = await db.prepare("SELECT COUNT(*) as count FROM explore_queue WHERE target_name = ? AND status = 'processing'").get(targetName) as any;
+          if (inProcessing.count === 0) {
+              await db.prepare("INSERT INTO explore_queue (target_name, priority) VALUES (?, 1)").run(targetName);
+              // Refresh pending tasks after refill
+              pendingTasks = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' ORDER BY priority DESC, created_at ASC").all() as any[];
+          }
       }
   }
 
   data.queue = pendingTasks.map(t => t.target_name);
-  
-  // Final consistency check for the queue list
-  // If we are supposed to be running a task, ensure it appears in the queue for the UI
-  if (data.status === 'running' && data.target && !data.queue.includes(data.target)) {
-      data.queue.unshift(data.target);
-  }
 
   return c.json(data);
 });
