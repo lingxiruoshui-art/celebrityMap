@@ -514,6 +514,19 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     }
   };
 
+  // Always ensure source has a value in admin mode if empty and not active
+  useEffect(() => {
+    if (allowAdminControls && !source && !isLoading && !pollStatusRef.current && hasInitialCheckDone && !error && !isPickingRandom) {
+      // Small delay to ensure any existing state is settled
+      const timer = setTimeout(() => {
+        if (!source && !isLoading && !pollStatusRef.current && !error && !isPickingRandom) {
+          handlePickRandomPair();
+        }
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [allowAdminControls, source, isLoading, hasInitialCheckDone, error, isPickingRandom, handlePickRandomPair]);
+
   const handleEnqueue = async (overrideName?: string) => {
     const finalTarget = overrideName || source;
     

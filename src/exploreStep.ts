@@ -11,6 +11,7 @@ export async function initExplorationState(
 ): Promise<ExploreState> {
   const state: ExploreState = {
     status: "running",
+    subStatus: "processing",
     phase: "init",
     target,
     source: source || 'explorer',

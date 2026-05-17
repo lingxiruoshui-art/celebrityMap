@@ -1,5 +1,6 @@
 export interface ExploreState {
   status: "idle" | "running" | "success" | "error";
+  subStatus?: "queued" | "processing" | "syncing" | null;
   phase: "init" | "ai_core" | "ai_extra" | "finalize";
   lastHeartbeat?: number;
   pulse?: number;

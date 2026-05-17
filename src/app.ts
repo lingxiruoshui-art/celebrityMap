@@ -613,6 +613,17 @@ app.post("/admin/people/:id/expand-connections", async (c) => {
           return;
       }
 
+      // Check if already has connections - skip if they do as per user request: "已经建立连线的人请跳过去"
+      const currentConnCount = await db.prepare(`
+        SELECT COUNT(*) as count FROM relationships WHERE person1_id = ? OR person2_id = ?
+      `).get(id, id) as any;
+      
+      if (currentConnCount && currentConnCount.count > 0) {
+        await send({ type: 'info', msg: `[${person.name}] 已有 ${currentConnCount.count} 条时空联系，跳过扩展。` });
+        await send({ type: 'result', addedCount: 0 });
+        return;
+      }
+
       await send({ type: 'step', msg: `初始化 [${person.name}] 的时空扩展任务...` });
 
       // 2. Get existing connection IDs
@@ -626,7 +637,14 @@ app.post("/admin/people/:id/expand-connections", async (c) => {
 
       // 3. Get candidates
       await send({ type: 'info', msg: "正在扫描馆藏档案库以匹配潜在连接点..." });
-      const candidates = await db.prepare("SELECT name FROM people WHERE id NOT IN (" + Array.from(existingIds).join(",") + ") ORDER BY RANDOM() LIMIT 50").all() as any[];
+      // Pick candidates who have NO existing connections yet, and are not the current person
+      // This satisfies the requirement: "仅扩展尚没有连线的人。已经建立连线的人请跳过去"
+      const candidates = await db.prepare(`
+        SELECT name FROM people 
+        WHERE id NOT IN (SELECT person1_id FROM relationships UNION SELECT person2_id FROM relationships)
+        AND id != ?
+        ORDER BY RANDOM() LIMIT 50
+      `).all(id) as any[];
       
       let addedCount = 0;
 
@@ -940,7 +958,13 @@ export async function pickTarget(db: DatabaseAdapter) {
   const queuedPeopleRows = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' OR status = 'processing'").all() as any[];
   queuedPeopleRows.forEach(t => archivedSet.add(t.target_name));
   
-  const shuffle = (array: any[]) => array.sort(() => 0.5 - Math.random());
+  const shuffle = (array: any[]) => {
+    for (let i = array.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
+  };
   
   // Priority 1: From pre-defined Figure Pool (Background Collection)
   const poolUnarchived: string[] = [];
@@ -1118,11 +1142,26 @@ app.get("/explore/status", async (c) => {
   let data = statusStr === "null" ? { status: "idle" } : JSON.parse(statusStr);
   
   let isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
-  const cronSecret = (c.env && c.env.CRON_SECRET) || "update_celeb";
+  const cronSecret = (c.env && (c.env as any).CRON_SECRET) || "update_celeb";
   if (!isAdmin && c.req.header("x-admin-password") === cronSecret) {
       isAdmin = true;
   }
   
+  // Consistency check: If status is running but target is missing, try to recover it from queue
+  if (data && data.status === 'running' && !data.target) {
+      const activeTask = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'processing' ORDER BY updated_at DESC LIMIT 1").get() as any;
+      if (activeTask) {
+          data.target = activeTask.target_name;
+          data.subStatus = 'processing';
+      } else {
+          const pendingTask = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1").get() as any;
+          if (pendingTask) {
+              data.target = pendingTask.target_name;
+              data.subStatus = 'queued';
+          }
+      }
+  }
+
   if (data && data.status === 'running') {
       const now = Date.now();
       const diff = now - (data.lastHeartbeat || now);
@@ -1143,17 +1182,21 @@ app.get("/explore/status", async (c) => {
 
   // Proactive Auto-refill logic: if queue empty and refill enabled, fill it
   if (refillEnabled && pendingTasks.length === 0) {
-      console.log(`[Status] Queue empty and auto-refill enabled. Refilling...`);
       const { targetName, isEmpty } = await pickTarget(db);
       if (!isEmpty && targetName) {
           await db.prepare("INSERT INTO explore_queue (target_name, priority) VALUES (?, 1)").run(targetName);
-          console.log(`[Status] Proactively auto-enqueued: ${targetName}`);
           // Refresh pending tasks after refill
           pendingTasks = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' OR status = 'processing' ORDER BY priority DESC, created_at ASC").all() as any[];
       }
   }
 
   data.queue = pendingTasks.map(t => t.target_name);
+  
+  // Final consistency check for the queue list
+  // If we are supposed to be running a task, ensure it appears in the queue for the UI
+  if (data.status === 'running' && data.target && !data.queue.includes(data.target)) {
+      data.queue.unshift(data.target);
+  }
 
   return c.json(data);
 });
@@ -1272,8 +1315,14 @@ app.get("/internal/next-task", async (c) => {
     
     const db = await getDb(c);
     
-    // Pick highest priority task
-    const task = await db.prepare("SELECT * FROM explore_queue WHERE status = 'pending' ORDER BY priority DESC, created_at ASC LIMIT 1").get() as any;
+    // Pick highest priority task, or a stale processing task (> 10 mins)
+    const task = await db.prepare(`
+        SELECT * FROM explore_queue 
+        WHERE status = 'pending' 
+        OR (status = 'processing' AND updated_at < datetime('now', '-10 minutes')) 
+        ORDER BY priority DESC, created_at ASC 
+        LIMIT 1
+    `).get() as any;
     
     const modelConfig = {
         provider: await getConfig(db, "active_model_provider", "gemini"),
@@ -1292,22 +1341,30 @@ app.get("/internal/next-task", async (c) => {
             console.log(`[Internal] Queue empty, auto-refill enabled. Picking random target...`);
             const { targetName, isEmpty } = await pickTarget(db);
             if (!isEmpty && targetName) {
-                const res = await db.prepare("INSERT INTO explore_queue (target_name, priority) VALUES (?, 1) RETURNING id").get(targetName) as any;
-                if (res) {
-                    taskToProcess = { id: res.id, target_name: targetName };
-                    console.log(`[Internal] Auto-enqueued: ${targetName}`);
-                }
+                // Use run() for broader compatibility and consistency
+                const res = await db.prepare("INSERT INTO explore_queue (target_name, priority) VALUES (?, 1)").run(targetName);
+                const taskId = res.lastInsertRowid;
+                taskToProcess = { id: taskId, target_name: targetName };
+                console.log(`[Internal] Auto-enqueued: ${targetName} (ID: ${taskId})`);
             }
         }
     }
     
     if (taskToProcess) {
-        console.log(`[Internal] Task found/auto-filled: ${taskToProcess.target_name}`);
-        const taskId = taskToProcess.id;
+        const taskId = taskToProcess.id || taskToProcess.lastInsertRowid;
+        console.log(`[Internal] Task found/auto-filled: ${taskToProcess.target_name} (ID: ${taskId})`);
         await db.prepare("UPDATE explore_queue SET status = 'processing', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(taskId);
-        await updateExplorationState(db, { status: "running", subStatus: "processing", taskId, target: taskToProcess.target_name }, { msg: `Worker 集群节点已承接任务 [${taskToProcess.target_name}]`, type: "api" });
-        return c.json({ taskId, targetName: taskToProcess.target_name, modelConfig });
+        await updateExplorationState(db, { status: "running", subStatus: "processing", taskId: Number(taskId), target: taskToProcess.target_name }, { msg: `Worker 集群节点已承接任务 [${taskToProcess.target_name}]`, type: "api" });
+        return c.json({ taskId: Number(taskId), targetName: taskToProcess.target_name, modelConfig });
     } else {
+        // If we are idle but the state still says running, reset it
+        let currentStr = await getConfig(db, "explore_state", "null");
+        if (currentStr !== "null") {
+            const state = JSON.parse(currentStr);
+            if (state.status === 'running') {
+                await updateExplorationState(db, { status: "idle", subStatus: null, target: null }, { msg: "所有任务已处理完毕，集群进入待命状态。", type: "info" });
+            }
+        }
         return c.json({ error: "No pending tasks" }, 404);
     }
 });
@@ -1372,9 +1429,7 @@ app.post("/internal/submit", async (c) => {
         // Save to D1
         try {
             await doFinalizeInsert(db, targetName, personData, wikiMeta, c,
-               async (db, id1, id2, type) => {
-                 await db.prepare("INSERT INTO relationships (person1_id, person2_id, relationship_type) VALUES (?, ?, ?) ON CONFLICT DO NOTHING").run(id1, id2, type);
-               },
+               addRelationship,
                (msg, type) => {
                  finalizeLogs.push({ msg, type });
                  db.prepare("INSERT INTO task_logs (task_id, type, msg) VALUES (?, ?, ?)").run(String(taskId || 'sys'), type, msg).catch(()=>null);

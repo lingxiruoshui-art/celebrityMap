@@ -80,7 +80,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
     setTimeout(() => setNotification(null), 3000);
   };
 
-  const [activeTask, setActiveTask] = useState<{ title: string; isRunning: boolean; source?: 'list' | 'explorer' } | null>(null);
+  const [activeTask, setActiveTask] = useState<{ title: string; isRunning: boolean; source?: 'list' | 'explorer'; target?: string } | null>(null);
   const [activeTaskLogs, setActiveTaskLogs] = useState<{type: 'info' | 'success' | 'error' | 'step' | 'ai-req' | 'ai-res' | 'heartbeat', msg: string, time: Date}[]>([]);
   const taskLogsContainerRef = useRef<HTMLDivElement>(null);
 
@@ -206,26 +206,41 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
           // Recovery logic: if global task is running but we didn't start a local task, 
           // or if local task logs are far behind global logs, sync them.
           if (data && isRunning && data.logs && data.logs.length > 0) {
-            if (!activeTask || (activeTaskLogs.length < (data.logs.length - 1))) {
-                if (!activeTask) {
-                    // Only auto-sync globally if it seems to be a list-oriented task or if we want global visibility
-                    // If it was started by the explorer, we might not want to show it in the list card
+            // Determine if we should sync based on state and current tab
+            const isExplorerTab = activeTab === 'archive_plus';
+            const hasExistingTask = !!activeTask;
+            const isExplorerTask = activeTask?.source === 'explorer';
+            const isArchivalTaskFromList = activeTask?.source === 'list' && activeTask?.title.includes('入库') && activeTask?.target === data.target;
+
+            // Only sync if:
+            // 1. We are in the explorer tab and it's an explorer task (or no task yet)
+            // 2. OR we are in the list tab and we specifically started a worker-based archival task that matches this global task
+            const shouldSync = (isExplorerTab && (!hasExistingTask || isExplorerTask)) || isArchivalTaskFromList;
+
+            if (shouldSync) {
+                if (!hasExistingTask) {
+                    // Only auto-spawn global task card if we are in the explorer tab
+                    if (!isExplorerTab) return;
+                    
                     setActiveTask({ 
                       title: `同步中: ${data.target}`, 
                       isRunning: true, 
-                      source: data.source || 'explorer'
+                      source: data.source || 'explorer',
+                      target: data.target
                     });
                 }
                 
-                // Map the logs from ExploreState format to AdminPanel format
-                const mappedLogs = data.logs.slice(-50).map((L: any) => ({
-                    type: L.type,
-                    msg: L.msg,
-                    time: L.timestamp && L.timestamp.includes(':') ? new Date() : new Date(L.timestamp) // rough mapping
-                }));
-                setActiveTaskLogs(mappedLogs);
+                // Only update logs if there's brand new data to prevent flickering or overwriting specialized logs
+                if (activeTaskLogs.length < (data.logs.length - 1)) {
+                    const mappedLogs = data.logs.slice(-50).map((L: any) => ({
+                        type: L.type,
+                        msg: L.msg,
+                        time: L.timestamp && L.timestamp.includes(':') ? new Date() : new Date(L.timestamp)
+                    }));
+                    setActiveTaskLogs(mappedLogs);
+                }
             }
-          } else if (data && data.status === 'success' && activeTask && activeTask.isRunning) {
+          } else if (data && data.status === 'success' && activeTask && activeTask.isRunning && (activeTask.source === 'explorer' || (activeTask.source === 'list' && activeTask.target === data.target))) {
               // Task finished elsewhere
               setActiveTask({ ...activeTask, isRunning: false });
               setActiveTaskLogs(prev => [...prev, { type: 'success', msg: '任务已成功完成', time: new Date() }]);
@@ -257,7 +272,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
       showNotification('info', '当前已有任务正在执行中，请耐心等待完成');
       return false;
     }
-    setActiveTask({ title: taskTitle, isRunning: true, source: 'list' });
+    setActiveTask({ title: taskTitle, isRunning: true, source: 'list', target: name });
     setActiveTaskLogs([
       { type: 'step', msg: '初始化数据同步任务...', time: new Date() },
       { type: 'info', msg: '正在从时空漩涡中检索人物拓扑特征...', time: new Date() }
@@ -297,12 +312,12 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
   };
 
   const expandConnections = async (id: number, name: string) => {
-    if (activeTask?.isRunning) {
+    if (activeTask?.isRunning && activeTask?.source === 'list') {
       showNotification('info', '当前已有任务正在执行中，请耐心等待完成');
       return;
     }
     setExpandingId(id);
-    setActiveTask({ title: `智能扩展联系 [${name}]`, isRunning: true, source: 'list' });
+    setActiveTask({ title: `智能扩展联系 [${name}]`, isRunning: true, source: 'list', target: name });
     setActiveTaskLogs([
       { type: 'step', msg: '初始化扩展任务...', time: new Date() },
       { type: 'step', msg: '提取人物知识图谱特征...', time: new Date() },
@@ -864,9 +879,9 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                           <div className="flex items-center justify-center gap-2">
                             <button 
                               onClick={() => expandConnections(p.id, p.name)} 
-                              title="智能扩展联系 (库内匹配)" 
-                              disabled={expandingId === p.id || activeTask?.isRunning}
-                              className={`p-2 rounded-lg transition-colors ${(expandingId === p.id || activeTask?.isRunning) ? (expandingId === p.id ? 'text-indigo-600 bg-indigo-50' : 'opacity-50 cursor-not-allowed text-slate-400') : 'text-emerald-500 hover:text-emerald-700 hover:bg-emerald-50'}`}
+                              title={p.connectionsCount > 0 ? "已有联系，跳过扩展" : "智能扩展联系 (库内匹配)"} 
+                              disabled={expandingId === p.id || (activeTask?.isRunning && activeTask?.source === 'list') || p.connectionsCount > 0}
+                              className={`p-2 rounded-lg transition-colors ${(expandingId === p.id || (activeTask?.isRunning && activeTask?.source === 'list') || p.connectionsCount > 0) ? (expandingId === p.id ? 'text-indigo-600 bg-indigo-50' : 'opacity-30 cursor-not-allowed text-slate-400') : 'text-emerald-500 hover:text-emerald-700 hover:bg-emerald-50'}`}
                             >
                               <UserPlus className={`w-4 h-4 ${expandingId === p.id ? 'animate-spin' : ''}`} />
                             </button>
