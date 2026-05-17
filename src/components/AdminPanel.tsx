@@ -217,8 +217,8 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
     if (selectedFeedbackIds.size === 0) return;
     setIsActionLoading(true);
     try {
-      const res = await fetch("/api/admin/feedback", {
-        method: "DELETE",
+      const res = await fetch("/api/admin/feedback/batch-delete", {
+        method: "POST",
         headers: { ...adminHeaders, "Content-Type": "application/json" },
         body: JSON.stringify({ ids: Array.from(selectedFeedbackIds) })
       });

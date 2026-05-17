@@ -26,7 +26,8 @@ app.use('*', async (c, next) => {
   const ip = c.req.header('cf-connecting-ip') || c.req.header('x-real-ip') || '';
 
   // Check for banned IP
-  if (ip) {
+  const isAdminRequest = c.req.header('x-admin-password') === getAdminPassword(c);
+  if (ip && !isAdminRequest) {
     const isBanned = await db.prepare("SELECT 1 FROM banned_ips WHERE ip = ?").get(ip);
     if (isBanned) {
       return c.json({ error: "Access denied from your IP address" }, 403);
@@ -662,7 +663,7 @@ app.get("/admin/feedback", async (c) => {
   return c.json(feedback);
 });
 
-app.delete("/admin/feedback", async (c) => {
+app.post("/admin/feedback/batch-delete", async (c) => {
   if (c.req.header("x-admin-password") !== getAdminPassword(c)) return c.json({ error: "Unauthorized" }, 401);
   const { ids } = await c.req.json();
   const db = await getDb(c);
