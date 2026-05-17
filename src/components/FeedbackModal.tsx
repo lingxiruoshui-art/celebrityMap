@@ -97,12 +97,21 @@ export default function FeedbackModal({ onClose }: FeedbackModalProps) {
     }
   };
 
+  const handleSaveQR = () => {
+    const link = document.createElement("a");
+    link.href = "/payment.jpg";
+    link.download = "wechat-pay-donation.jpg";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-300">
       <motion.div 
         initial={{ opacity: 0, scale: 0.95, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
-        className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl h-fit max-h-[90vh] md:h-[80vh] flex flex-col md:flex-row overflow-y-auto md:overflow-hidden relative"
+        className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl h-fit max-h-[90vh] md:h-[75vh] flex flex-col md:flex-row overflow-y-auto md:overflow-hidden relative"
       >
         {/* Left Side: Support/Donation */}
         <div className="w-full md:w-[35%] shrink-0 bg-slate-50 p-6 sm:p-8 border-b md:border-b-0 md:border-r border-slate-100 flex flex-col items-center text-center">
@@ -128,11 +137,14 @@ export default function FeedbackModal({ onClose }: FeedbackModalProps) {
             <div className="mt-4 text-[10px] md:text-[11px] font-bold text-slate-400 tracking-tighter">微信扫码赞助</div>
           </div>
 
-          <button className="w-full py-3 bg-slate-800 text-white rounded-xl font-bold text-sm hover:bg-slate-700 transition-all shadow-lg shadow-slate-200 shrink-0">
+          <button 
+            onClick={handleSaveQR}
+            className="w-full py-3 bg-slate-800 text-white rounded-xl font-bold text-sm hover:bg-slate-700 active:scale-[0.98] transition-all shadow-lg shadow-slate-200 shrink-0"
+          >
             保存收款码为图片
           </button>
           
-          <div className="mt-4 md:mt-auto pt-6 text-[10px] font-medium text-slate-400 shrink-0">
+          <div className="mt-6 pt-2 text-[10px] font-medium text-slate-400 shrink-0">
             您的每一分心意，都是我们继续前行的动力
           </div>
         </div>
