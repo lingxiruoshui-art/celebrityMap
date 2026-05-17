@@ -218,7 +218,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                 }
                 
                 // Map the logs from ExploreState format to AdminPanel format
-                const mappedLogs = data.logs.map((L: any) => ({
+                const mappedLogs = data.logs.slice(-50).map((L: any) => ({
                     type: L.type,
                     msg: L.msg,
                     time: L.timestamp && L.timestamp.includes(':') ? new Date() : new Date(L.timestamp) // rough mapping
@@ -783,7 +783,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                         ref={taskLogsContainerRef}
                         className="max-h-56 overflow-y-auto custom-scrollbar flex flex-col gap-1 text-[11px] font-mono leading-relaxed pb-1 pr-2"
                       >
-                        {activeTaskLogs.slice(-150).map((log, i) => (
+                        {activeTaskLogs.slice(-50).map((log, i) => (
                           <div key={i} className={`flex items-start gap-3 transition-all animate-in slide-in-from-left-1 duration-300 ${log.type === 'error' ? 'text-red-500 bg-red-50/50' : log.type === 'success' ? 'text-emerald-600 bg-emerald-50/30' : log.type === 'ai-req' || log.type === 'ai-res' || log.type === 'heartbeat' ? 'text-indigo-500' : 'text-slate-500'} rounded-md px-2 py-0.5`}>
                             <span className="opacity-25 min-w-[75px] shrink-0 font-sans text-[10px] tabular-nums">[{log.time.toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}]</span>
                             <span className="font-semibold break-all leading-tight">{log.msg}</span>

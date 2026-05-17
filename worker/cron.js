@@ -67,10 +67,16 @@ export default {
               
               let localLogs = [];
               const reportLog = async (logMsg, type = 'info', data = null) => {
-                  console.log(`[Log ${type}] ${logMsg}`);
-                  const timestamp = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+                  const logPrefix = `[Log ${type.toUpperCase()}]`;
+                  if (data) {
+                      console.log(`${logPrefix} ${logMsg} | Data:`, JSON.stringify(data));
+                  } else {
+                      console.log(`${logPrefix} ${logMsg}`);
+                  }
+                  
+                const timestamp = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
                   localLogs.push({ timestamp, msg: logMsg, type, data });
-                  if (localLogs.length > 50) localLogs = localLogs.slice(-50);
+                  if (localLogs.length > 50) localLogs.shift();
                   
                   await fetch(`${origin}/api/internal/log`, {
                       method: "POST",
@@ -101,7 +107,7 @@ export default {
                           taskId,
                           target: targetName,
                           ...updates,
-                          logs: localLogs,
+                          logs: localLogs.slice(-50),
                           lastHeartbeat: Date.now()
                       };
                       
@@ -187,6 +193,38 @@ export default {
                   }
               };
 
+              // Enhanced JSON parsing with safety
+              function safeParseJSON(text) {
+                  if (!text) return null;
+                  let cleanText = text.trim();
+                  // Strip markdown wrappers
+                  if (cleanText.startsWith('```')) {
+                      const match = cleanText.match(/```json\n([\s\S]*?)\n```/i) || cleanText.match(/```\n?([\s\S]*?)\n```/i);
+                      if (match) cleanText = match[1].trim();
+                      else cleanText = cleanText.replace(/```json/g, "").replace(/```/g, "").trim();
+                  }
+                  
+                  // Try to find the first '{' and last '}'
+                  const firstBrace = cleanText.indexOf('{');
+                  const lastBrace = cleanText.lastIndexOf('}');
+                  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+                      cleanText = cleanText.substring(firstBrace, lastBrace + 1);
+                  }
+
+                  try {
+                      return JSON.parse(cleanText.replace(/\n/g, ' '));
+                  } catch (e) {
+                      // One more try: remove everything outside brackets if it failed
+                      try {
+                          const sanited = cleanText.replace(/\r/g, '').replace(/\t/g, ' ');
+                          return JSON.parse(sanited);
+                      } catch (e2) {
+                          console.error("JSON Parse failed even after cleaning:", e2);
+                          return null;
+                      }
+                  }
+              }
+
               // ============ PHASE: INIT & WIKI ============
               if (!targetName) {
                   await reportLog("[System] 目标为空，AI 开始发散思考新目标...", "info");
@@ -271,10 +309,10 @@ export default {
               
               await reportLog("开始深度分析并构建核心时空档案...", "api");
               const coreResStr = await callAILocally(corePrompt, true, coreSchema);
-              let coreData = JSON.parse(coreResStr.replace(/\n/g, ' '));
+              let coreData = safeParseJSON(coreResStr);
               
-              if (coreData.accepted === false) {
-                  throw new Error(`目标似乎并非受支持的绝对真实历史人物大图鉴内容。`);
+              if (!coreData || coreData.accepted === false) {
+                  throw new Error(`目标基础资料缺失或并非受支持的绝对真实历史人物大图鉴内容。`);
               }
               
               await reportLog("核心档案确立。", "success");
@@ -296,7 +334,12 @@ export default {
               };
               
               const extraResStr = await callAILocally(extraPrompt, true, extraSchema);
-              let extraData = JSON.parse(extraResStr.replace(/\n/g, ' '));
+              let extraData = safeParseJSON(extraResStr);
+              
+              if (!extraData) {
+                  await reportLog("关联网计算异常，将尝试空值兼容。", "error");
+                  extraData = { achievements: [], relationships: [] };
+              }
               
               await reportLog("关联网计算完成。", "success");
               const finalPersonData = { ...coreData, ...extraData };
@@ -312,6 +355,14 @@ export default {
               
               if (!submitRes.ok) {
                   throw new Error(`入库异常: ` + await submitRes.text());
+              }
+              
+              const submitInfo = await submitRes.json();
+              if (submitInfo.serverLogs && Array.isArray(submitInfo.serverLogs)) {
+                  for (const sLog of submitInfo.serverLogs) {
+                      const sType = (sLog.type || 'SERVER').toUpperCase();
+                      console.log(`[Log ${sType}] (Pages) ${sLog.msg}`);
+                  }
               }
               
               await reportLog(`网络载体固化成功，${targetName} 已进入时空史册全息库`, "success");

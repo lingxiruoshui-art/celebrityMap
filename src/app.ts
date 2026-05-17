@@ -1060,7 +1060,7 @@ app.post("/archive-figure", async (c) => {
               const timestamp = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
               if (data.msg) {
                 state.logs.push({ timestamp, msg: data.msg, type: data.type || 'info' });
-                if (state.logs.length > 100) state.logs.shift();
+                if (state.logs.length > 50) state.logs.shift();
               }
               await updateGlobalState();
               
@@ -1280,7 +1280,7 @@ async function updateExplorationState(db: DatabaseAdapter, updates: any, newLog?
         const timestamp = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
         if (!state.logs) state.logs = [];
         state.logs.push({ timestamp, ...newLog });
-        if (state.logs.length > 100) state.logs.shift();
+        if (state.logs.length > 50) state.logs.shift();
     }
     
     state.lastHeartbeat = Date.now();
@@ -1498,6 +1498,8 @@ app.post("/internal/submit", async (c) => {
             await db.prepare("UPDATE explore_queue SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(taskId);
         }
         await updateExplorationState(db, { status: "running" }, { msg: `Worker 提交数据成功，开始进行同步落库 (${targetName})`, type: "api" });
+        
+        const finalizeLogs: any[] = [];
         // Save to D1
         try {
             await doFinalizeInsert(db, targetName, personData, wikiMeta, c,
@@ -1505,14 +1507,17 @@ app.post("/internal/submit", async (c) => {
                  await db.prepare("INSERT INTO relationships (person1_id, person2_id, relationship_type) VALUES (?, ?, ?) ON CONFLICT DO NOTHING").run(id1, id2, type);
                },
                (msg, type) => {
+                 finalizeLogs.push({ msg, type });
                  db.prepare("INSERT INTO task_logs (task_id, type, msg) VALUES (?, ?, ?)").run(String(taskId || 'sys'), type, msg).catch(()=>null);
                  updateExplorationState(db, {}, { msg, type }).catch(()=>null);
                }
             );
             await updateExplorationState(db, { status: "success", newArrivals: [targetName] }, { msg: `任务落库成功，入库流程终止。`, type: "api" });
+            return c.json({ success: true, serverLogs: finalizeLogs });
         } catch (e: any) {
             console.error("Save error:", e);
             await updateExplorationState(db, { status: "error", error: e.message }, { msg: `任务落库失败: ${e.message}`, type: "error" });
+            return c.json({ success: false, error: e.message });
         }
     } else {
         if (taskId) {
