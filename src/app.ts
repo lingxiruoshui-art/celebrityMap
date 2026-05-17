@@ -613,38 +613,21 @@ app.post("/admin/people/:id/expand-connections", async (c) => {
           return;
       }
 
-      // Check if already has connections - skip if they do as per user request: "已经建立连线的人请跳过去"
-      const currentConnCount = await db.prepare(`
-        SELECT COUNT(*) as count FROM relationships WHERE person1_id = ? OR person2_id = ?
-      `).get(id, id) as any;
-      
-      if (currentConnCount && currentConnCount.count > 0) {
-        await send({ type: 'info', msg: `[${person.name}] 已有 ${currentConnCount.count} 条时空联系，跳过扩展。` });
-        await send({ type: 'result', addedCount: 0 });
-        return;
-      }
-
       await send({ type: 'step', msg: `初始化 [${person.name}] 的时空扩展任务...` });
 
-      // 2. Get existing connection IDs
-      const existingConnections = await db.prepare(`
-        SELECT person1_id as other_id FROM relationships WHERE person2_id = ?
-        UNION
-        SELECT person2_id as other_id FROM relationships WHERE person1_id = ?
-      `).all(id, id) as any[];
-      const existingIds = new Set(existingConnections.map(cc => cc.other_id));
-      existingIds.add(parseInt(id));
-
-      // 3. Get candidates
+      // 2. Get candidates
       await send({ type: 'info', msg: "正在扫描馆藏档案库以匹配潜在连接点..." });
-      // Pick candidates who have NO existing connections yet, and are not the current person
-      // This satisfies the requirement: "仅扩展尚没有连线的人。已经建立连线的人请跳过去"
+      // Pick 50 random people excluding the current person and those already connected
       const candidates = await db.prepare(`
         SELECT name FROM people 
-        WHERE id NOT IN (SELECT person1_id FROM relationships UNION SELECT person2_id FROM relationships)
-        AND id != ?
+        WHERE id != ?
+        AND id NOT IN (
+          SELECT person1_id FROM relationships WHERE person2_id = ?
+          UNION
+          SELECT person2_id FROM relationships WHERE person1_id = ?
+        )
         ORDER BY RANDOM() LIMIT 50
-      `).all(id) as any[];
+      `).all(id, id, id) as any[];
       
       let addedCount = 0;
 

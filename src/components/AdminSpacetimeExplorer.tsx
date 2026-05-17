@@ -775,9 +775,9 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                             
                             <button 
                               onClick={() => handlePickRandomPair()}
-                              disabled={isPickingRandom || isLoading}
+                              disabled={isPickingRandom || isAutoRefillEnabled}
                               title="手动刷新推荐人物"
-                              className="absolute right-3 top-2.5 text-slate-300 hover:text-indigo-500 transition-colors disabled:opacity-30"
+                              className={`absolute right-3 top-2.5 transition-colors ${isPickingRandom || isAutoRefillEnabled ? 'text-slate-200 cursor-not-allowed' : 'text-slate-300 hover:text-indigo-500'}`}
                             >
                               <RefreshCw className={`w-3.5 h-3.5 ${isPickingRandom ? 'animate-spin text-indigo-500' : ''}`} />
                             </button>

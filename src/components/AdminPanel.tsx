@@ -320,7 +320,8 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
     setActiveTask({ title: `智能扩展联系 [${name}]`, isRunning: true, source: 'list', target: name });
     setActiveTaskLogs([
       { type: 'step', msg: '初始化扩展任务...', time: new Date() },
-      { type: 'step', msg: '提取人物知识图谱特征...', time: new Date() },
+      { type: 'step', msg: '正在对齐时空档案库特征...', time: new Date() },
+      { type: 'info', msg: '正在扫描馆藏档案库以匹配潜在连接点...', time: new Date() },
       { type: 'ai-req', msg: '正在调用 AI 匹配馆藏人物网络 (耗时约 5-10 秒)...', time: new Date() }
     ]);
     
@@ -879,9 +880,9 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                           <div className="flex items-center justify-center gap-2">
                             <button 
                               onClick={() => expandConnections(p.id, p.name)} 
-                              title={p.connectionsCount > 0 ? "已有联系，跳过扩展" : "智能扩展联系 (库内匹配)"} 
-                              disabled={expandingId === p.id || (activeTask?.isRunning && activeTask?.source === 'list') || p.connectionsCount > 0}
-                              className={`p-2 rounded-lg transition-colors ${(expandingId === p.id || (activeTask?.isRunning && activeTask?.source === 'list') || p.connectionsCount > 0) ? (expandingId === p.id ? 'text-indigo-600 bg-indigo-50' : 'opacity-30 cursor-not-allowed text-slate-400') : 'text-emerald-500 hover:text-emerald-700 hover:bg-emerald-50'}`}
+                              title="智能扩展联系 (馆藏库内匹配)" 
+                              disabled={expandingId === p.id || (activeTask?.isRunning && activeTask?.source === 'list')}
+                              className={`p-2 rounded-lg transition-colors ${(expandingId === p.id || (activeTask?.isRunning && activeTask?.source === 'list')) ? (expandingId === p.id ? 'text-indigo-600 bg-indigo-50' : 'opacity-30 cursor-not-allowed text-slate-400') : 'text-emerald-500 hover:text-emerald-700 hover:bg-emerald-50'}`}
                             >
                               <UserPlus className={`w-4 h-4 ${expandingId === p.id ? 'animate-spin' : ''}`} />
                             </button>
