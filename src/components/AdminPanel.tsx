@@ -718,6 +718,16 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
                   </div>
                 )}
+                {activeTab === 'archive' && (
+                  <button
+                    onClick={fetchArchive}
+                    disabled={isRefreshing}
+                    title="刷新馆藏列表"
+                    className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-5 h-5 ${isRefreshing ? 'animate-spin' : ''}`} />
+                  </button>
+                )}
                 {activeTab === 'config' && (
                   <button
                     onClick={saveAllConfig}
@@ -874,7 +884,23 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                         </td>
                         <td className="px-4 py-3 text-sm font-mono text-slate-600 whitespace-nowrap">{p.views}</td>
                         <td className="px-4 py-3 text-sm text-slate-600 whitespace-nowrap">
-                          {new Date((p as any).created_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
+                          {(() => {
+                            const dateStr = (p as any).created_at;
+                            if (!dateStr) return "-";
+                            // SQLite CURRENT_TIMESTAMP is "YYYY-MM-DD HH:MM:SS" (UTC)
+                            // We replace space with T and add Z to ensure JS parses it as UTC
+                            const utcDate = new Date(dateStr.replace(" ", "T") + "Z");
+                            return utcDate.toLocaleString('zh-CN', { 
+                              timeZone: 'Asia/Shanghai', 
+                              year: 'numeric', 
+                              month: '2-digit', 
+                              day: '2-digit', 
+                              hour: '2-digit', 
+                              minute: '2-digit', 
+                              second: '2-digit', 
+                              hour12: false 
+                            });
+                          })()}
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-center gap-2">
