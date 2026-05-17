@@ -1118,10 +1118,10 @@ async function updateExplorationState(db: DatabaseAdapter, updates: any, newLog?
         if (!state.logs) state.logs = [];
         state.logs.push({ 
             timestamp, 
-            source: newLog.source || "server", // Default to server/local
+            source: newLog.source || "server",
             ...newLog 
         });
-        if (state.logs.length > 50) state.logs.shift();
+        if (state.logs.length > 200) state.logs.shift();
     }
     
     state.lastHeartbeat = Date.now();
@@ -1355,7 +1355,7 @@ app.get("/internal/next-task", async (c) => {
         const taskId = taskToProcess.id || taskToProcess.lastInsertRowid;
         console.log(`[Internal] Task found/auto-filled: ${taskToProcess.target_name} (ID: ${taskId})`);
         await db.prepare("UPDATE explore_queue SET status = 'processing', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(taskId);
-        await updateExplorationState(db, { status: "running", subStatus: "processing", taskId: Number(taskId), target: taskToProcess.target_name }, { msg: `Worker 集群节点已承接任务 [${taskToProcess.target_name}]`, type: "api" });
+        await updateExplorationState(db, { status: "running", subStatus: "processing", taskId: Number(taskId), target: taskToProcess.target_name }, { msg: `[Worker] 已承接并开始执行任务: ${taskToProcess.target_name}`, type: "api", source: "worker" });
         return c.json({ taskId: Number(taskId), targetName: taskToProcess.target_name, modelConfig });
     } else {
         // If we are idle but the state still says running, reset it
@@ -1375,6 +1375,13 @@ app.post("/internal/state", async (c) => {
     if (!checkInternalSecret(c)) return c.json({ error: "Unauthorized" }, 401);
     const db = await getDb(c);
     const state = await c.req.json();
+    
+    // Heartbeat check
+    if (state.lastHeartbeat) {
+        // Maybe log every 10 mins or so?
+        // For now, let's just sync the state.
+    }
+    
     console.log(`[Internal] State sync from worker: status=${state.status}, target=${state.target}`);
     await setConfig(db, "explore_state", JSON.stringify(state));
     return c.json({ success: true });
@@ -1492,7 +1499,7 @@ app.post("/explore/enqueue", async (c) => {
         target: targetName,
         taskId: taskId,
         error: null
-    }, { msg: `任务已入队: ${targetName}`, type: "api" });
+    }, { msg: `[Pages] 提交入队请求: ${targetName}`, type: "api", source: "pages" });
     
     return c.json({ success: true, message: `已将 ${targetName} 加入探索队列！后台 Worker 会自动拉取执行。`, taskId });
 });
@@ -1525,7 +1532,7 @@ app.post("/explore/start", async (c) => {
       taskId: taskId,
       source: reqSource || 'explorer',
       error: null
-  }, { msg: `任务已发布至集群: ${targetName}`, type: "api" });
+  }, { msg: `[Pages] 请求发布任务至集群: ${targetName}`, type: "api", source: "pages" });
 
   return c.json({ success: true, taskId, targetName });
 });
@@ -1547,6 +1554,7 @@ app.post("/explore/stop", async (c) => {
          state.error = '探索已中止';
          const stateStr = JSON.stringify(state);
          await setConfig(db, "explore_state", stateStr);
+         await updateExplorationState(db, {}, { msg: "[Pages] 用户中止了当前探测任务", type: "error", source: "pages" });
       }
   }
   return c.json({ success: true });
@@ -1571,7 +1579,20 @@ app.post("/explore/reset", async (c) => {
       return c.json({ error: "无权操作" }, 403);
   }
 
-  await setConfig(db, "explore_state", "null");
+  let statusStr = await getConfig(db, "explore_state", "null");
+  if (statusStr !== "null") {
+      let state = JSON.parse(statusStr);
+      state.status = "idle";
+      state.target = null;
+      state.subStatus = null;
+      state.steps = [];
+      // Keep state.logs for persistent rolling logs
+      await setConfig(db, "explore_state", JSON.stringify(state));
+      await updateExplorationState(db, {}, { msg: "[Pages] 重置集群状态与当前任务", type: "info", source: "pages" });
+  } else {
+      await setConfig(db, "explore_state", JSON.stringify({ status: "idle", logs: [], steps: [] }));
+  }
+  
   return c.json({ success: true });
 });
 
