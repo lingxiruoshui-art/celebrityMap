@@ -1267,6 +1267,27 @@ app.post("/ai/proxy", async (c) => {
   }
 });
 
+// Helper to update global exploration state with logs
+async function updateExplorationState(db: DatabaseAdapter, updates: any, newLog?: { msg: string, type: string, data?: any }) {
+    let currentStr = await getConfig(db, "explore_state", "null");
+    let state: any = currentStr === "null" ? { status: 'idle', logs: [], steps: [] } : JSON.parse(currentStr);
+    
+    // Merge updates
+    state = { ...state, ...updates };
+    
+    // Append log if provided
+    if (newLog) {
+        const timestamp = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+        if (!state.logs) state.logs = [];
+        state.logs.push({ timestamp, ...newLog });
+        if (state.logs.length > 100) state.logs.shift();
+    }
+    
+    state.lastHeartbeat = Date.now();
+    await setConfig(db, "explore_state", JSON.stringify(state));
+    return state;
+}
+
 app.get("/explore/status", async (c) => {
   const db = await getDb(c);
   
@@ -1287,27 +1308,18 @@ app.get("/explore/status", async (c) => {
   
   if (data && data.status === 'running') {
       const now = Date.now();
-      // Initialize if missing (safety)
-      if (!data.lastHeartbeat) {
-          data.lastHeartbeat = now;
-          await setConfig(db, "explore_state", JSON.stringify(data));
-      }
-      
-      const diff = now - data.lastHeartbeat;
+      const diff = now - (data.lastHeartbeat || now);
       if (diff > 600000) { // 600 seconds (10 minutes)
           data.status = 'error';
           data.error = '探索任务被系统认定为已脱机（持续 >10min 无响应）。可能由于大模型 API 限流、网络波动或响应过慢导致。请检查 API 状态或网络连接后重试。';
-          const newState = JSON.stringify(data);
-          await setConfig(db, "explore_state", newState);
+          await setConfig(db, "explore_state", JSON.stringify(data));
       }
   }
 
   data.isOwner = isAdmin;
 
-  // if not admin, strip logs to avoid exposing potential error stacks or prompt info
-  if (!isAdmin) {
-      data.logs = [];
-  }
+  // We keep logs even for non-admins now for transparency in "Running Logs" UI, but we could strip sensitive data
+  // But since the request asks for ALL back-and-forth communication, we should show them.
   return c.json(data);
 });
 
@@ -1429,17 +1441,20 @@ app.get("/internal/next-task", async (c) => {
         provider: await getConfig(db, "active_model_provider", "gemini"),
         apiKey: await getConfig(db, "gemini_api_key") || c.env.GEMINI_API_KEY || "",
         aliyunApiKey: await getConfig(db, "aliyun_api_key") || "",
+        aliyunModelId: await getConfig(db, "aliyun_model_id") || "qwen-max",
         modelId: await getConfig(db, "gemini_model_id") || "gemini-1.5-flash",
     };
     
     if (task) {
         await db.prepare("UPDATE explore_queue SET status = 'processing', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(task.id);
+        await updateExplorationState(db, { status: "running", taskId: task.id, target: task.target_name }, { msg: "Worker 已拉取到队列任务，开始执行", type: "api" });
         return c.json({ taskId: task.id, targetName: task.target_name, modelConfig });
     } else {
         // Automatically generate next task in Worker, tell worker targetName is empty ONLY if cron is enabled
         const cronEnabled = await getConfig(db, "cron_interval_enabled", "false") === "true";
         if (!cronEnabled) return c.json({ error: "No pending tasks and auto-explore is disabled." }, 404);
         
+        await updateExplorationState(db, { status: "running" }, { msg: "Worker 正准备自动探索新的人物...", type: "api" });
         return c.json({ taskId: Date.now(), targetName: "", modelConfig });
     }
 });
@@ -1449,6 +1464,7 @@ app.post("/internal/state", async (c) => {
     if (!checkInternalSecret(c)) return c.json({ error: "Unauthorized" }, 401);
     const db = await getDb(c);
     const state = await c.req.json();
+    // We prefer the merged approach via updateExplorationState, but the worker currently sends the whole state
     await setConfig(db, "explore_state", JSON.stringify(state));
     return c.json({ success: true });
 });
@@ -1460,6 +1476,7 @@ app.post("/internal/log", async (c) => {
     const { taskId, type, msg, data } = await c.req.json();
     try {
         await db.prepare("INSERT INTO task_logs (task_id, type, msg, data) VALUES (?, ?, ?, ?)").run(String(taskId), type, msg, data ? JSON.stringify(data) : null);
+        await updateExplorationState(db, {}, { msg, type, data });
     } catch (e) {}
     return c.json({ success: true });
 });
@@ -1476,6 +1493,7 @@ app.post("/internal/submit", async (c) => {
         if (taskId) {
             await db.prepare("UPDATE explore_queue SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(taskId);
         }
+        await updateExplorationState(db, { status: "running" }, { msg: `Worker 提交数据成功，开始进行同步落库 (${targetName})`, type: "api" });
         // Save to D1
         try {
             await doFinalizeInsert(db, targetName, personData, wikiMeta, c,
@@ -1484,15 +1502,19 @@ app.post("/internal/submit", async (c) => {
                },
                (msg, type) => {
                  db.prepare("INSERT INTO task_logs (task_id, type, msg) VALUES (?, ?, ?)").run(String(taskId || 'sys'), type, msg).catch(()=>null);
+                 updateExplorationState(db, {}, { msg, type }).catch(()=>null);
                }
             );
+            await updateExplorationState(db, { status: "success", newArrivals: [targetName] }, { msg: `任务落库成功，入库流程终止。`, type: "api" });
         } catch (e: any) {
             console.error("Save error:", e);
+            await updateExplorationState(db, { status: "error", error: e.message }, { msg: `任务落库失败: ${e.message}`, type: "error" });
         }
     } else {
         if (taskId) {
             await db.prepare("UPDATE explore_queue SET status = 'error', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(taskId);
         }
+        await updateExplorationState(db, { status: "error", error: error || "Worker 任务执行失败" }, { msg: `Worker 汇报任务失败: ${error}`, type: "error" });
     }
     
     return c.json({ success: true });
@@ -1508,7 +1530,19 @@ app.post("/explore/enqueue", async (c) => {
     if (!targetName) return c.json({ error: "Invalid target" }, 400);
     
     // Priority 1 triggers it ahead of background auto-tasks (priority 0)
-    await db.prepare("INSERT INTO explore_queue (target_name, priority) VALUES (?, 1)").run(targetName);
+    const res = await db.prepare("INSERT INTO explore_queue (target_name, priority) VALUES (?, 1) RETURNING id").get() as any;
+    const taskId = res.id;
+    
+    // Initialize state so UI sees the task is queued
+    await updateExplorationState(db, {
+        status: "running",
+        target: targetName,
+        taskId: taskId,
+        steps: [{ msg: "探索任务已加入队列，等待 Worker 连接...", status: "pending", startTime: Date.now() }],
+        logs: [],
+        path: null,
+        error: null
+    }, { msg: `任务已入队: ${targetName}`, type: "api" });
     
     return c.json({ success: true, message: `已将 ${targetName} 加入探索队列！后台 Worker 会自动拉取执行。` });
 });

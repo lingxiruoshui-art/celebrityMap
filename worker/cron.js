@@ -80,8 +80,7 @@ export default {
                       body: JSON.stringify({ taskId, msg: logMsg, type, data })
                   }).catch(()=>{});
                   
-                  // Also update global state immediately so UI can see
-                  await reportState({});
+                  // reportState is now managed by the backend's /internal/log endpoint for better consistency
               };
               
               // Helper to update Pages global state
@@ -121,40 +120,68 @@ export default {
               
               // Define callAI helper
               const callAILocally = async (prompt, isJson = true, schema = null) => {
-                  if (modelConfig.provider !== "gemini") {
-                      throw new Error(`Worker currently supports Gemini provider only.`);
-                  }
+                  const isAliyun = modelConfig.provider === "aliyun";
+                  const apiKey = isAliyun ? modelConfig.aliyunApiKey : modelConfig.apiKey;
+                  const modelId = isAliyun ? (modelConfig.aliyunModelId || "qwen-max") : (modelConfig.modelId || "gemini-1.5-flash");
                   
-                  const apiKey = modelConfig.apiKey;
-                  const modelId = modelConfig.modelId || "gemini-1.5-flash";
-                  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
+                  if (!apiKey) throw new Error(`Missing ${isAliyun ? 'Aliyun' : 'Gemini'} API Key in worker.`);
+
+                  const url = isAliyun 
+                    ? "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+                    : `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
+                  
+                  await reportLog(`请求 AI (${isAliyun ? 'Aliyun' : 'Gemini'}): ${modelId}`, "ai-req", { prompt: prompt.substring(0, 100) + "..." });
                   
                   // Simple retry logic
                   for (let i = 0; i < 3; i++) {
                       try {
-                          const requestBody = {
-                              contents: [{ parts: [{ text: prompt }] }],
-                              generationConfig: isJson ? { responseMimeType: "application/json" } : {}
-                          };
-                          
-                          if (isJson && schema) {
-                              requestBody.generationConfig.responseSchema = schema;
+                          let res;
+                          if (isAliyun) {
+                              res = await fetch(url, {
+                                  method: "POST",
+                                  headers: { 
+                                      "Authorization": `Bearer ${apiKey}`,
+                                      "Content-Type": "application/json" 
+                                  },
+                                  body: JSON.stringify({
+                                      model: modelId,
+                                      messages: [
+                                          { role: "system", content: "You are a helpful assistant." },
+                                          { role: "user", content: prompt }
+                                      ],
+                                      ...(isJson ? { response_format: { type: "json_object" } } : {})
+                                  })
+                              });
+                          } else {
+                              const requestBody = {
+                                  contents: [{ parts: [{ text: prompt }] }],
+                                  generationConfig: isJson ? { responseMimeType: "application/json" } : {}
+                              };
+                              if (isJson && schema) requestBody.generationConfig.responseSchema = schema;
+                              
+                              res = await fetch(url, {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify(requestBody)
+                              });
                           }
                           
-                          const res = await fetch(url, {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify(requestBody)
-                          });
-                          
                           const data = await res.json();
-                          if (data.error) throw new Error(data.error.message || "Unknown API error");
+                          if (data.error) throw new Error(data.error.message || "Unknown AI API error");
                           
-                          return data.candidates[0].content.parts[0].text;
+                          let content = "";
+                          if (isAliyun) {
+                              content = data.choices[0].message.content;
+                          } else {
+                              content = data.candidates[0].content.parts[0].text;
+                          }
+                          
+                          await reportLog(`AI 响应成功 (${isAliyun ? 'Aliyun' : 'Gemini'})`, "ai-res", { preview: content.substring(0, 100) + "..." });
+                          return content;
                       } catch (e) {
                           if (i === 2) throw e;
-                          await new Promise(r => setTimeout(r, 2000 * (i+1))); // wait
-                          await reportLog(`AI 请求失败，正在重试 (${i+1}/3)...`, "heartbeat");
+                          await new Promise(r => setTimeout(r, 2000 * (i+1))); 
+                          await reportLog(`AI 请求失败 (${isAliyun ? 'Aliyun' : 'Gemini'})，正在重试 (${i+1}/3)...: ${e.message}`, "heartbeat");
                       }
                   }
               };
