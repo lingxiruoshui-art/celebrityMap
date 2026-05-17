@@ -210,7 +210,7 @@ export default function App() {
             </div>
           </div>
           <div className="flex items-center gap-2 sm:gap-6 text-sm flex-shrink-0">
-            <div className="hidden lg:flex text-sm px-4 py-1.5 rounded-xl border border-slate-200 text-indigo-600 font-medium bg-white/80 shadow-sm whitespace-nowrap items-center justify-center">
+            <div className="flex text-[10px] sm:text-sm px-2.5 sm:px-4 py-1 sm:py-1.5 rounded-lg sm:rounded-xl border border-slate-200 text-indigo-600 font-medium bg-white/80 shadow-sm whitespace-nowrap items-center justify-center">
               共收录：{data.people.length} 位
             </div>
             <button

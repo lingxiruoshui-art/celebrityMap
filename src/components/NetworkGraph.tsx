@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { motion, useDragControls } from "motion/react";
 import * as d3 from "d3";
 import { Person, Relationship } from "../types";
@@ -40,6 +40,77 @@ export default function NetworkGraph({
   } | null>(null);
 
   const controls = useDragControls();
+  
+  // Slicing and filtering logic for performance with large datasets (10,000+ people)
+  // We only render a manageable "active subset" of the graph
+  const filteredNodes = useMemo(() => {
+    if (people.length <= 200) return people;
+    
+    const maxNodes = 200;
+    const activeId = selectedPersonId;
+    const seenIds = new Set<number>();
+    const result: Person[] = [];
+
+    // 1. Add selected person
+    if (activeId) {
+      const p = people.find(persona => persona.id === activeId);
+      if (p) {
+        result.push(p);
+        seenIds.add(p.id);
+      }
+    }
+
+    // 2. Add direct neighbors of selected person
+    if (activeId) {
+      const neighbors = relationships
+        .filter(r => r.person1_id === activeId || r.person2_id === activeId)
+        .map(r => r.person1_id === activeId ? r.person2_id : r.person1_id);
+      
+      for (const nid of neighbors) {
+        if (result.length >= maxNodes) break;
+        if (!seenIds.has(nid)) {
+          const p = people.find(persona => persona.id === nid);
+          if (p) {
+            result.push(p);
+            seenIds.add(p.id);
+          }
+        }
+      }
+    }
+
+    // 3. Add newest arrivals (up to 20)
+    const sortedByNewest = [...people].sort((a, b) => 
+      new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+    );
+    for (const p of sortedByNewest.slice(0, 20)) {
+      if (result.length >= maxNodes) break;
+      if (!seenIds.has(p.id)) {
+        result.push(p);
+        seenIds.add(p.id);
+      }
+    }
+
+    // 4. Fill remaining with random people to keep the globe populated
+    const remainingCount = maxNodes - result.length;
+    if (remainingCount > 0) {
+      // Simple "random" by taking people at even intervals if we have a lot
+      const step = Math.max(1, Math.floor(people.length / remainingCount));
+      for (let i = 0; i < people.length && result.length < maxNodes; i += step) {
+        const p = people[i];
+        if (!seenIds.has(p.id)) {
+          result.push(p);
+          seenIds.add(p.id);
+        }
+      }
+    }
+
+    return result;
+  }, [people, relationships, selectedPersonId]);
+
+  const filteredRelationships = useMemo(() => {
+    const nodeIds = new Set(filteredNodes.map(p => p.id));
+    return relationships.filter(r => nodeIds.has(r.person1_id) && nodeIds.has(r.person2_id));
+  }, [filteredNodes, relationships]);
 
   useEffect(() => {
     setChatState(null);
@@ -208,7 +279,7 @@ export default function NetworkGraph({
 
     // Distribute people evenly using a Fibonacci Sphere algorithm
     // Sorting by ID ensures stable indexing so existing nodes only shift slightly when new ones are added
-    const sortedPeople = [...people].sort((a, b) => a.id - b.id);
+    const sortedPeople = [...filteredNodes].sort((a, b) => a.id - b.id);
     const maxCreatedAt = sortedPeople.length > 0 
       ? Math.max(...sortedPeople.map(p => p.created_at ? new Date(p.created_at).getTime() : 0)) 
       : 0;
@@ -243,7 +314,7 @@ export default function NetworkGraph({
     });
 
     // Create Links
-    const links = relationships.map(r => {
+    const links = filteredRelationships.map(r => {
       const sourcePerson = processedPeople.find(p => p.id === r.person1_id);
       const targetPerson = processedPeople.find(p => p.id === r.person2_id);
       
@@ -267,15 +338,15 @@ export default function NetworkGraph({
     const linkElements = linksLayer.selectAll("path")
       .data(links)
       .join("path")
-      .attr("id", d => d.id)
-      .attr("class", d => `relationship-path ${d.isNewestLink ? 'is-new-arrival' : ''}`)
+      .attr("id", (d: any) => d.id)
+      .attr("class", (d: any) => `relationship-path ${d.isNewestLink ? 'is-new-arrival' : ''}`)
       .attr("fill", "none")
-      .attr("stroke", d => {
+      .attr("stroke", (d: any) => {
         if (d.inPath) return "#ef4444";
         return "#94a3b8";
       })
-      .attr("stroke-opacity", d => d.inPath ? 1 : 0.55)
-      .attr("stroke-width", d => {
+      .attr("stroke-opacity", (d: any) => d.inPath ? 1 : 0.55)
+      .attr("stroke-width", (d: any) => {
         if (d.inPath) return 1.75;
         return 0.6;
       })
@@ -295,7 +366,7 @@ export default function NetworkGraph({
             .attr("repeatCount", "indefinite")
             .attr("rotate", "auto")
             .append("mpath")
-              .attr("href", d => `#${d.id}`);
+              .attr("href", (d: any) => `#${d.id}`);
           return g;
         },
         update => update,
@@ -343,9 +414,9 @@ export default function NetworkGraph({
         // Highlight connected links
         const hasPath = discoveryPath && discoveryPath.length > 1;
         linkElements
-          .attr("stroke", l => (hasPath && l.inPath) ? "#10b981" : ((l.sourcePerson.id === d.id || l.targetPerson.id === d.id) ? "#3b82f6" : "#475569"))
-          .attr("stroke-opacity", l => (l.sourcePerson.id === d.id || l.targetPerson.id === d.id) ? 1 : (hasPath && l.inPath ? 1 : 0.25))
-          .attr("stroke-width", l => (l.sourcePerson.id === d.id || l.targetPerson.id === d.id) ? 2.5 : (hasPath && l.inPath ? 2.8 : 0.8));
+          .attr("stroke", (l: any) => (hasPath && l.inPath) ? "#10b981" : ((l.sourcePerson.id === d.id || l.targetPerson.id === d.id) ? "#3b82f6" : "#475569"))
+          .attr("stroke-opacity", (l: any) => (l.sourcePerson.id === d.id || l.targetPerson.id === d.id) ? 1 : (hasPath && l.inPath ? 1 : 0.25))
+          .attr("stroke-width", (l: any) => (l.sourcePerson.id === d.id || l.targetPerson.id === d.id) ? 2.5 : (hasPath && l.inPath ? 2.8 : 0.8));
       })
       .on("mouseleave", function(event, d: any) {
         isHoveringNode = false;
@@ -428,19 +499,19 @@ export default function NetworkGraph({
       const hasPath = discoveryPath && discoveryPath.length > 1;
       
       linkElements
-        .classed("is-bridge", d => !!hasPath && d.inPath)
-        .classed("is-selected-rel", d => !!activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId))
-        .attr("stroke", d => {
+        .classed("is-bridge", (d: any) => !!hasPath && d.inPath)
+        .classed("is-selected-rel", (d: any) => !!activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId))
+        .attr("stroke", (d: any) => {
           if (hasPath && d.inPath) return "#10b981"; // Discovery path: Emerald Green (Solid/Stable)
           if (activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId)) return "#3b82f6"; // Focal Person: Bright Blue
           return "#475569"; // Unified base grey: Darker Slate for visibility
         })
-        .attr("stroke-opacity", d => {
+        .attr("stroke-opacity", (d: any) => {
            if (activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId)) return 1;
            if (hasPath && d.inPath) return 1;
            return (activeId || hasPath ? 0.2 : 0.6);
         })
-        .attr("stroke-width", d => {
+        .attr("stroke-width", (d: any) => {
           if (activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId)) return 2.0;
           if (hasPath && d.inPath) return 2.8;
           return 0.8;
@@ -497,7 +568,7 @@ export default function NetworkGraph({
         .style("opacity", function(this: any, d: any) {
            if (d.id === activeId || d.isNewest) return 1;
            if (discoveryPath && discoveryPath.some(p => p.name === d.name)) return 1;
-           return (scaleRef.current > 1.5 || people.length <= 25) ? 1 : 0;
+           return (scaleRef.current > 1.5 || filteredNodes.length <= 25) ? 1 : 0;
         })
         .style("font-size", (d: any) => {
            if (d.id === activeId) return "16px";
@@ -614,11 +685,10 @@ export default function NetworkGraph({
     });
 
     updateGlobe();
-
     return () => {
       rotationTimer.stop();
     };
-  }, [people, relationships, discoveryPath, selectedPersonId, dimensions]);
+  }, [filteredNodes, filteredRelationships, discoveryPath, selectedPersonId, dimensions]);
 
   const dialogWidth = Math.min(320, dimensions.width - 32);
   const initialLeft = selectedRelationship ? Math.max(16, Math.min(dimensions.width - dialogWidth - 16, selectedRelationship.x - dialogWidth / 2)) : 0;
