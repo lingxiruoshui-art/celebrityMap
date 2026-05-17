@@ -23,3 +23,7 @@ max_retries = 3
 # 这里的 URL 需要替换成你实际部署好的 Pages App 的线上地址
 CRON_TARGET_URL = "https://celebritymap.pages.dev"
 CRON_SECRET = "update_celeb"
+
+[observability]
+enabled = true
+head_sampling_rate = 1

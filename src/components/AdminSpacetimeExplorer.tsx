@@ -649,7 +649,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                               onChange={(e) => setSource(e.target.value)}
                               onFocus={() => setIsSourceFocused(true)}
                               onBlur={() => setTimeout(() => setIsSourceFocused(false), 200)}
-                              placeholder={isLoading ? "正在编织时空网络..." : "输入人名如：朱元璋"}
+                              placeholder={isLoading ? (subStatus === 'queued' ? "任务正在队列排队..." : "时空节点解析中...") : "输入人名如：朱元璋"}
                               disabled={isLoading}
                               className={`w-full pl-8 pr-10 py-2 border rounded-xl text-[12px] focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/50 outline-none transition-all font-bold placeholder:text-slate-300 shadow-sm ${isLoading ? 'bg-indigo-50/50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200'}`}
                               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
@@ -696,7 +696,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                             className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white h-[38px] px-4 text-[12px] font-black rounded-xl transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-1.5 active:scale-[0.98] group whitespace-nowrap"
                           >
                             {isLoading || !hasInitialCheckDone ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 group-hover:animate-pulse" />}
-                            <span>{isLoading ? (subStatus === 'queued' ? "已入队列" : "正在编织...") : "开启探索"}</span>
+                            <span>{isLoading ? (subStatus === 'queued' ? "已入队列" : "正在解析...") : "开启探索"}</span>
                           </button>
                         </div>
                       </div>
@@ -808,7 +808,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                           className="flex-1 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-[12px] font-bold rounded-xl transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-1.5 active:scale-[0.98] group"
                         >
                           {isLoading || !hasInitialCheckDone ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 group-hover:animate-pulse" />}
-                          <span>{isLoading ? (subStatus === 'queued' ? "任务已入队" : "正在编织...") : !hasInitialCheckDone ? "检查状态..." : "开启探索"}</span>
+                          <span>{isLoading ? (subStatus === 'queued' ? "任务已入队" : "正在解析...") : !hasInitialCheckDone ? "检查状态..." : "开启探索"}</span>
                         </button>
                       </div>
                     )}
@@ -1086,7 +1086,9 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
               <div className="flex flex-col">
                 <span className="text-xs font-bold text-slate-800 whitespace-nowrap">时空关系网络探索</span>
                 {isCollapsed && isLoading && (
-                   <span className="text-[8px] font-bold text-indigo-500 -mt-1 uppercase tracking-tighter opacity-70">正在编织中...</span>
+                   <span className="text-[8px] font-bold text-indigo-500 -mt-1 uppercase tracking-tighter opacity-70">
+                     {subStatus === 'queued' ? "队列等待中..." : "时空解析中..."}
+                   </span>
                 )}
               </div>
             </div>

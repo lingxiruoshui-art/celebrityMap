@@ -1,6 +1,7 @@
 // Cloudflare Worker: worker/cron.js
 export default {
   async fetch(request, env, ctx) {
+      console.log(`[Worker] Fetch triggered: ${request.method} ${request.url}`);
       return new Response("Celebrity Explore Worker is running. (Scheduled & Queue active)", {
           headers: { "content-type": "text/plain;charset=UTF-8" }
       });
