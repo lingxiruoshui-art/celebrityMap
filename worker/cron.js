@@ -11,14 +11,14 @@ export default {
     const secret = env.CRON_SECRET;
     
     if (!targetUrl || !secret) {
-      console.error("[Worker] Error: Missing CRON_TARGET_URL or CRON_SECRET");
+      console.error("[Worker Error] Environment variables CRON_TARGET_URL or CRON_SECRET are missing in Worker dashboard!");
       return;
     }
     
     const origin = new URL(targetUrl).origin;
     const taskUrl = `${origin}/api/internal/next-task`;
     
-    console.log(`[Worker] Running scheduled trigger. Fetching from ${taskUrl}`);
+    console.log(`[Worker] Triggered. Target app: ${origin}. Checking for tasks...`);
     
     try {
         const res = await fetch(taskUrl, {
@@ -28,25 +28,26 @@ export default {
         });
         
         if (!res.ok) {
-            console.error(`[Worker] Fetch next-task failed: ${res.status}`);
+            const errorText = await res.text();
+            console.error(`[Worker Error] Pages App returned ${res.status}: ${errorText}`);
             return;
         }
         
         const task = await res.json();
         
         if (task && task.taskId) {
-            console.log(`[Worker] Got task: ${task.targetName || 'AUTO_REVEAL'} (ID: ${task.taskId}). Sending to EXPLORE_QUEUE.`);
+            console.log(`[Worker] Task found! Target: ${task.targetName || 'RANDOM'}, ID: ${task.taskId}. Handing off to Queue...`);
             if (env.EXPLORE_QUEUE) {
                 await env.EXPLORE_QUEUE.send(task);
-                console.log(`[Worker] Sent task to queue successfully!`);
+                console.log(`[Worker] Hand-off successful.`);
             } else {
-                console.error(`[Worker] env.EXPLORE_QUEUE not bound! Cannot defer work.`);
+                console.error(`[Worker Error] EXPLORE_QUEUE binding is missing! Check your wrangler.toml or Worker settings.`);
             }
         } else {
-            console.log(`[Worker] No task returned.`);
+            console.log(`[Worker] No work to do at this time.`);
         }
     } catch (e) {
-        console.error(`[Worker] Exception in scheduled:`, e.message);
+        console.error(`[Worker Error] Failed to connect to Pages App: ${e.message}`);
     }
   },
   

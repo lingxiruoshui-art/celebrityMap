@@ -1431,7 +1431,10 @@ const checkInternalSecret = (c: any) => {
 
 // 1. Worker fetches next task
 app.get("/internal/next-task", async (c) => {
-    if (!checkInternalSecret(c)) return c.json({ error: "Unauthorized" }, 401);
+    const isAuthorized = checkInternalSecret(c);
+    console.log(`[Internal] next-task requested. Authorized: ${isAuthorized}`);
+    if (!isAuthorized) return c.json({ error: "Unauthorized" }, 401);
+    
     const db = await getDb(c);
     
     // Pick highest priority task
@@ -1439,22 +1442,22 @@ app.get("/internal/next-task", async (c) => {
     
     const modelConfig = {
         provider: await getConfig(db, "active_model_provider", "gemini"),
-        apiKey: await getConfig(db, "gemini_api_key") || c.env.GEMINI_API_KEY || "",
+        apiKey: await getConfig(db, "gemini_api_key") || (c.env && c.env.GEMINI_API_KEY) || "",
         aliyunApiKey: await getConfig(db, "aliyun_api_key") || "",
         aliyunModelId: await getConfig(db, "aliyun_model_id") || "qwen-max",
         modelId: await getConfig(db, "gemini_model_id") || "gemini-1.5-flash",
     };
     
     if (task) {
+        console.log(`[Internal] Task found in queue: ${task.target_name}`);
         await db.prepare("UPDATE explore_queue SET status = 'processing', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(task.id);
-        await updateExplorationState(db, { status: "running", taskId: task.id, target: task.target_name }, { msg: "Worker 已拉取到队列任务，开始执行", type: "api" });
+        await updateExplorationState(db, { status: "running", taskId: task.id, target: task.target_name }, { msg: `Worker (ID: ${task.id}) 已承接任务 [${task.target_name}]`, type: "api" });
         return c.json({ taskId: task.id, targetName: task.target_name, modelConfig });
     } else {
-        // Automatically generate next task in Worker, tell worker targetName is empty ONLY if cron is enabled
         const cronEnabled = await getConfig(db, "cron_interval_enabled", "false") === "true";
-        if (!cronEnabled) return c.json({ error: "No pending tasks and auto-explore is disabled." }, 404);
+        console.log(`[Internal] No tasks in queue. Cron auto-explore: ${cronEnabled}`);
+        if (!cronEnabled) return c.json({ error: "No pending tasks" }, 404);
         
-        await updateExplorationState(db, { status: "running" }, { msg: "Worker 正准备自动探索新的人物...", type: "api" });
         return c.json({ taskId: Date.now(), targetName: "", modelConfig });
     }
 });
@@ -1464,7 +1467,7 @@ app.post("/internal/state", async (c) => {
     if (!checkInternalSecret(c)) return c.json({ error: "Unauthorized" }, 401);
     const db = await getDb(c);
     const state = await c.req.json();
-    // We prefer the merged approach via updateExplorationState, but the worker currently sends the whole state
+    console.log(`[Internal] State sync from worker: status=${state.status}, target=${state.target}`);
     await setConfig(db, "explore_state", JSON.stringify(state));
     return c.json({ success: true });
 });
@@ -1474,6 +1477,7 @@ app.post("/internal/log", async (c) => {
     if (!checkInternalSecret(c)) return c.json({ error: "Unauthorized" }, 401);
     const db = await getDb(c);
     const { taskId, type, msg, data } = await c.req.json();
+    console.log(`[Internal Log] [${type}] ${msg}`);
     try {
         await db.prepare("INSERT INTO task_logs (task_id, type, msg, data) VALUES (?, ?, ?, ?)").run(String(taskId), type, msg, data ? JSON.stringify(data) : null);
         await updateExplorationState(db, {}, { msg, type, data });
@@ -1530,7 +1534,7 @@ app.post("/explore/enqueue", async (c) => {
     if (!targetName) return c.json({ error: "Invalid target" }, 400);
     
     // Priority 1 triggers it ahead of background auto-tasks (priority 0)
-    const res = await db.prepare("INSERT INTO explore_queue (target_name, priority) VALUES (?, 1) RETURNING id").get() as any;
+    const res = await db.prepare("INSERT INTO explore_queue (target_name, priority) VALUES (?, 1) RETURNING id").get(targetName) as any;
     const taskId = res.id;
     
     // Initialize state so UI sees the task is queued
