@@ -111,10 +111,10 @@ export default function FeedbackModal({ onClose }: FeedbackModalProps) {
       <motion.div 
         initial={{ opacity: 0, scale: 0.95, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
-        className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl h-fit max-h-[90vh] flex flex-col md:flex-row overflow-y-auto md:overflow-hidden relative"
+        className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl h-fit md:h-[85vh] max-h-[95vh] flex flex-col md:flex-row overflow-y-auto md:overflow-hidden relative"
       >
         {/* Left Side: Support/Donation */}
-        <div className="w-full md:w-[35%] shrink-0 bg-slate-50 p-6 sm:p-8 border-b md:border-b-0 md:border-r border-slate-100 flex flex-col items-center text-center">
+        <div className="w-full md:w-[35%] shrink-0 bg-slate-50 p-6 sm:p-8 border-b md:border-b-0 md:border-r border-slate-100 flex flex-col items-center justify-center text-center">
           <div className="w-12 h-12 sm:w-16 sm:h-16 bg-red-50 rounded-full flex items-center justify-center mb-4 md:mb-6 shrink-0">
             <Heart className="w-8 h-8 sm:w-10 sm:h-10 text-red-500 fill-red-500" />
           </div>
@@ -144,7 +144,7 @@ export default function FeedbackModal({ onClose }: FeedbackModalProps) {
             保存收款码为图片
           </button>
           
-          <div className="mt-8 pb-4 text-[10px] font-medium text-slate-400 shrink-0">
+          <div className="mt-8 text-[10px] font-medium text-slate-400 shrink-0">
             您的每一分心意，都是我们继续前行的动力
           </div>
         </div>
