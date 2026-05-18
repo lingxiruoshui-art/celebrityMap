@@ -165,14 +165,13 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
         return;
       }
       if (res.ok) {
-        const contentType = res.headers.get("content-type");
-        if (contentType && contentType.includes("application/json")) {
+        try {
           const data = await res.json();
           setConfig(data);
           setIsAuthorized(true);
           if (onAuthorized) onAuthorized();
-        } else {
-          console.error("Fetch config returned non-JSON");
+        } catch (e) {
+          console.error("Fetch config Error parsing JSON", e);
         }
       } else {
         console.error("Fetch config failed", await res.text());
@@ -211,6 +210,8 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
       fetchVisitorStats();
     } else if (activeTab === 'audit') {
       fetchAuditData();
+    } else if (activeTab === 'config') {
+      fetchConfig();
     }
   }, [activeTab, currentPage, debouncedSearch]);
 
@@ -347,9 +348,6 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
       fetchStatus();
       if (activeTab === "archive") {
         fetchArchive();
-      }
-      if (activeTab === "config") {
-        fetchConfig();
       }
     }, 5000); // Poll every 5 seconds
 
@@ -629,9 +627,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
       if (!res.ok) {
         throw new Error("Save failed");
       }
-      showNotification('success', '配置项已实时更新并固化至时空数据库');
-      // Config is already set optimistically, but we could re-fetch to be sure
-      // Or just assume it's good.
+      // Only show success notification when explicitly clicking the save button
     } catch (e) {
       console.error(e);
       showNotification('error', "保存失败，请检查网络或重新登录");
