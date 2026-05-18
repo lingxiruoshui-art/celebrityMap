@@ -1688,15 +1688,19 @@ app.post("/internal/submit", async (c) => {
         try {
             const { isUpdate } = await doFinalizeInsert(db, targetName, personData, wikiMeta, c,
                async (relatedName, relType) => {
-                 if (!relatedName || relatedName.length < 2 || relatedName.length > 40) return;
+                 // 严格类型检查，防止 AI 输出异常导致的程序崩溃
+                 if (typeof relatedName !== "string") return;
+                 
+                 const normalizedRelation = relatedName.trim();
+                 if (!normalizedRelation || normalizedRelation.length < 2 || normalizedRelation.length > 40) return;
+
                  // 拦截检测：如果姓名中包含英文 A-Z (且不是极短的特殊缩写)，则视为未翻译别名，不入排队队列
-                 if (/[a-zA-Z]/.test(relatedName) && relatedName.length > 4) {
-                    console.log(`[Sanity Check] 拦截到非规范外文关联人: ${relatedName}，已跳过自动排队。`);
+                 if (/[a-zA-Z]/.test(normalizedRelation) && normalizedRelation.length > 4) {
+                    console.log(`[Sanity Check] 拦截到非规范外文关联人: ${normalizedRelation}，已跳过自动排队。`);
                     return;
                  }
                  
                  // Reuse enqueue logic
-                 const normalizedRelation = relatedName.trim();
                  const existingRel = await db.prepare("SELECT id FROM people WHERE name = ? COLLATE NOCASE").get(normalizedRelation) as any;
                  if (existingRel) return;
 
