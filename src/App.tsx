@@ -652,7 +652,7 @@ export default function App() {
             </p>
           </div>
           <div className="flex items-center gap-3 text-[8px] font-bold uppercase tracking-[0.2em] text-slate-400/80 mt-0.5">
-            <span>© 2024 时空关系探索平台</span>
+            <span>© 2024 AI时空关系探索平台</span>
             <span className="opacity-40">•</span>
             <span>
               AI 驱动的历史长河与关系脉络还原

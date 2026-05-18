@@ -1709,6 +1709,38 @@ app.post("/internal/submit", async (c) => {
     return c.json({ success: true });
 });
 
+app.get("/admin/stats", async (c) => {
+    const db = await getDb(c);
+    const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
+    if (!isAdmin) return c.json({ error: "Unauthorized" }, 401);
+    
+    // Total figures pool
+    const totalPool = Object.values(FIGURE_POOL).reduce((acc, curr) => acc + curr.length, 0);
+    
+    // Archived people count
+    const archivedPeopleCount = (await db.prepare("SELECT COUNT(*) as count FROM people").get() as any).count;
+    
+    // Correct way:
+    const connectedTotalRows = await db.prepare("SELECT person1_id as p_id FROM relationships UNION SELECT person2_id as p_id FROM relationships").all() as any[];
+    const connectedTotalCountUnique = new Set(connectedTotalRows.map(r => r.p_id)).size;
+    
+    // Connected count among archived (those in 'people' who have relationships)
+    const connectedArchivedRows = await db.prepare("SELECT DISTINCT p.id FROM people p JOIN relationships r ON p.id = r.person1_id OR p.id = r.person2_id").all() as any[];
+    const connectedArchivedCount = connectedArchivedRows.length;
+    
+    // Failed >= 3 (blacklist count)
+    const failedPeopleRows = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'error' GROUP BY LOWER(target_name) HAVING COUNT(*) >= 3").all() as any[];
+    const blacklistCount = failedPeopleRows.length;
+
+    return c.json({
+        totalPool,
+        archivedPool: archivedPeopleCount,
+        connectedTotal: connectedTotalCountUnique,
+        connectedArchived: connectedArchivedCount,
+        blacklistCount
+    });
+});
+
 // Admin enqueues a target manually
 app.post("/explore/enqueue", async (c) => {
     const db = await getDb(c);

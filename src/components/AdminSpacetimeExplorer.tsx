@@ -442,6 +442,21 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   };
 
   const [isAutoRefillEnabled, setIsAutoRefillEnabled] = useState(false);
+  const [adminStats, setAdminStats] = useState<{totalPool: number, archivedPool: number, connectedTotal: number, connectedArchived: number, blacklistCount: number} | null>(null);
+
+  useEffect(() => {
+    if (isAdmin) {
+        const fetchStats = () => {
+             fetch("/api/admin/stats", { headers: { "x-admin-password": localStorage.getItem("admin_password") || "" } })
+                .then(res => res.json())
+                .then(data => setAdminStats(data))
+                .catch(err => console.error("Failed to fetch stats", err));
+        };
+        fetchStats();
+        const interval = setInterval(fetchStats, 5000);
+        return () => clearInterval(interval);
+    }
+  }, [isAdmin]);
   
   // Sync auto-refill state with backend
   useEffect(() => {
@@ -946,6 +961,24 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                   </div>
                 )}
   
+              {/* Stat Section */}
+              {isAdmin && adminStats && (
+                <div className="grid grid-cols-2 gap-2 mt-4 text-[11px] font-mono">
+                    <div className="bg-slate-100 p-2 rounded-lg">
+                        <div className="text-slate-500">目标库规模 (目标总数 / 已入库)</div>
+                        <div className="font-bold text-slate-800">{adminStats.totalPool} / {adminStats.archivedPool}</div>
+                    </div>
+                    <div className="bg-slate-100 p-2 rounded-lg">
+                        <div className="text-slate-500">时空连线人数 (被连接总计 / 已入库)</div>
+                        <div className="font-bold text-slate-800">{adminStats.connectedTotal} / {adminStats.connectedArchived}</div>
+                    </div>
+                    <div className="bg-slate-100 p-2 rounded-lg col-span-2">
+                        <div className="text-slate-500">时空锁死黑名单 (3次入库失败以上)</div>
+                        <div className="font-bold text-red-600">{adminStats.blacklistCount}</div>
+                    </div>
+                </div>
+              )}
+
               {(isLoading || (allowAdminControls && searchSteps.length > 0) || queue.length > 0) && (
                 <div className="flex flex-col animate-in fade-in duration-500">
                   <div className="flex flex-col space-y-3 font-mono relative mt-2">
