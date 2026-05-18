@@ -1175,8 +1175,8 @@ export async function pickTarget(db: DatabaseAdapter) {
   const people = await db.prepare("SELECT name, raw_relationships FROM people").all() as any[];
   const archivedSet = new Set(people.map(p => p.name.toLowerCase()));
   
-  // Also exclude people in queue
-  const queuedPeopleRows = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' OR status = 'processing'").all() as any[];
+  // Also exclude people in queue (pending, processing, or ALREADY completed to avoid alias re-enqueuing)
+  const queuedPeopleRows = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' OR status = 'processing' OR status = 'completed'").all() as any[];
   queuedPeopleRows.forEach(t => archivedSet.add(t.target_name.toLowerCase()));
 
   // Also exclude blacklisted people (failed 3 times)
@@ -1684,15 +1684,37 @@ app.post("/internal/submit", async (c) => {
         const finalizeLogs: any[] = [];
         // Save to D1
         try {
-            await doFinalizeInsert(db, targetName, personData, wikiMeta, c,
-               addRelationship,
+            const { isUpdate } = await doFinalizeInsert(db, targetName, personData, wikiMeta, c,
+               async (relatedName, relType) => {
+                 if (!relatedName || relatedName.length < 2 || relatedName.length > 40) return;
+                 // 拦截检测：如果姓名中包含英文 A-Z (且不是极短的特殊缩写)，则视为未翻译别名，不入排队队列
+                 if (/[a-zA-Z]/.test(relatedName) && relatedName.length > 4) {
+                    console.log(`[Sanity Check] 拦截到非规范外文关联人: ${relatedName}，已跳过自动排队。`);
+                    return;
+                 }
+                 
+                 // Reuse enqueue logic
+                 const normalizedRelation = relatedName.trim();
+                 const existingRel = await db.prepare("SELECT id FROM people WHERE name = ? COLLATE NOCASE").get(normalizedRelation) as any;
+                 if (existingRel) return;
+
+                 const inQueue = await db.prepare("SELECT id FROM explore_queue WHERE target_name = ? AND (status = 'pending' OR status = 'processing' OR status = 'completed') COLLATE NOCASE").get(normalizedRelation) as any;
+                 if (inQueue) return;
+
+                 await db.prepare("INSERT INTO explore_queue (target_name, priority, reason) VALUES (?, 1, ?)").run(normalizedRelation, `由[${targetName}]的时空关系网自动发现`);
+               },
                (msg, type) => {
                  finalizeLogs.push({ msg, type });
                  db.prepare("INSERT INTO task_logs (task_id, type, msg) VALUES (?, ?, ?)").run(String(taskId || 'sys'), type, msg).catch(()=>null);
                  updateExplorationState(db, {}, { msg, type }).catch(()=>null);
                }
             );
-            await updateExplorationState(db, { status: "success", newArrivals: [targetName] }, { msg: `任务落库成功，入库流程终止。`, type: "api" });
+            
+            if (isUpdate) {
+                await updateExplorationState(db, { status: "success", newArrivals: [] }, { msg: `[${targetName}] 已在馆藏中，档案数据已完成增量更新并在时空轴前移。`, type: "success" });
+            } else {
+                await updateExplorationState(db, { status: "success", newArrivals: [targetName] }, { msg: `任务落库成功，[${targetName}] 正式入驻中心档案库。`, type: "api" });
+            }
             return c.json({ success: true, serverLogs: finalizeLogs });
         } catch (e: any) {
             console.error("Save error:", e);
@@ -1815,6 +1837,12 @@ app.post("/explore/start", async (c) => {
   // Redirection: use enqueue for all exploration starts
   const targetName = target;
   if (!targetName) return c.json({ error: "探索目标不能为空" }, 400);
+
+  // Check if already in people table
+  const existingPerson = await db.prepare("SELECT id FROM people WHERE name = ? COLLATE NOCASE").get(targetName) as any;
+  if (existingPerson) {
+      return c.json({ success: true, message: `[${targetName}] 已在馆藏中，档案数据将会被激活并展示。`, alreadyExists: true, personId: existingPerson.id });
+  }
 
   // Check if blacklisted
   const errorCount = await db.prepare("SELECT COUNT(*) as count FROM explore_queue WHERE LOWER(target_name) = ? AND status = 'error'").get(targetName.toLowerCase()) as any;

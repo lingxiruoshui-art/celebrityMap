@@ -47,17 +47,22 @@ export async function doFinalizeInsert(db: DatabaseAdapter, finalName: string, p
         }
     }
     
+    // Check if exists for logging purposes
+    const existing = await db.prepare("SELECT id FROM people WHERE name = ? COLLATE NOCASE").get(finalName) as any;
+    const isUpdate = !!existing;
+
     const res = await db.prepare(
         `INSERT INTO people (name, category, keyword, biography, achievements, raw_relationships, lifespan, birthplace, image_url)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(name) DO UPDATE SET 
            category=excluded.category, keyword=excluded.keyword, biography=excluded.biography, image_url=excluded.image_url,
-           achievements=excluded.achievements, raw_relationships=excluded.raw_relationships, lifespan=excluded.lifespan, birthplace=excluded.birthplace
+           achievements=excluded.achievements, raw_relationships=excluded.raw_relationships, lifespan=excluded.lifespan, birthplace=excluded.birthplace,
+           created_at=CURRENT_TIMESTAMP
          RETURNING id`
     ).get(finalName, personData.category || "未知", personData.keyword || "", personData.biography || "", JSON.stringify(personData.achievements || []), JSON.stringify(personData.relationships || []), personData.lifespan || "", personData.birthplace || "", portraitUrl);
     
     let newId = (res as any)?.id;
-    if (!newId) newId = (await db.prepare("SELECT id FROM people WHERE name = ? COLLATE NOCASE").get(finalName) as any)?.id;
+    if (!newId && isUpdate) newId = existing.id;
     
     if (newId) {
         if (personData.relationships) {
@@ -75,4 +80,6 @@ export async function doFinalizeInsert(db: DatabaseAdapter, finalName: string, p
             } catch(e) {}
         }
     }
+
+    return { id: newId, isUpdate };
 }
