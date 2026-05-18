@@ -951,9 +951,9 @@ app.get("/archive", async (c) => {
   
   const params: any[] = [];
   if (search) {
-    peopleQuery += ` WHERE p.name LIKE ? OR p.category LIKE ? OR p.biography LIKE ? `;
+    peopleQuery += ` WHERE p.name LIKE ? OR p.category LIKE ? `;
     const s = `%${search}%`;
-    params.push(s, s, s);
+    params.push(s, s);
   }
   
   peopleQuery += ` ORDER BY created_at DESC `;
