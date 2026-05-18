@@ -350,14 +350,14 @@ export default function App() {
                       </span>
                     </div>
                   </button>
-                  <div className="flex-1 pt-2">
+                  <div className="flex-1">
                     <div className="text-xs uppercase tracking-widest text-indigo-500 font-bold mb-2">
                       {selectedPerson.category}
                     </div>
                     <h2 className="text-3xl font-serif font-bold text-slate-900 mb-4 leading-tight">
                       {selectedPerson.name}
                     </h2>
-                    <div className="relative group/quote mb-4">
+                    <div className="relative group/quote mb-3">
                       <div className="absolute -left-3 -top-2 text-indigo-200/60 text-4xl font-serif select-none pointer-events-none opacity-0 group-hover/quote:opacity-100 transition-opacity">
                         “
                       </div>
@@ -372,16 +372,16 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="flex flex-col items-start gap-2 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                    <div className="flex flex-col items-start gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                       {selectedPerson.lifespan && (
-                        <div className="inline-flex items-start gap-1.5 px-2 py-1 bg-slate-100 rounded-lg">
-                          <span className="text-slate-300 shrink-0 whitespace-nowrap">生卒：</span>
+                        <div className="inline-flex items-start gap-1.5 px-2 py-0.5 bg-slate-100 rounded-lg">
+                          <span className="text-slate-400/80 shrink-0 whitespace-nowrap">生卒：</span>
                           <span className="text-slate-600">{selectedPerson.lifespan}</span>
                         </div>
                       )}
                       {selectedPerson.birthplace && (
-                        <div className="inline-flex items-start gap-1.5 px-2 py-1 bg-slate-100 rounded-lg">
-                          <span className="text-slate-300 shrink-0 whitespace-nowrap">籍贯：</span>
+                        <div className="inline-flex items-start gap-1.5 px-2 py-0.5 bg-slate-100 rounded-lg">
+                          <span className="text-slate-400/80 shrink-0 whitespace-nowrap">籍贯：</span>
                           <span className="text-slate-600">{selectedPerson.birthplace}</span>
                         </div>
                       )}
