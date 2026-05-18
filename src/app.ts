@@ -768,6 +768,9 @@ app.delete("/admin/people/:id", async (c) => {
   }
 
   await db.prepare("DELETE FROM relationships WHERE person1_id = ? OR person2_id = ?").run(id, id);
+  if (person) {
+    await db.prepare("DELETE FROM explore_queue WHERE target_name = ? COLLATE NOCASE").run(person.name);
+  }
   await db.prepare("DELETE FROM people WHERE id = ?").run(id);
   return c.json({ success: true });
 });
@@ -797,6 +800,11 @@ app.post("/admin/people/batch-delete", async (c) => {
     }
 
     await db.prepare(`DELETE FROM relationships WHERE person1_id IN (${placeholders}) OR person2_id IN (${placeholders})`).run(...chunk, ...chunk);
+    if (people.length > 0) {
+      const names = people.map(p => p.name);
+      const namePlaceholders = names.map(() => "?").join(",");
+      await db.prepare(`DELETE FROM explore_queue WHERE target_name IN (${namePlaceholders}) COLLATE NOCASE`).run(...names);
+    }
     await db.prepare(`DELETE FROM people WHERE id IN (${placeholders})`).run(...chunk);
   }
 
@@ -1622,16 +1630,10 @@ app.get("/internal/next-task", async (c) => {
 app.post("/internal/state", async (c) => {
     if (!checkInternalSecret(c)) return c.json({ error: "Unauthorized" }, 401);
     const db = await getDb(c);
-    const state = await c.req.json();
+    const updates = await c.req.json();
     
-    // Heartbeat check
-    if (state.lastHeartbeat) {
-        // Maybe log every 10 mins or so?
-        // For now, let's just sync the state.
-    }
-    
-    console.log(`[Internal] State sync from worker: status=${state.status}, target=${state.target}`);
-    await setConfig(db, "explore_state", JSON.stringify(state));
+    console.log(`[Internal] State sync from worker: status=${updates.status || 'N/A'}, target=${updates.target || 'N/A'}`);
+    await updateExplorationState(db, updates);
     return c.json({ success: true });
 });
 

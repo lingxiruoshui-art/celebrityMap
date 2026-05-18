@@ -1134,7 +1134,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                     </div>
                   )}
                   <div className="flex flex-col gap-2">
-                    {detailedLogs.slice(-50).map((log, i) => (
+                    {detailedLogs.map((log, i) => (
                       <div key={i} className="animate-in fade-in slide-in-from-left-1 duration-200">
                         <div className="flex flex-col gap-1">
                           <div className="flex items-baseline gap-2.5">

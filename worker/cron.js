@@ -135,7 +135,7 @@ export default {
               
               const timestamp = new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
               localLogs.push({ timestamp, msg: traceMsg, type, data });
-              if (localLogs.length > 50) localLogs.shift();
+              if (localLogs.length > 200) localLogs.shift();
               
               await fetch(`${origin}/api/internal/log`, {
                   method: "POST",
@@ -170,7 +170,7 @@ export default {
                           taskId,
                           target: targetName,
                           ...updates,
-                          logs: localLogs.slice(-50),
+                          logs: localLogs.slice(-200),
                           lastHeartbeat: Date.now()
                       };
                       
