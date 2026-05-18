@@ -1178,6 +1178,10 @@ export async function pickTarget(db: DatabaseAdapter) {
   // Also exclude people in queue
   const queuedPeopleRows = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' OR status = 'processing'").all() as any[];
   queuedPeopleRows.forEach(t => archivedSet.add(t.target_name.toLowerCase()));
+
+  // Also exclude blacklisted people (failed 3 times)
+  const failedPeopleRows = await db.prepare("SELECT LOWER(target_name) as target_name FROM explore_queue WHERE status = 'error' GROUP BY LOWER(target_name) HAVING COUNT(*) >= 3").all() as any[];
+  failedPeopleRows.forEach((t: any) => archivedSet.add(t.target_name.toLowerCase()));
   
   const shuffle = (array: any[]) => {
     for (let i = array.length - 1; i > 0; i--) {
@@ -1240,7 +1244,12 @@ app.post("/archiver/pick-target", async (c) => {
 app.post("/archiver/generate-target", async (c) => {
   const db = await getDb(c);
   const samplePeople = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 20").all() as any[];
-  const sampleNames = samplePeople.map((p: any) => p.name).join("、");
+  
+  // Exclude blacklisted people (failed 3 times)
+  const failedPeopleRows = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'error' GROUP BY LOWER(target_name) HAVING COUNT(*) >= 3").all() as any[];
+  const allExcludes = [...samplePeople.map((p: any) => p.name), ...failedPeopleRows.map((p: any) => p.target_name)];
+  
+  const sampleNames = allExcludes.join("、");
   
   const prompt = `请从世界历史中选取一位极其著名、具有重大全球影响力且通常被视为正面的真实历史人物。
 要求：
@@ -1274,6 +1283,12 @@ app.post("/archive-figure", async (c) => {
   const existingPerson = await db.prepare("SELECT id FROM people WHERE name = ? COLLATE NOCASE").get(targetName) as any;
   if (existingPerson) {
       return c.json({ error: `[${targetName}] 已在档案库中，无需重入。`, alreadyExists: true, personId: existingPerson.id }, 400);
+  }
+
+  // Check if blacklisted
+  const errorCount = await db.prepare("SELECT COUNT(*) as count FROM explore_queue WHERE LOWER(target_name) = ? AND status = 'error'").get(targetName.toLowerCase()) as any;
+  if (errorCount.count >= 3) {
+      return c.json({ error: `[${targetName}] 已连续 3 次入库失败，已被自动拉黑，不可再入库。` }, 400);
   }
   
   // Check if already in queue
@@ -1703,6 +1718,12 @@ app.post("/explore/enqueue", async (c) => {
         return c.json({ error: `[${targetName}] 已在档案库中，无需入队。`, alreadyExists: true }, 400);
     }
     
+    // Check if blacklisted
+    const errorCount = await db.prepare("SELECT COUNT(*) as count FROM explore_queue WHERE LOWER(target_name) = ? AND status = 'error'").get(targetName.toLowerCase()) as any;
+    if (errorCount.count >= 3) {
+        return c.json({ error: `[${targetName}] 已连续 3 次入库失败，已被自动拉黑，不可再入库。` }, 400);
+    }
+    
     // Check if already in queue
     const existingQueue = await db.prepare("SELECT id FROM explore_queue WHERE target_name = ? AND (status = 'pending' OR status = 'processing') COLLATE NOCASE").get(targetName) as any;
     if (existingQueue) {
@@ -1742,6 +1763,12 @@ app.post("/explore/start", async (c) => {
   // Redirection: use enqueue for all exploration starts
   const targetName = target;
   if (!targetName) return c.json({ error: "探索目标不能为空" }, 400);
+
+  // Check if blacklisted
+  const errorCount = await db.prepare("SELECT COUNT(*) as count FROM explore_queue WHERE LOWER(target_name) = ? AND status = 'error'").get(targetName.toLowerCase()) as any;
+  if (errorCount.count >= 3) {
+      return c.json({ error: `[${targetName}] 已连续 3 次入库失败，已被自动拉黑，不可再入库。` }, 400);
+  }
 
   // Check if already in queue
   const existingQueue = await db.prepare("SELECT id FROM explore_queue WHERE target_name = ? AND (status = 'pending' OR status = 'processing') COLLATE NOCASE").get(targetName) as any;
