@@ -120,6 +120,7 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
             target_name TEXT NOT NULL,
             priority INTEGER DEFAULT 0,
             status TEXT DEFAULT 'pending',
+            reason TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
           )`,
@@ -159,6 +160,7 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
           "ALTER TABLE people ADD COLUMN image_url TEXT",
           "ALTER TABLE people ADD COLUMN lifespan TEXT",
           "ALTER TABLE people ADD COLUMN birthplace TEXT",
+          "ALTER TABLE explore_queue ADD COLUMN reason TEXT",
           "CREATE INDEX IF NOT EXISTS idx_relationships_person2 ON relationships(person2_id)"
         ];
         for (const m of migrations) {
