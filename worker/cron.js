@@ -263,12 +263,11 @@ export default {
                   if (!text) return null;
                   let cleanText = text.trim();
                   
-                  // Extract code block if present (even if not at the start)
+                  // Extract code block if present
                   const codeBlockMatch = cleanText.match(/```json\n?([\s\S]*?)\n?```/i) || cleanText.match(/```\n?([\s\S]*?)\n?```/i);
                   if (codeBlockMatch) {
                       cleanText = codeBlockMatch[1].trim();
                   } else if (cleanText.includes('```')) {
-                      // fallback for weird markdown
                       cleanText = cleanText.replace(/```json/g, "").replace(/```/g, "").trim();
                   }
                   
@@ -280,19 +279,23 @@ export default {
                   }
 
                   try {
-                      // Replace escaped newlines if AI used actual newlines in strings
-                      return JSON.parse(cleanText.replace(/\n/g, ' '));
+                      return JSON.parse(cleanText);
                   } catch (e) {
-                      // One more try: remove control characters and retry
                       try {
-                          const sanitized = cleanText
-                            .replace(/[\u0000-\u001F\u007F-\u009F]/g, "") // remove control chars
-                            .replace(/\\n/g, "\\n") // ensure valid escapes
-                            .replace(/\r/g, "");
-                          return JSON.parse(sanitized);
+                          // Fix common newline issues (replace literal newlines with \n)
+                          let fixed = cleanText.replace(/\n/g, "\\n");
+                          // If there were already escapced newlines, they now look like \\n, which is fine
+                          // But sometimes AI outputs \n which gets double escaped by accident
+                          return JSON.parse(fixed);
                       } catch (e2) {
-                          console.error("JSON Parse failed even after cleaning:", e2, "Text:", cleanText);
-                          return null;
+                          try {
+                             // Last resort: remove all non-printable control characters
+                             const sanitized = cleanText.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
+                             return JSON.parse(sanitized);
+                          } catch (e3) {
+                             console.error("JSON Parse failed completely:", e3, "Text:", cleanText.slice(0, 200));
+                             return null;
+                          }
                       }
                   }
               }
@@ -342,33 +345,32 @@ export default {
               
               
               // ============ PHASE: AI CORE ============
-              const CATEGORIES = ["哲学家", "艺术家", "科学家/数学家", "发明家", "政治家/君主", "军事家", "思想家/教育家", "文学家/作家", "诗人", "音乐家/作曲家", "歌手/演艺明星", "探险家/航海家", "商业精英/企业家", "医学家", "其他历史名人"];
-              
               const corePrompt = `你是一位研究历史人物的传记专家。请为人物 "${targetName}" 撰写一份既有历史厚度又风趣幽默的传记。
 参考背景资料（身份线索）：${wikiMeta.description}
 
-注意：如果背景资料较为简略，请务必结合你庞大的内在历史知识库进行扩充，确保人物形象丰满、数据准确。该人物的身份已通过背景资料确认，无须再次验证或标准化姓名。
+注意：该人物身份已由 WIKIDATA 锚定，请结合你广博的历史知识编写详细传记。
 
 要求：
 - keyword：该人物最经典、最具代表性的一句人生格言短语
-- lifespan：如公元前571年-公元前471年或1879年-1955年，必须尽量精确
+- lifespan：如公元前571年-公元前471年或1879年-1955年，必须精确
 - birthplace：出生地（精确到城市或行省）
 
 请严格返回以下格式的 JSON 对象：
 {
-  "keyword": "该人物最经典、最具代表性的一句人生格言，注意如果包含双引号请转义",
-  "lifespan": "如公元前571年-公元前471年或1879年-1955年",
+  "keyword": "格言短语，禁止包含任何半角双引号",
+  "lifespan": "1879年-1955年",
   "birthplace": "出生地",
-  "category": "参考背景资料提取角色身份，或从以下选择：[${CATEGORIES.join("、")}]",
-  "biography": "正规且诙谐幽默的传记。绝对不要写成1大段，至少分2段。必须在 JSON 字符串内部使用字面量 \\n\\n 代表分段，禁止在字符串内直接换行敲回车（导致 JSON 解析错误），不少于400字。禁止使用大家好等开场白。",
+  "category": "简短的人物身份分类（如：哲学家、作曲家等，2-4字）",
+  "biography": "不少于 400 字的详细传记，使用 \\n\\n 分段。禁止在字符串内直接换行。",
   "accepted": true,
   "standardChineseName": "${targetName}"
 }
 
-特别要求：
-1. biography 字段绝对不能写成一大段，必须分成 2 段以上。不少于 400 字，请尽量详细描写其生平转折点。
-2. 所有返回内容必须使用简体中文。
-3. 请确保仅返回一个合法的 JSON 对象。`;
+特别要求（为了防止 JSON 解析失败）：
+1. biography 必须通过 "\\n\\n" 分成 2 段以上。不少于 400 字。
+2. 内容内部禁止使用半角双引号 (")，引用请使用中文全角引号 (“ ”)。
+3. 必须使用简体中文。
+4. 请确保仅返回一个合法的 JSON 对象。`;
 
               const coreSchema = {
                   type: "OBJECT",
@@ -385,9 +387,15 @@ export default {
               };
               
               await reportLog("开始深度分析并构建核心时空档案...", "api");
-              const coreResStr = await callAILocally(corePrompt, true, coreSchema);
+              let coreResStr = await callAILocally(corePrompt, true, coreSchema);
               let coreData = safeParseJSON(coreResStr);
               
+              if (!coreData) {
+                  await reportLog("核心档案损坏，正在尝试第二次高维重构...", "error");
+                  coreResStr = await callAILocally(corePrompt + "\n\n请注意：必须严格输出合法的 JSON 格式，不要在内容中使用任何半角双引号。", true, coreSchema);
+                  coreData = safeParseJSON(coreResStr);
+              }
+
               if (!coreData || coreData.accepted === false) {
                   throw new Error(`目标基础资料缺失或并非受支持的绝对真实历史人物大图鉴内容。`);
               }
@@ -403,23 +411,23 @@ export default {
 人物传记参考：
 ${coreData.biography}
 
-请在历史长河中检索（如传记参考不足，请务必利用你的内在百科知识库）并完成以下任务：
+请在历史长河中检索并完成以下任务：
 1. 提取 3-5 条该人物的核心成就（achievements），每条不少于 15 字，描述要具体。
-2. 找出 3-5 位与之有真实历史关联的名人（relationships），并详细说明关系类型。
+2. 找出 3-5 位与之有真实历史关联的名人（relationships），说明关系类型。
 
-要求返回严格的 JSON 格式，且 achievements 和 relationships 数组绝对不能为空（这是硬性指标，否则时空链路会崩溃）：
+要求返回严格的 JSON 格式，且 achievements 和 relationships 数组绝对不能为空：
 {
   "achievements": ["成就1", "成就2", ...],
   "relationships": [
-    {"personName": "公认中文译名", "relationshipType": "15-25字具体关系描述，禁止换行"}
+    {"personName": "公认简体中文译名", "relationshipType": "15-25字具体关系描述，禁止换行"}
   ]
 }
 
 特别要求：
-1. **关系网络（relationships）**：必须是真实的、曾在历史上存在过的人物。关系可以包括：师生、对手、盟友、家属、思想继承者/开拓者、同一时期的竞争者等。
-2. **姓名规范**：对于外国历史人物，personName 请务必使用中国大陆主流历史界、学术界最公认、最常用的中文译名（如“路德维希·凡·贝多芬”而非“贝多芬”）。对于中国古人，请使用其最广为人知的姓名或称呼。
-3. **内容完整性**：绝对禁止返回空数组。如果你觉得该人物过于冷门，请扩大搜索范围，寻找其所处时代的重大事件关联人或后续受其影响的人。
-4. 请确保返回合法的 JSON 对象，不要包含任何 markdown 标识符。`;
+1. **关系网络**：必须是真实的、曾在历史上存在过的人物。对于外国历史人物，必须使用中国大陆学术界公认最通用的简体中文译名。
+2. **姓名规范**：对于中国古人，请使用其最广为人知的姓名。
+3. **内容完整性**：绝对禁止返回空数组（硬性指标）。
+4. **JSON 安全**：所有字段内部禁止使用半角双引号 (")，请使用中文全角引号 (“ ”)。请确保返回合法的 JSON 对象，不要包含任何 markdown 标识符。`;
 
               const extraSchema = {
                   type: "OBJECT",
@@ -445,11 +453,16 @@ ${coreData.biography}
                   required: ["achievements", "relationships"]
               };
               
-              const extraResStr = await callAILocally(extraPrompt, true, extraSchema);
+              let extraResStr = await callAILocally(extraPrompt, true, extraSchema);
               let extraData = safeParseJSON(extraResStr);
               
+              if (!extraData || !extraData.achievements?.length || !extraData.relationships?.length) {
+                  await reportLog("时空拓扑映射异常（数据缺失或损坏），正在执行重试逻辑...", "error");
+                  extraResStr = await callAILocally(extraPrompt + "\n\n请注意：achievements 和 relationships 数组绝对不能为空，必须包含真实有效的关联信息，严禁使用半角双引号。", true, extraSchema);
+                  extraData = safeParseJSON(extraResStr);
+              }
+
               if (!extraData) {
-                  await reportLog("时空拓扑映射异常（JSON 损坏），正在启用紧急冗余容错机制...", "error");
                   extraData = { achievements: [], relationships: [] };
               }
               
