@@ -354,7 +354,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
     }, 5000); // Poll every 5 seconds
 
     return () => clearInterval(interval);
-  }, [isAuthorized, activeTab]);
+  }, [isAuthorized, activeTab, currentPage, debouncedSearch]);
 
   useEffect(() => {
     setCurrentPage(1);
