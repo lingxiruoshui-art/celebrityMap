@@ -1215,22 +1215,34 @@ export async function pickTarget(db: DatabaseAdapter) {
       return { targetName: picked, strategy: "图谱预设池" };
   }
 
-  // Priority 2: From Relationships (Secondary Nodes / Connected figures)
-  const connectedUnarchived = new Set<string>();
+  // Priority 2: From Relationships (Secondary Nodes / Connected figures) - Pick most connected
+  const connectedCounts = new Map<string, { originalName: string, count: number }>();
   people.forEach(p => {
     try {
-      JSON.parse(p.raw_relationships || "[]").forEach((r: any) => {
-        if (r.personName && !archivedSet.has(r.personName.toLowerCase())) {
-           connectedUnarchived.add(r.personName);
+      const rels = JSON.parse(p.raw_relationships || "[]");
+      rels.forEach((r: any) => {
+        if (r.personName) {
+           const lowName = r.personName.trim().toLowerCase();
+           if (!archivedSet.has(lowName)) {
+              const existing = connectedCounts.get(lowName);
+              if (existing) {
+                  existing.count++;
+              } else {
+                  connectedCounts.set(lowName, { originalName: r.personName, count: 1 });
+              }
+           }
         }
       });
     } catch(e) {}
   });
-  const uniqueRelsUnarchived = Array.from(connectedUnarchived);
 
-  if (uniqueRelsUnarchived.length >= 1) {
-      const picked = shuffle([...uniqueRelsUnarchived])[0];
-      return { targetName: picked, strategy: "时空网络次级关联节点" };
+  if (connectedCounts.size >= 1) {
+      const candidates = Array.from(connectedCounts.values());
+      candidates.sort((a, b) => b.count - a.count);
+      const topCount = candidates[0].count;
+      const topCandidates = candidates.filter(c => c.count === topCount);
+      const picked = topCandidates[Math.floor(Math.random() * topCandidates.length)].originalName;
+      return { targetName: picked, strategy: `时空关系高阶补位 (连接数: ${topCount})` };
   }
   
   // Fallback: Empty state
@@ -1715,6 +1727,28 @@ app.post("/internal/submit", async (c) => {
                  const inQueue = await db.prepare("SELECT id FROM explore_queue WHERE target_name = ? AND (status = 'pending' OR status = 'processing' OR status = 'completed') COLLATE NOCASE").get(normalizedRelation) as any;
                  if (inQueue) return;
 
+                 // 限制自动补位：如果队列中已有待处理或处理中的任务，则不再自动发现新关联
+                 const queueCount = await db.prepare("SELECT COUNT(*) as count FROM explore_queue WHERE (status = 'pending' OR status = 'processing')").get() as { count: number };
+                 if (queueCount.count >= 1) return;
+
+                 // 确定优先级：只有当 FIGURE_POOL 全部入库后，才通过关系网自动发现无关预设的人物
+                 const flatPool = Object.values(FIGURE_POOL).flat();
+                 const isInPool = flatPool.some(n => n.toLowerCase() === normalizedRelation.toLowerCase());
+                 
+                 if (!isInPool) {
+                    const archivedNamesRows = await db.prepare("SELECT name FROM people").all() as any[];
+                    const archivedSet = new Set(archivedNamesRows.map(p => p.name.toLowerCase()));
+                    
+                    const queuedNamesRows = await db.prepare("SELECT target_name FROM explore_queue").all() as any[];
+                    queuedNamesRows.forEach(p => archivedSet.add(p.target_name.toLowerCase()));
+
+                    const poolLeft = flatPool.some(n => !archivedSet.has(n.toLowerCase()));
+                    if (poolLeft) {
+                        console.log(`[Queue Control] 跳过关联发现: [${normalizedRelation}]，优先填补预设池人物。`);
+                        return;
+                    }
+                 }
+
                  await db.prepare("INSERT INTO explore_queue (target_name, priority, reason) VALUES (?, 1, ?)").run(normalizedRelation, `由[${targetName}]的时空关系网自动发现`);
                }
             );
@@ -1863,6 +1897,12 @@ app.post("/explore/start", async (c) => {
   const existingQueue = await db.prepare("SELECT id FROM explore_queue WHERE target_name = ? AND (status = 'pending' OR status = 'processing') COLLATE NOCASE").get(targetName) as any;
   if (existingQueue) {
       return c.json({ success: true, message: "该人物已在队列中，任务已激活。" });
+  }
+
+  // 手动入队限制：最多 20 人
+  const queueCount = await db.prepare("SELECT COUNT(*) as count FROM explore_queue WHERE status = 'pending' OR status = 'processing'").get() as { count: number };
+  if (queueCount.count >= 20) {
+      return c.json({ error: "探索队列已满 (最大 20 人)，请等待 Worker 消化后再试。" }, 400);
   }
 
   const res = await db.prepare("INSERT INTO explore_queue (target_name, priority) VALUES (?, 1) RETURNING id").get(targetName) as any;

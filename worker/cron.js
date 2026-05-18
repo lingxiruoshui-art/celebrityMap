@@ -218,7 +218,7 @@ export default {
                                   body: JSON.stringify({
                                       model: modelId,
                                       messages: [
-                                          { role: "system", content: "你是一个历史学和百科知识专家。请直接返回 JSON 格式结果，不带 Markdown 格式。" },
+                                          { role: "system", content: "你是一个历史学和百科知识专家。请直接返回 JSON 格式结果，不带 Markdown 格式。声明：你必须全程使用简体中文（Simplified Chinese），绝对禁止使用繁体字。" },
                                           { role: "user", content: prompt }
                                       ],
                                       ...(isJson ? { response_format: { type: "json_object" } } : {})
@@ -226,7 +226,7 @@ export default {
                                });
                           } else {
                               const requestBody = {
-                                  contents: [{ parts: [{ text: prompt }] }],
+                                  contents: [{ parts: [{ text: prompt + "\n\n重要：请务必使用简体中文（Simplified Chinese）回答，严禁出现繁体字。" }] }],
                                   generationConfig: isJson ? { responseMimeType: "application/json" } : {}
                               };
                               if (isJson && schema) requestBody.generationConfig.responseSchema = schema;
@@ -370,7 +370,7 @@ export default {
 1. biography 必须通过 "\\n\\n" 分成 2 段以上。不少于 400 字。
 2. **禁止任何半角双引号 (")**：传记和格言中引用必须使用全角引号 (“ ”)。
 3. **严禁在字符串内手动换行**：段落间仅限 "\\n\\n" 分隔。
-3. 必须使用简体中文。
+3. **强制简体**：必须全程使用中国大陆标准的**简体中文**（Simplified Chinese），严禁使用繁体字（例如：应使用“拿破仑”而非“拿破崙”，应使用“罗伯托”而非“羅伯托”）。
 4. 请确保仅返回一个合法的 JSON 对象。`;
 
               const coreSchema = {
@@ -425,12 +425,13 @@ ${coreData.biography}
 }
 
 特别要求：
-1. **关系网络**：必须是真实的名人。外国历史人物必须使用**通用的简体中文译名**（严禁 Einstein 这种原文）。
+1. **关系网络**：必须是真实的名人。外国历史人物必须使用**通用的简体中文译名**（严禁 Einstein 这种原文，严禁使用繁体字）。
 2. **严禁英文**：personName 字段绝对禁止出现任何英文字母。
-3. **JSON 安全**：禁止使用半角双引号 (")，禁止在字符串内直接换行。
-3. **姓名规范**：对于中国古人，请使用其最广为人知的姓名。
-4. **内容完整性**：绝对禁止返回空数组（硬性指标）。
-5. **JSON 安全**：所有字段内部禁止使用半角双引号 (")，请使用中文全角引号 (“ ”)。请确保返回合法的 JSON 对象。`;
+3. **强制简体**：必须全程使用**简体中文**，严禁使用繁体字。
+4. **JSON 安全**：禁止使用半角双引号 (")，禁止在字符串内直接换行。
+5. **姓名规范**：对于中国古人，请使用其最广为人知的姓名。
+6. **内容完整性**：绝对禁止返回空数组（硬性指标）。
+7. **JSON 安全**：所有字段内部禁止使用半角双引号 (")，请使用中文全角引号 (“ ”)。请确保返回合法的 JSON 对象。`;
 
               const extraSchema = {
                   type: "OBJECT",
