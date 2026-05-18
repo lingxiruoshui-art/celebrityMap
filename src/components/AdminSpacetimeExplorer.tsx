@@ -992,7 +992,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                     )}
 
                     {queue.length > 0 && (
-                      <div className="mt-2 space-y-1.5 border-t border-slate-100 pt-3 pl-4">
+                      <div className="mt-4 space-y-1.5 pt-3">
                         <div className="text-[12px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
                           <Layers size={10} />
                           集群流水线任务队列 ({queue.length})

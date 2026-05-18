@@ -372,16 +372,16 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap gap-x-4 gap-y-2 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                    <div className="flex flex-col items-start gap-2 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
                       {selectedPerson.lifespan && (
-                        <div className="flex items-center gap-1.5 px-2 py-1 bg-slate-100 rounded-lg">
-                          <span className="text-slate-300">生卒：</span>
+                        <div className="inline-flex items-start gap-1.5 px-2 py-1 bg-slate-100 rounded-lg">
+                          <span className="text-slate-300 shrink-0 whitespace-nowrap">生卒：</span>
                           <span className="text-slate-600">{selectedPerson.lifespan}</span>
                         </div>
                       )}
                       {selectedPerson.birthplace && (
-                        <div className="flex items-center gap-1.5 px-2 py-1 bg-slate-100 rounded-lg">
-                          <span className="text-slate-300">籍贯：</span>
+                        <div className="inline-flex items-start gap-1.5 px-2 py-1 bg-slate-100 rounded-lg">
+                          <span className="text-slate-300 shrink-0 whitespace-nowrap">籍贯：</span>
                           <span className="text-slate-600">{selectedPerson.birthplace}</span>
                         </div>
                       )}
