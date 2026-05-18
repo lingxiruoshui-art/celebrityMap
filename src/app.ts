@@ -1140,6 +1140,7 @@ app.post("/archiver/chat", async (c) => {
 请模拟这两人之间的一段简短、深刻且符合性格特征的对话（3-4个来回）。
 对话应围绕他们的核心思想、成就或历史遗憾展开。
 每句话长度必须限制在 1~20 个汉字。
+你必须全程使用简体中文，禁止出现繁体字，禁止谈论敏感的现代政治话题。
 请直接返回 JSON 数组，格式如下：
 [
   { "speaker": "${p1Data.name}", "text": "..." },
@@ -1277,7 +1278,9 @@ app.post("/archiver/generate-target", async (c) => {
 要求：
 1. 不包含在以下列表中：[${sampleNames}]
 2. 此人必须在 Wikidata/Wikipedia 有详尽记载。
-3. 请只返回此人的标准中文译名，不带任何其他文字。`;
+3. 请只返回此人的标准中文译名（必须是简体中文），不带任何其他文字。
+4. 禁止选取中国近代及现代政治领导人（如毛泽东等）。
+5. 严禁出现繁体字。`;
 
   try {
       const resultText = await callAI(c, db, prompt, "text");
