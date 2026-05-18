@@ -1720,9 +1720,23 @@ app.get("/admin/stats", async (c) => {
     // Archived people count
     const archivedPeopleCount = (await db.prepare("SELECT COUNT(*) as count FROM people").get() as any).count;
     
-    // Correct way:
-    const connectedTotalRows = await db.prepare("SELECT person1_id as p_id FROM relationships UNION SELECT person2_id as p_id FROM relationships").all() as any[];
-    const connectedTotalCountUnique = new Set(connectedTotalRows.map(r => r.p_id)).size;
+    // Connected total count (all people mentioned in raw_relationships + archived people)
+    const allPeopleRows = await db.prepare("SELECT raw_relationships FROM people").all() as any[];
+    const allConnectedNames = new Set<string>();
+    allPeopleRows.forEach(row => {
+        try {
+            const rels = JSON.parse(row.raw_relationships || "[]");
+            rels.forEach((r: any) => {
+                if (r.personName) allConnectedNames.add(r.personName.trim().toLowerCase());
+            });
+        } catch(e) {}
+    });
+    // Add all existing archived people names just to be safe
+    const archivedNamesRows = await db.prepare("SELECT name FROM people").all() as any[];
+    archivedNamesRows.forEach(row => {
+        if (row.name) allConnectedNames.add(row.name.trim().toLowerCase());
+    });
+    const connectedTotalCountUnique = allConnectedNames.size;
     
     // Connected count among archived (those in 'people' who have relationships)
     const connectedArchivedRows = await db.prepare("SELECT DISTINCT p.id FROM people p JOIN relationships r ON p.id = r.person1_id OR p.id = r.person2_id").all() as any[];
