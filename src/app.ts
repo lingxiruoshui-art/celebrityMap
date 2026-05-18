@@ -1687,6 +1687,12 @@ app.post("/internal/submit", async (c) => {
         // Save to D1
         try {
             const { isUpdate } = await doFinalizeInsert(db, targetName, personData, wikiMeta, c,
+               addRelationship,
+               (msg: string, type: string) => {
+                 finalizeLogs.push({ msg, type });
+                 db.prepare("INSERT INTO task_logs (task_id, type, msg) VALUES (?, ?, ?)").run(String(taskId || 'sys'), type, msg).catch(()=>null);
+                 updateExplorationState(db, {}, { msg, type }).catch(()=>null);
+               },
                async (relatedName, relType) => {
                  // 严格类型检查，防止 AI 输出异常导致的程序崩溃
                  if (typeof relatedName !== "string") return;
@@ -1708,11 +1714,6 @@ app.post("/internal/submit", async (c) => {
                  if (inQueue) return;
 
                  await db.prepare("INSERT INTO explore_queue (target_name, priority, reason) VALUES (?, 1, ?)").run(normalizedRelation, `由[${targetName}]的时空关系网自动发现`);
-               },
-               (msg, type) => {
-                 finalizeLogs.push({ msg, type });
-                 db.prepare("INSERT INTO task_logs (task_id, type, msg) VALUES (?, ?, ?)").run(String(taskId || 'sys'), type, msg).catch(()=>null);
-                 updateExplorationState(db, {}, { msg, type }).catch(()=>null);
                }
             );
             

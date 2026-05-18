@@ -28,7 +28,7 @@ export async function initExplorationState(
   return state;
 }
 
-export async function doFinalizeInsert(db: DatabaseAdapter, finalName: string, personData: any, wikiMeta: any, c: any, addRelationship: any, addLog: any) {
+export async function doFinalizeInsert(db: DatabaseAdapter, finalName: string, personData: any, wikiMeta: any, c: any, addRelationship: any, addLog: any, onDiscover?: (name: string, type: string) => Promise<void>) {
     const portraitUrlRaw = wikiMeta?.imageUrl;
     const portraitUrl = `/api/portraits/${encodeURIComponent(finalName.toLowerCase())}.jpg`;
     if (c.env && c.env.IMAGES && portraitUrlRaw) {
@@ -55,9 +55,9 @@ export async function doFinalizeInsert(db: DatabaseAdapter, finalName: string, p
         `INSERT INTO people (name, category, keyword, biography, achievements, raw_relationships, lifespan, birthplace, image_url)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(name) DO UPDATE SET 
-           category=excluded.category, keyword=excluded.keyword, biography=excluded.biography, image_url=excluded.image_url,
-           achievements=excluded.achievements, raw_relationships=excluded.raw_relationships, lifespan=excluded.lifespan, birthplace=excluded.birthplace,
-           created_at=CURRENT_TIMESTAMP
+            category=excluded.category, keyword=excluded.keyword, biography=excluded.biography, image_url=excluded.image_url,
+            achievements=excluded.achievements, raw_relationships=excluded.raw_relationships, lifespan=excluded.lifespan, birthplace=excluded.birthplace,
+            created_at=CURRENT_TIMESTAMP
          RETURNING id`
     ).get(finalName, personData.category || "未知", personData.keyword || "", personData.biography || "", JSON.stringify(personData.achievements || []), JSON.stringify(personData.relationships || []), personData.lifespan || "", personData.birthplace || "", portraitUrl);
     
@@ -68,7 +68,11 @@ export async function doFinalizeInsert(db: DatabaseAdapter, finalName: string, p
         if (personData.relationships) {
             for (const rel of personData.relationships) {
                 const matched = await db.prepare("SELECT id FROM people WHERE name = ?").get(rel.personName) as any;
-                if (matched) await addRelationship(db, newId, matched.id, rel.relationshipType);
+                if (matched) {
+                    await addRelationship(db, newId, matched.id, rel.relationshipType);
+                } else if (onDiscover) {
+                    await onDiscover(rel.personName, rel.relationshipType);
+                }
             }
         }
         const previousMentions = await db.prepare(`SELECT id, name, raw_relationships FROM people WHERE id != ? AND raw_relationships LIKE ?`).all(newId, `%${finalName}%`) as any[];
