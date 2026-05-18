@@ -1414,6 +1414,12 @@ app.get("/explore/status", async (c) => {
   
   // Add queue info
   let pendingTasks = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' ORDER BY priority DESC, created_at ASC").all() as any[];
+
+  // Periodically clean up completed or successfully archived tasks to prevent infinite growth
+  // We keep 'error' tasks so that the blacklist (failed 3 times) continues to work.
+  if (Math.random() < 0.1) {
+      db.prepare("DELETE FROM explore_queue WHERE status = 'completed' AND updated_at < date('now', '-3 days')").run().catch(e => console.error(e));
+  }
   
   const refillEnabled = await getConfig(db, "auto_refill_enabled", "false") === "true";
   data.autoRefillEnabled = refillEnabled;
