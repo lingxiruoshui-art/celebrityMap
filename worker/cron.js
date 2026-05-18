@@ -293,7 +293,7 @@ export default {
                              const sanitized = cleanText.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
                              return JSON.parse(sanitized);
                           } catch (e3) {
-                             console.error("JSON Parse failed completely:", e3, "Text:", cleanText.slice(0, 200));
+                             console.error("JSON Parse failed completely:", e3, "Text:", cleanText.slice(0, 2000));
                              return null;
                           }
                       }
@@ -357,18 +357,19 @@ export default {
 
 请严格返回以下格式的 JSON 对象：
 {
-  "keyword": "格言短语，禁止包含任何半角双引号",
+  "keyword": "格言短语，严禁使用半角双引号",
   "lifespan": "1879年-1955年",
   "birthplace": "出生地",
   "category": "简短的人物身份分类（如：哲学家、作曲家等，2-4字）",
-  "biography": "不少于 400 字的详细传记，使用 \\n\\n 分段。禁止在字符串内直接换行。",
+  "biography": "不少于 400 字的详细传记，使用 \\n\\n 分段。严禁包含任何换行字符。",
   "accepted": true,
   "standardChineseName": "${targetName}"
 }
 
 特别要求（为了防止 JSON 解析失败）：
 1. biography 必须通过 "\\n\\n" 分成 2 段以上。不少于 400 字。
-2. 内容内部禁止使用半角双引号 (")，引用请使用中文全角引号 (“ ”)。
+2. **禁止任何半角双引号 (")**：传记和格言中引用必须使用全角引号 (“ ”)。
+3. **严禁在字符串内手动换行**：段落间仅限 "\\n\\n" 分隔。
 3. 必须使用简体中文。
 4. 请确保仅返回一个合法的 JSON 对象。`;
 
@@ -392,7 +393,7 @@ export default {
               
               if (!coreData) {
                   await reportLog("核心档案损坏，正在尝试第二次高维重构...", "error");
-                  coreResStr = await callAILocally(corePrompt + "\n\n请注意：必须严格输出合法的 JSON 格式，不要在内容中使用任何半角双引号。", true, coreSchema);
+                  coreResStr = await callAILocally(corePrompt + "\n\n请注意：必须严格输出合法的 JSON 格式，段落内部禁止换行，禁止使用半角双引号。", true, coreSchema);
                   coreData = safeParseJSON(coreResStr);
               }
 
@@ -424,8 +425,9 @@ ${coreData.biography}
 }
 
 特别要求：
-1. **关系网络**：必须是真实的、曾在历史上存在过的人物。对于外国历史人物，必须通过内在百科检索获取**中国大陆学术界公认最通用的简体中文译名**（例如：必须是“阿尔伯特·爱因斯坦”而绝对不能是“Einstein”或“Einstein, Albert”）。
-2. **严禁英文**：在 personName 字段中，**绝对禁止出现任何半角英文字母、拉丁单词或外文缩写**。如果是外籍人物，必须全部译为对应的中文。
+1. **关系网络**：必须是真实的名人。外国历史人物必须使用**通用的简体中文译名**（严禁 Einstein 这种原文）。
+2. **严禁英文**：personName 字段绝对禁止出现任何英文字母。
+3. **JSON 安全**：禁止使用半角双引号 (")，禁止在字符串内直接换行。
 3. **姓名规范**：对于中国古人，请使用其最广为人知的姓名。
 4. **内容完整性**：绝对禁止返回空数组（硬性指标）。
 5. **JSON 安全**：所有字段内部禁止使用半角双引号 (")，请使用中文全角引号 (“ ”)。请确保返回合法的 JSON 对象。`;
@@ -459,7 +461,7 @@ ${coreData.biography}
               
               if (!extraData || !extraData.achievements?.length || !extraData.relationships?.length) {
                   await reportLog("时空拓扑映射异常（数据缺失或损坏），正在执行重试逻辑...", "error");
-                  extraResStr = await callAILocally(extraPrompt + "\n\n请注意：achievements 和 relationships 数组绝对不能为空，必须包含真实有效的关联信息，严禁使用半角双引号。", true, extraSchema);
+                  extraResStr = await callAILocally(extraPrompt + "\n\n请注意：achievements 和 relationships 数组绝对不能为空，必须包含真实有效的关联信息，严禁使用半角双引号和换行符。", true, extraSchema);
                   extraData = safeParseJSON(extraResStr);
               }
 
