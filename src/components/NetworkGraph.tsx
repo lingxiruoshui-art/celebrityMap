@@ -191,11 +191,11 @@ export default function NetworkGraph({
 
     d3.select(svgRef.current).selectAll("*").remove();
 
-    if (people.length === 0) return;
-
     const svg = d3.select(svgRef.current)
       .attr("width", width)
       .attr("height", height);
+
+    // If people.length === 0, we still proceed to render the globe sphere background & graticules for a beautiful empty state!
 
     // Base Scale & Projection
     const baseScale = Math.min(width, height) / 2.2;
@@ -217,31 +217,34 @@ export default function NetworkGraph({
       .attr("cx", "30%")
       .attr("cy", "30%")
       .attr("r", "70%");
-    sphereGradient.append("stop").attr("offset", "0%").attr("stop-color", "#f8fafc");
-    sphereGradient.append("stop").attr("offset", "100%").attr("stop-color", "#e2e8f0");
+    sphereGradient.append("stop").attr("offset", "0%").attr("stop-color", "#e0e7ff");
+    sphereGradient.append("stop").attr("offset", "50%").attr("stop-color", "#a5b4fc");
+    sphereGradient.append("stop").attr("offset", "100%").attr("stop-color", "#6366f1");
 
     const sphereSelectedGradient = defs.append("radialGradient")
       .attr("id", "sphere-selected")
       .attr("cx", "30%")
       .attr("cy", "30%")
       .attr("r", "70%");
-    sphereSelectedGradient.append("stop").attr("offset", "0%").attr("stop-color", "#818cf8");
-    sphereSelectedGradient.append("stop").attr("offset", "100%").attr("stop-color", "#4f46e5");
+    sphereSelectedGradient.append("stop").attr("offset", "0%").attr("stop-color", "#f472b6");
+    sphereSelectedGradient.append("stop").attr("offset", "70%").attr("stop-color", "#ec4899");
+    sphereSelectedGradient.append("stop").attr("offset", "100%").attr("stop-color", "#be185d");
 
     const spherePathGradient = defs.append("radialGradient")
       .attr("id", "sphere-path")
       .attr("cx", "30%")
       .attr("cy", "30%")
       .attr("r", "70%");
-    spherePathGradient.append("stop").attr("offset", "0%").attr("stop-color", "#34d399");
-    spherePathGradient.append("stop").attr("offset", "100%").attr("stop-color", "#059669");
+    spherePathGradient.append("stop").attr("offset", "0%").attr("stop-color", "#67e8f9");
+    spherePathGradient.append("stop").attr("offset", "60%").attr("stop-color", "#06b6d4");
+    spherePathGradient.append("stop").attr("offset", "100%").attr("stop-color", "#0891b2");
 
     const sphereNewestGradient = defs.append("radialGradient")
       .attr("id", "sphere-newest")
       .attr("cx", "30%")
       .attr("cy", "30%")
       .attr("r", "70%");
-    sphereNewestGradient.append("stop").attr("offset", "0%").attr("stop-color", "#fbbf24");
+    sphereNewestGradient.append("stop").attr("offset", "0%").attr("stop-color", "#fde68a");
     sphereNewestGradient.append("stop").attr("offset", "100%").attr("stop-color", "#f59e0b");
 
     const sphereBackground = defs.append("radialGradient")
@@ -249,8 +252,25 @@ export default function NetworkGraph({
       .attr("cx", "50%")
       .attr("cy", "50%")
       .attr("r", "50%");
-    sphereBackground.append("stop").attr("offset", "80%").attr("stop-color", "#f8fafc").attr("stop-opacity", 0.0);
-    sphereBackground.append("stop").attr("offset", "100%").attr("stop-color", "#94a3b8").attr("stop-opacity", 0.3);
+    sphereBackground.append("stop").attr("offset", "0%").attr("stop-color", "#ffffff").attr("stop-opacity", 1.0);
+    sphereBackground.append("stop").attr("offset", "70%").attr("stop-color", "#f1f5f9").attr("stop-opacity", 0.85);
+    sphereBackground.append("stop").attr("offset", "85%").attr("stop-color", "#e0e7ff").attr("stop-opacity", 0.65);
+    sphereBackground.append("stop").attr("offset", "100%").attr("stop-color", "#c7d2fe").attr("stop-opacity", 0.45);
+
+    // Glow filter for beautiful visuals
+    const glowFilter = defs.append("filter")
+      .attr("id", "glow")
+      .attr("x", "-20%")
+      .attr("y", "-20%")
+      .attr("width", "140%")
+      .attr("height", "140%");
+    glowFilter.append("feGaussianBlur")
+      .attr("stdDeviation", "2.5")
+      .attr("result", "blur");
+    glowFilter.append("feComposite")
+      .attr("in", "SourceGraphic")
+      .attr("in2", "blur")
+      .attr("operator", "over");
 
     // Layers
     const mapLayer = svg.append("g").attr("class", "map-layer");
@@ -553,6 +573,11 @@ export default function NetworkGraph({
           if (inP || d.id === activeId) return 3.5;
           return 1.5;
         })
+        .style("filter", (d: any) => {
+          const inP = hasPath && discoveryPath && discoveryPath.some(p => p.name === d.name);
+          if (inP || d.id === activeId) return "url(#glow)";
+          return "none";
+        })
         .attr("fill-opacity", (d: any) => {
           const inP = hasPath && discoveryPath && discoveryPath.some(p => p.name === d.name);
           if (inP || d.id === activeId) return 1;
@@ -679,7 +704,10 @@ export default function NetworkGraph({
       // Auto rotate very slowly if not dragging
       if (!isDragging && autoRotateEnabled) {
         const currentRotate = projection.rotate();
-        projection.rotate([currentRotate[0] + 0.15, currentRotate[1]]);
+        // Dynamic multiaxial drift (horizontal slow spin + gentle organic vertical wiggle)
+        const nextLng = currentRotate[0] + 0.12;
+        const nextLat = 8 * Math.sin(elapsed / 6000);
+        projection.rotate([nextLng, nextLat]);
         updateGlobe();
       }
     });

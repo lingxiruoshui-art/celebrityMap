@@ -94,22 +94,21 @@ export default function AnimatedLogo() {
         {[0, 120, 240].map((angle, i) => (
           <motion.circle
             key={i}
-            r="2"
+            r="1.8"
             fill="#818cf8"
+            cx="50"
+            cy="50"
             animate={{
-              cx: 50 + 35 * Math.cos((angle * Math.PI) / 180),
-              cy: 50 + 35 * Math.sin((angle * Math.PI) / 180),
+              rotate: [angle, angle + 360],
             }}
             transition={{
-              duration: 10,
+              duration: 8 + i * 2,
               repeat: Infinity,
               ease: "linear",
             }}
             style={{
-              x: 0,
-              y: 0,
               transformOrigin: "50px 50px",
-              rotate: angle
+              x: 35, // 偏离中心 35px，配合 rotate 实现完美轨道运行
             }}
           />
         ))}
