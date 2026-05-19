@@ -48,13 +48,29 @@ export default function NetworkGraph({
     
     const maxNodes = 200;
     const activeId = selectedPersonId;
+    // 0. Add people in the discovery path first (to guarantee the green path renders fully)
+    const normalizedPathNames = (discoveryPath || []).map(p => p.name.trim().toLowerCase().replace(/·|•|・|●/g, "·").replace(/\s+/g, ""));
     const seenIds = new Set<number>();
     const result: Person[] = [];
+
+    if (discoveryPath && discoveryPath.length > 0) {
+      discoveryPath.forEach(pathItem => {
+        const normItem = pathItem.name.trim().toLowerCase().replace(/·|•|・|●/g, "·").replace(/\s+/g, "");
+        const p = people.find(persona => {
+          const normPersona = persona.name.trim().toLowerCase().replace(/·|•|・|●/g, "·").replace(/\s+/g, "");
+          return normPersona === normItem;
+        });
+        if (p && !seenIds.has(p.id)) {
+          result.push(p);
+          seenIds.add(p.id);
+        }
+      });
+    }
 
     // 1. Add selected person
     if (activeId) {
       const p = people.find(persona => persona.id === activeId);
-      if (p) {
+      if (p && !seenIds.has(p.id)) {
         result.push(p);
         seenIds.add(p.id);
       }
@@ -334,15 +350,17 @@ export default function NetworkGraph({
     });
 
     // Create Links
-    const links = filteredRelationships.map(r => {
+    const baseLinks = filteredRelationships.map(r => {
       const sourcePerson = processedPeople.find(p => p.id === r.person1_id);
       const targetPerson = processedPeople.find(p => p.id === r.person2_id);
       
       let inPath = false;
       let pathDirection = 1;
       if (discoveryPath && sourcePerson && targetPerson) {
-        const sIdx = discoveryPath.findIndex((p: any) => p.name === sourcePerson.name);
-        const tIdx = discoveryPath.findIndex((p: any) => p.name === targetPerson.name);
+        const normSource = sourcePerson.name.trim().toLowerCase().replace(/·|•|・|●/g, "·").replace(/\s+/g, "");
+        const normTarget = targetPerson.name.trim().toLowerCase().replace(/·|•|・|●/g, "·").replace(/\s+/g, "");
+        const sIdx = discoveryPath.findIndex((p: any) => p.name.trim().toLowerCase().replace(/·|•|・|●/g, "·").replace(/\s+/g, "") === normSource);
+        const tIdx = discoveryPath.findIndex((p: any) => p.name.trim().toLowerCase().replace(/·|•|・|●/g, "·").replace(/\s+/g, "") === normTarget);
         if (sIdx !== -1 && tIdx !== -1 && Math.abs(sIdx - tIdx) === 1) {
           inPath = true;
           pathDirection = sIdx < tIdx ? 1 : -1;
@@ -353,7 +371,45 @@ export default function NetworkGraph({
       const id = `link-${sourcePerson?.id}-${targetPerson?.id}`;
 
       return { id, sourcePerson, targetPerson, inPath, pathDirection, isNewestLink, relationship: r };
-    }).filter(l => l.sourcePerson && l.targetPerson);
+    }).filter(l => l.sourcePerson && l.targetPerson) as any[];
+
+    // Ensure EVERY step in the discoveryPath is connected by a link
+    if (discoveryPath && discoveryPath.length > 1) {
+      for (let i = 0; i < discoveryPath.length - 1; i++) {
+        const nameA = discoveryPath[i].name.trim().toLowerCase().replace(/·|•|・|●/g, "·").replace(/\s+/g, "");
+        const nameB = discoveryPath[i + 1].name.trim().toLowerCase().replace(/·|•|・|●/g, "·").replace(/\s+/g, "");
+        
+        const nodeA = processedPeople.find(p => p.name.trim().toLowerCase().replace(/·|•|・|●/g, "·").replace(/\s+/g, "") === nameA);
+        const nodeB = processedPeople.find(p => p.name.trim().toLowerCase().replace(/·|•|・|●/g, "·").replace(/\s+/g, "") === nameB);
+        
+        if (nodeA && nodeB) {
+          const hasExisting = baseLinks.some(l => 
+            ((l.sourcePerson.id === nodeA.id && l.targetPerson.id === nodeB.id) ||
+             (l.sourcePerson.id === nodeB.id && l.targetPerson.id === nodeA.id)) && l.inPath
+          );
+          
+          if (!hasExisting) {
+            baseLinks.push({
+              id: `link-virtual-${nodeA.id}-${nodeB.id}`,
+              sourcePerson: nodeA,
+              targetPerson: nodeB,
+              inPath: true,
+              pathDirection: 1,
+              isNewestLink: false,
+              relationship: {
+                id: -999 - i,
+                person1_id: nodeA.id,
+                person2_id: nodeB.id,
+                relationship_type: "时空折叠连接",
+                description: "时空寻路建立的连接线"
+              }
+            });
+          }
+        }
+      }
+    }
+
+    const links = baseLinks;
 
     const linkElements = linksLayer.selectAll("path")
       .data(links)
