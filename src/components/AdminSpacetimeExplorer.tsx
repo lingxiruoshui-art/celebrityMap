@@ -973,7 +973,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                         <div className="font-bold text-slate-800">{adminStats.connectedTotal} / {adminStats.connectedArchived}</div>
                     </div>
                     <div className="bg-slate-100 p-2 rounded-lg col-span-2">
-                        <div className="text-slate-500">时空锁死黑名单 (3次入库失败以上)</div>
+                        <div className="text-slate-500">时空锁死黑名单 (5次入库失败以上)</div>
                         <div className="font-bold text-red-600">{adminStats.blacklistCount}</div>
                     </div>
                 </div>

@@ -1190,8 +1190,8 @@ export async function pickTarget(db: DatabaseAdapter) {
   const queuedPeopleRows = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' OR status = 'processing' OR status = 'completed'").all() as any[];
   queuedPeopleRows.forEach(t => archivedSet.add(t.target_name.toLowerCase()));
 
-  // Also exclude blacklisted people (failed 3 times)
-  const failedPeopleRows = await db.prepare("SELECT LOWER(target_name) as target_name FROM explore_queue WHERE status = 'error' GROUP BY LOWER(target_name) HAVING COUNT(*) >= 3").all() as any[];
+  // Also exclude blacklisted people (failed 5 times)
+  const failedPeopleRows = await db.prepare("SELECT LOWER(target_name) as target_name FROM explore_queue WHERE status = 'error' GROUP BY LOWER(target_name) HAVING COUNT(*) >= 5").all() as any[];
   failedPeopleRows.forEach((t: any) => archivedSet.add(t.target_name.toLowerCase()));
   
   const shuffle = (array: any[]) => {
@@ -1268,8 +1268,8 @@ app.post("/archiver/generate-target", async (c) => {
   const db = await getDb(c);
   const samplePeople = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 20").all() as any[];
   
-  // Exclude blacklisted people (failed 3 times)
-  const failedPeopleRows = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'error' GROUP BY LOWER(target_name) HAVING COUNT(*) >= 3").all() as any[];
+  // Exclude blacklisted people (failed 5 times)
+  const failedPeopleRows = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'error' GROUP BY LOWER(target_name) HAVING COUNT(*) >= 5").all() as any[];
   const allExcludes = [...samplePeople.map((p: any) => p.name), ...failedPeopleRows.map((p: any) => p.target_name)];
   
   const sampleNames = allExcludes.join("、");
@@ -1312,8 +1312,8 @@ app.post("/archive-figure", async (c) => {
 
   // Check if blacklisted
   const errorCount = await db.prepare("SELECT COUNT(*) as count FROM explore_queue WHERE LOWER(target_name) = ? AND status = 'error'").get(targetName.toLowerCase()) as any;
-  if (errorCount.count >= 3) {
-      return c.json({ error: `[${targetName}] 已连续 3 次入库失败，已被自动拉黑，不可再入库。` }, 400);
+  if (errorCount.count >= 5) {
+      return c.json({ error: `[${targetName}] 已连续 5 次入库失败，已被自动拉黑，不可再入库。` }, 400);
   }
   
   // Check if already in queue
@@ -1810,8 +1810,8 @@ app.get("/admin/stats", async (c) => {
     const connectedArchivedRows = await db.prepare("SELECT DISTINCT p.id FROM people p JOIN relationships r ON p.id = r.person1_id OR p.id = r.person2_id").all() as any[];
     const connectedArchivedCount = connectedArchivedRows.length;
     
-    // Failed >= 3 (blacklist count)
-    const failedPeopleRows = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'error' GROUP BY LOWER(target_name) HAVING COUNT(*) >= 3").all() as any[];
+    // Failed >= 5 (blacklist count)
+    const failedPeopleRows = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'error' GROUP BY LOWER(target_name) HAVING COUNT(*) >= 5").all() as any[];
     const blacklistCount = failedPeopleRows.length;
 
     return c.json({
@@ -1840,8 +1840,8 @@ app.post("/explore/enqueue", async (c) => {
     
     // Check if blacklisted
     const errorCount = await db.prepare("SELECT COUNT(*) as count FROM explore_queue WHERE LOWER(target_name) = ? AND status = 'error'").get(targetName.toLowerCase()) as any;
-    if (errorCount.count >= 3) {
-        return c.json({ error: `[${targetName}] 已连续 3 次入库失败，已被自动拉黑，不可再入库。` }, 400);
+    if (errorCount.count >= 5) {
+        return c.json({ error: `[${targetName}] 已连续 5 次入库失败，已被自动拉黑，不可再入库。` }, 400);
     }
     
     // Check if already in queue
@@ -1892,8 +1892,8 @@ app.post("/explore/start", async (c) => {
 
   // Check if blacklisted
   const errorCount = await db.prepare("SELECT COUNT(*) as count FROM explore_queue WHERE LOWER(target_name) = ? AND status = 'error'").get(targetName.toLowerCase()) as any;
-  if (errorCount.count >= 3) {
-      return c.json({ error: `[${targetName}] 已连续 3 次入库失败，已被自动拉黑，不可再入库。` }, 400);
+  if (errorCount.count >= 5) {
+      return c.json({ error: `[${targetName}] 已连续 5 次入库失败，已被自动拉黑，不可再入库。` }, 400);
   }
 
   // Check if already in queue
