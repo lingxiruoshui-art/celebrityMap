@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef } from "react";
-import { X, Search, ChevronRight, User, Loader2, Sparkles, AlertCircle, Zap, ChevronDown, ChevronUp, RefreshCw, Save, CheckCircle, Layers } from "lucide-react";
+import { X, Search, ChevronRight, User, Loader2, Sparkles, AlertCircle, Zap, ChevronDown, ChevronUp, RefreshCw, Save, CheckCircle, Layers, Download } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { getGemini } from "../services/aiService";
 
@@ -443,6 +443,32 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
 
   const [isAutoRefillEnabled, setIsAutoRefillEnabled] = useState(false);
   const [adminStats, setAdminStats] = useState<{totalPool: number, archivedPool: number, connectedTotal: number, connectedArchived: number, blacklistCount: number} | null>(null);
+  const [isDownloadingBlacklist, setIsDownloadingBlacklist] = useState(false);
+
+  const handleDownloadBlacklist = async () => {
+    setIsDownloadingBlacklist(true);
+    try {
+      const res = await fetch("/api/admin/blacklist", {
+        headers: { "x-admin-password": localStorage.getItem("admin_password") || "" }
+      });
+      if (!res.ok) {
+        throw new Error("下载失败");
+      }
+      const names = await res.json() as string[];
+      const text = names.join("\n");
+      const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `时空锁死黑名单_${new Date().toISOString().slice(0, 10)}.txt`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error("Failed to download blacklist", e);
+    } finally {
+      setIsDownloadingBlacklist(false);
+    }
+  };
 
   useEffect(() => {
     if (isAdmin) {
@@ -972,9 +998,23 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                         <div className="text-slate-500">时空连线人数 (被连接总计 / 已入库)</div>
                         <div className="font-bold text-slate-800">{adminStats.connectedTotal} / {adminStats.connectedArchived}</div>
                     </div>
-                    <div className="bg-slate-100 p-2 rounded-lg col-span-2">
-                        <div className="text-slate-500">时空锁死黑名单 (5次入库失败以上)</div>
-                        <div className="font-bold text-red-600">{adminStats.blacklistCount}</div>
+                    <div className="bg-slate-100 p-2 rounded-lg col-span-2 flex items-center justify-between">
+                        <div>
+                            <div className="text-slate-500">时空锁死黑名单 (5次入库失败以上)</div>
+                            <div className="font-bold text-red-600">{adminStats.blacklistCount}</div>
+                        </div>
+                        <button
+                          onClick={handleDownloadBlacklist}
+                          disabled={isDownloadingBlacklist || !adminStats.blacklistCount}
+                          className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white h-[28px] px-3 text-[11px] font-bold rounded-lg transition-all shadow-md shadow-indigo-100 flex items-center justify-center gap-1 active:scale-[0.98] group"
+                        >
+                          {isDownloadingBlacklist ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Download className="w-3 h-3 group-hover:translate-y-0.5 transition-transform" />
+                          )}
+                          <span>下载名单</span>
+                        </button>
                     </div>
                 </div>
               )}

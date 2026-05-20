@@ -1828,6 +1828,16 @@ app.get("/admin/stats", async (c) => {
     });
 });
 
+app.get("/admin/blacklist", async (c) => {
+    const db = await getDb(c);
+    const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
+    if (!isAdmin) return c.json({ error: "Unauthorized" }, 401);
+    
+    const rows = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'error' GROUP BY LOWER(target_name) HAVING COUNT(*) >= 5").all() as any[];
+    const names = rows.map(r => r.target_name);
+    return c.json(names);
+});
+
 // Admin enqueues a target manually
 app.post("/explore/enqueue", async (c) => {
     const db = await getDb(c);
