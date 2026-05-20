@@ -434,9 +434,15 @@ export default {
 
               // ============ PHASE: AI EXTRA ============
               await reportLog("启动图谱解析引擎，分析次级关联节点脉络...", "api");
+              // Optimize context size: extract the first paragraph and limit to 150 characters to reduce TTFT/latency significantly.
+              const bioSummary = (coreData.biography || "").split("\n")[0].substring(0, 150).trim();
               const extraPrompt = `你是一位资深时空档案馆长。任务目标：提取人物 "${targetName}" 的核心成就，并构建其跨时空关系网络。
-人物传记参考：
-${coreData.biography}
+人物核心线索：
+- 姓名：${targetName}
+- 生卒年：${coreData.lifespan || '未知'}
+- 出生地：${coreData.birthplace || '未知'}
+- 领域分类：${coreData.category || '未知'}
+- 简要背景：${bioSummary}...
 
 请在历史长河中检索并完成以下任务：
 1. 提取 3-5 条该人物的核心成就（achievements），每条不少于 15 字，描述要具体。
