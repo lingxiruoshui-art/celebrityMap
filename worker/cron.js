@@ -238,7 +238,16 @@ export default {
                               });
                           }
                           
-                          const data = await res.json();
+                          const text = await res.text();
+                          if (!res.ok) {
+                              throw new Error(`HTTP 异常 [状态码: ${res.status}] ${text.substring(0, 100)}`);
+                          }
+                          let data;
+                          try {
+                              data = JSON.parse(text);
+                          } catch (parseErr) {
+                              throw new Error(`AI 返回结果非 JSON 格式 [HTTP ${res.status}]: ${text.substring(0, 100)}`);
+                          }
                           if (data.error) throw new Error(data.error.message || "Unknown AI API error");
                           
                           let content = "";
