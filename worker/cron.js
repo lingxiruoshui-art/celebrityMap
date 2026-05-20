@@ -324,6 +324,27 @@ export default {
                       wikiMeta.normalizedName = item.labels?.zh?.value || entity.label || targetName;
                       wikiMeta.description = item.descriptions?.zh?.value || item.descriptions?.en?.value || entity.description || "";
                       
+                      // Check if living/still alive (P569/P570)
+                      let isAliveVal = false;
+                      if (item.claims) {
+                          const hasDeathDate = !!item.claims.P570;
+                          const birthTimesnak = item.claims.P569?.[0]?.mainsnak?.datavalue?.value?.time;
+                          if (birthTimesnak) {
+                              const match = birthTimesnak.match(/^\+?(-?\d+)/);
+                              if (match) {
+                                  const birthYear = parseInt(match[1]);
+                                  // If born after 1920 (modern scale) and has no death date, reject as living/alive.
+                                  if (birthYear > 1920 && !hasDeathDate) {
+                                      isAliveVal = true;
+                                  }
+                              }
+                          }
+                      }
+                      
+                      if (isAliveVal) {
+                          throw new Error(`拒绝收录：[${wikiMeta.normalizedName}] 属于现代在世人物。本时空博物馆仅收录并展示已故的历史传奇。`);
+                      }
+
                       if (item.claims?.P18) {
                           const imageName = item.claims.P18[0].mainsnak?.datavalue?.value;
                           if (imageName) {
@@ -333,6 +354,9 @@ export default {
                   }
               } catch (e) {
                   console.error("Wiki Error", e);
+                  if (e.message && e.message.includes("现代在世人物")) {
+                      throw e;
+                  }
               }
               
               if (!wikiMeta.imageUrl) {
@@ -372,7 +396,8 @@ export default {
 3. **严禁在字符串内手动换行**：段落间仅限 "\\n\\n" 分隔。
 3. **强制简体**：必须全程使用中国大陆标准的**简体中文**（Simplified Chinese），严禁使用繁体字（例如：应使用“拿破仑”而非“拿破崙”，应使用“罗伯托”而非“羅伯托”）。如果输入的参考资料中包含繁体字，请务必将其转换为简体后再输出。
 4. **负面约束**：严禁描述、建议或关联任何中国近代及现代政治领导人（Sensitive Figures）。
-5. 请确保仅返回一个合法的 JSON 对象。`;
+5. **严禁在世人物**：本时空博物馆只收录已故的历史人物。如果该人物至今仍然在世（例如1920年之后出生且无确切去世记录、或任何至今健在的现代政治/科学/演艺界公众人物），请务必在返回的JSON中设置 "accepted": false。
+6. 请确保仅返回一个合法的 JSON 对象。`;
 
               const coreSchema = {
                   type: "OBJECT",

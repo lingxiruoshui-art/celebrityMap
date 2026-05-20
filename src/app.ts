@@ -1280,7 +1280,8 @@ app.post("/archiver/generate-target", async (c) => {
 2. 此人必须在 Wikidata/Wikipedia 有详尽记载。
 3. 请只返回此人的标准中文译名（必须是简体中文），不带任何其他文字。
 4. 禁止选取中国近代及现代政治领导人（如毛泽东等）。
-5. 严禁出现繁体字。`;
+5. 严禁出现繁体字。
+6. 必须是已故的历史人物，严禁选取任何仍然在世的当代名人（如马斯克、比尔·盖茨等当代尚健在的人物）。`;
 
   try {
       const resultText = await callAI(c, db, prompt, "text");
