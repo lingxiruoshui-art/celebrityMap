@@ -442,13 +442,21 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   };
 
   const [isAutoRefillEnabled, setIsAutoRefillEnabled] = useState(false);
-  const [adminStats, setAdminStats] = useState<{totalPool: number, archivedPool: number, connectedTotal: number, connectedArchived: number, blacklistCount: number} | null>(null);
-  const [isDownloadingBlacklist, setIsDownloadingBlacklist] = useState(false);
+  const [adminStats, setAdminStats] = useState<{
+    totalPool: number,
+    archivedPool: number,
+    connectedTotal: number,
+    connectedArchived: number,
+    blacklistCount: number,
+    photoBlacklistCount?: number,
+    otherBlacklistCount?: number
+  } | null>(null);
+  const [isDownloadingBlacklist, setIsDownloadingBlacklist] = useState<string | null>(null);
 
-  const handleDownloadBlacklist = async () => {
-    setIsDownloadingBlacklist(true);
+  const handleDownloadBlacklist = async (type: "photos" | "others") => {
+    setIsDownloadingBlacklist(type);
     try {
-      const res = await fetch("/api/admin/blacklist", {
+      const res = await fetch(`/api/admin/blacklist?type=${type}`, {
         headers: { "x-admin-password": localStorage.getItem("admin_password") || "" }
       });
       if (!res.ok) {
@@ -460,13 +468,14 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `时空锁死黑名单_${new Date().toISOString().slice(0, 10)}.txt`;
+      const label = type === "photos" ? "缺少真实照片" : "其他探索错误";
+      link.download = `时空锁死黑名单_${label}_${new Date().toISOString().slice(0, 10)}.txt`;
       link.click();
       URL.revokeObjectURL(url);
     } catch (e) {
       console.error("Failed to download blacklist", e);
     } finally {
-      setIsDownloadingBlacklist(false);
+      setIsDownloadingBlacklist(null);
     }
   };
 
@@ -998,23 +1007,43 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                         <div className="text-slate-500">时空连线人数 (被连接总计 / 已入库)</div>
                         <div className="font-bold text-slate-800">{adminStats.connectedTotal} / {adminStats.connectedArchived}</div>
                     </div>
-                    <div className="bg-slate-100 p-2 rounded-lg col-span-2 flex items-center justify-between">
-                        <div>
-                            <div className="text-slate-500">时空锁死黑名单 (5次入库失败以上)</div>
-                            <div className="font-bold text-red-600">{adminStats.blacklistCount}</div>
+                    <div className="bg-slate-100 p-2.5 rounded-lg col-span-2 flex flex-col gap-2">
+                        <div className="flex items-center justify-between border-b border-dashed border-slate-200 pb-2">
+                            <div>
+                                <div className="text-slate-500">缺乏照片黑名单 (失败2次及以上)</div>
+                                <div className="font-bold text-red-600 mt-0.5">{adminStats.photoBlacklistCount || 0} 人</div>
+                            </div>
+                            <button
+                              onClick={() => handleDownloadBlacklist("photos")}
+                              disabled={isDownloadingBlacklist !== null || !adminStats.photoBlacklistCount}
+                              className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white h-[26px] px-2.5 text-[10px] font-bold rounded-lg transition-all shadow-sm flex items-center justify-center gap-1 active:scale-[0.98] group"
+                            >
+                              {isDownloadingBlacklist === "photos" ? (
+                                <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                              ) : (
+                                <Download className="w-2.5 h-2.5 group-hover:translate-y-0.5 transition-transform" />
+                              )}
+                              <span>下载名单</span>
+                            </button>
                         </div>
-                        <button
-                          onClick={handleDownloadBlacklist}
-                          disabled={isDownloadingBlacklist || !adminStats.blacklistCount}
-                          className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white h-[28px] px-3 text-[11px] font-bold rounded-lg transition-all shadow-md shadow-indigo-100 flex items-center justify-center gap-1 active:scale-[0.98] group"
-                        >
-                          {isDownloadingBlacklist ? (
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                          ) : (
-                            <Download className="w-3 h-3 group-hover:translate-y-0.5 transition-transform" />
-                          )}
-                          <span>下载名单</span>
-                        </button>
+                        <div className="flex items-center justify-between pt-1">
+                            <div>
+                                <div className="text-slate-500">其他错误黑名单 (失败5次及以上)</div>
+                                <div className="font-bold text-red-600 mt-0.5">{adminStats.otherBlacklistCount || 0} 人</div>
+                            </div>
+                            <button
+                              onClick={() => handleDownloadBlacklist("others")}
+                              disabled={isDownloadingBlacklist !== null || !adminStats.otherBlacklistCount}
+                              className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white h-[26px] px-2.5 text-[10px] font-bold rounded-lg transition-all shadow-sm flex items-center justify-center gap-1 active:scale-[0.98] group"
+                            >
+                              {isDownloadingBlacklist === "others" ? (
+                                <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                              ) : (
+                                <Download className="w-2.5 h-2.5 group-hover:translate-y-0.5 transition-transform" />
+                              )}
+                              <span>下载名单</span>
+                            </button>
+                        </div>
                     </div>
                 </div>
               )}

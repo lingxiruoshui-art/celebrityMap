@@ -1194,14 +1194,14 @@ export async function pickTarget(db: DatabaseAdapter) {
   const queuedPeopleRows = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' OR status = 'processing' OR status = 'completed'").all() as any[];
   queuedPeopleRows.forEach(t => archivedSet.add(t.target_name.toLowerCase()));
 
-  // Also exclude blacklisted people (wikidata photo error >= 2, or overall error >= 7)
+  // Also exclude blacklisted people (wikidata photo error >= 2, or other errors >= 5)
   const failedPeopleRows = await db.prepare(`
     SELECT LOWER(target_name) as target_name 
     FROM explore_queue 
     WHERE status = 'error' 
     GROUP BY LOWER(target_name) 
     HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2 
-       OR COUNT(*) >= 7
+       OR (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 5
   `).all() as any[];
   failedPeopleRows.forEach((t: any) => archivedSet.add(t.target_name.toLowerCase()));
   
@@ -1279,14 +1279,14 @@ app.post("/archiver/generate-target", async (c) => {
   const db = await getDb(c);
   const samplePeople = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 20").all() as any[];
   
-  // Exclude blacklisted people (wikidata photo error >= 2, or overall error >= 7)
+  // Exclude blacklisted people (wikidata photo error >= 2, or other errors >= 5)
   const failedPeopleRows = await db.prepare(`
     SELECT target_name 
     FROM explore_queue 
     WHERE status = 'error' 
     GROUP BY LOWER(target_name) 
     HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2 
-       OR COUNT(*) >= 7
+       OR (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 5
   `).all() as any[];
   const allExcludes = [...samplePeople.map((p: any) => p.name), ...failedPeopleRows.map((p: any) => p.target_name)];
   
@@ -1340,8 +1340,9 @@ app.post("/archive-figure", async (c) => {
 
   const totalErrors = errStats?.total_errors || 0;
   const photoErrors = errStats?.photo_errors || 0;
-  if (photoErrors >= 2 || totalErrors >= 7) {
-      const bReason = photoErrors >= 2 ? `Wikidata 缺少相片入库失败达 ${photoErrors} 次` : `AI调用/系统错误落库失败达 ${totalErrors} 次`;
+  const otherErrors = totalErrors - photoErrors;
+  if (photoErrors >= 2 || otherErrors >= 5) {
+      const bReason = photoErrors >= 2 ? `Wikidata 缺少相片入库失败达 ${photoErrors} 次` : `AI调用/系统错误落库失败达 ${otherErrors} 次`;
       return c.json({ error: `[${targetName}] 已触碰时空偏航熔断规则（${bReason}），已被系统自动拦截，不可再入库。` }, 400);
   }
   
@@ -1853,14 +1854,34 @@ app.get("/admin/stats", async (c) => {
     const connectedArchivedRows = await db.prepare("SELECT DISTINCT p.id FROM people p JOIN relationships r ON p.id = r.person1_id OR p.id = r.person2_id").all() as any[];
     const connectedArchivedCount = connectedArchivedRows.length;
     
-    // Failed (wikidata photo error >= 2, or overall error >= 7) (blacklist count)
+    // 缺乏照片黑名单个数 (SUM(photo_reason) >= 2)
+    const photoBlacklistRows = await db.prepare(`
+        SELECT target_name 
+        FROM explore_queue 
+        WHERE status = 'error' 
+        GROUP BY LOWER(target_name) 
+        HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2
+    `).all() as any[];
+    const photoBlacklistCount = photoBlacklistRows.length;
+
+    // 其他错误黑名单个数 (COUNT(*) - SUM(photo_reason) >= 5)
+    const otherBlacklistRows = await db.prepare(`
+        SELECT target_name 
+        FROM explore_queue 
+        WHERE status = 'error' 
+        GROUP BY LOWER(target_name) 
+        HAVING (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 5
+    `).all() as any[];
+    const otherBlacklistCount = otherBlacklistRows.length;
+
+    // Failed (wikidata photo error >= 2, or other error >= 5) (blacklist count union)
     const failedPeopleRows = await db.prepare(`
         SELECT target_name 
         FROM explore_queue 
         WHERE status = 'error' 
         GROUP BY LOWER(target_name) 
         HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2 
-           OR COUNT(*) >= 7
+           OR (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 5
     `).all() as any[];
     const blacklistCount = failedPeopleRows.length;
 
@@ -1869,7 +1890,9 @@ app.get("/admin/stats", async (c) => {
         archivedPool: archivedPeopleCount,
         connectedTotal: connectedTotalCountUnique,
         connectedArchived: connectedArchivedCount,
-        blacklistCount
+        blacklistCount,
+        photoBlacklistCount,
+        otherBlacklistCount
     });
 });
 
@@ -1878,14 +1901,35 @@ app.get("/admin/blacklist", async (c) => {
     const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
     if (!isAdmin) return c.json({ error: "Unauthorized" }, 401);
     
-    const rows = await db.prepare(`
-        SELECT target_name 
-        FROM explore_queue 
-        WHERE status = 'error' 
-        GROUP BY LOWER(target_name) 
-        HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2 
-           OR COUNT(*) >= 7
-    `).all() as any[];
+    const type = c.req.query("type");
+    let rows: any[] = [];
+    if (type === "photos") {
+        rows = await db.prepare(`
+            SELECT target_name 
+            FROM explore_queue 
+            WHERE status = 'error' 
+            GROUP BY LOWER(target_name) 
+            HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2
+        `).all() as any[];
+    } else if (type === "others") {
+        rows = await db.prepare(`
+            SELECT target_name 
+            FROM explore_queue 
+            WHERE status = 'error' 
+            GROUP BY LOWER(target_name) 
+            HAVING (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 5
+        `).all() as any[];
+    } else {
+        rows = await db.prepare(`
+            SELECT target_name 
+            FROM explore_queue 
+            WHERE status = 'error' 
+            GROUP BY LOWER(target_name) 
+            HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2 
+               OR (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 5
+        `).all() as any[];
+    }
+    
     const names = rows.map(r => r.target_name);
     return c.json(names);
 });
@@ -1916,8 +1960,9 @@ app.post("/explore/enqueue", async (c) => {
 
     const totalErrors = errStats?.total_errors || 0;
     const photoErrors = errStats?.photo_errors || 0;
-    if (photoErrors >= 2 || totalErrors >= 7) {
-        const bReason = photoErrors >= 2 ? `Wikidata 缺少相片入库失败达 ${photoErrors} 次` : `AI调用/系统错误落库失败达 ${totalErrors} 次`;
+    const otherErrors = totalErrors - photoErrors;
+    if (photoErrors >= 2 || otherErrors >= 5) {
+        const bReason = photoErrors >= 2 ? `Wikidata 缺少相片入库失败达 ${photoErrors} 次` : `AI调用/系统错误落库失败达 ${otherErrors} 次`;
         return c.json({ error: `[${targetName}] 已触碰时空偏航熔断规则（${bReason}），已被系统自动拦截，不可再入库。` }, 400);
     }
     
@@ -1978,8 +2023,9 @@ app.post("/explore/start", async (c) => {
 
   const totalErrors = errStats?.total_errors || 0;
   const photoErrors = errStats?.photo_errors || 0;
-  if (photoErrors >= 2 || totalErrors >= 7) {
-      const bReason = photoErrors >= 2 ? `Wikidata 缺少相片入库失败达 ${photoErrors} 次` : `AI调用/系统错误落库失败达 ${totalErrors} 次`;
+  const otherErrors = totalErrors - photoErrors;
+  if (photoErrors >= 2 || otherErrors >= 5) {
+      const bReason = photoErrors >= 2 ? `Wikidata 缺少相片入库失败达 ${photoErrors} 次` : `AI调用/系统错误落库失败达 ${otherErrors} 次`;
       return c.json({ error: `[${targetName}] 已触碰时空偏航熔断规则（${bReason}），已被系统自动拦截，不可再入库。` }, 400);
   }
 
