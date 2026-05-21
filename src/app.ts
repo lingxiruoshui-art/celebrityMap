@@ -1194,8 +1194,15 @@ export async function pickTarget(db: DatabaseAdapter) {
   const queuedPeopleRows = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' OR status = 'processing' OR status = 'completed'").all() as any[];
   queuedPeopleRows.forEach(t => archivedSet.add(t.target_name.toLowerCase()));
 
-  // Also exclude blacklisted people (failed 5 times)
-  const failedPeopleRows = await db.prepare("SELECT LOWER(target_name) as target_name FROM explore_queue WHERE status = 'error' GROUP BY LOWER(target_name) HAVING COUNT(*) >= 5").all() as any[];
+  // Also exclude blacklisted people (wikidata photo error >= 2, or overall error >= 7)
+  const failedPeopleRows = await db.prepare(`
+    SELECT LOWER(target_name) as target_name 
+    FROM explore_queue 
+    WHERE status = 'error' 
+    GROUP BY LOWER(target_name) 
+    HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2 
+       OR COUNT(*) >= 7
+  `).all() as any[];
   failedPeopleRows.forEach((t: any) => archivedSet.add(t.target_name.toLowerCase()));
   
   const shuffle = (array: any[]) => {
@@ -1272,8 +1279,15 @@ app.post("/archiver/generate-target", async (c) => {
   const db = await getDb(c);
   const samplePeople = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 20").all() as any[];
   
-  // Exclude blacklisted people (failed 5 times)
-  const failedPeopleRows = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'error' GROUP BY LOWER(target_name) HAVING COUNT(*) >= 5").all() as any[];
+  // Exclude blacklisted people (wikidata photo error >= 2, or overall error >= 7)
+  const failedPeopleRows = await db.prepare(`
+    SELECT target_name 
+    FROM explore_queue 
+    WHERE status = 'error' 
+    GROUP BY LOWER(target_name) 
+    HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2 
+       OR COUNT(*) >= 7
+  `).all() as any[];
   const allExcludes = [...samplePeople.map((p: any) => p.name), ...failedPeopleRows.map((p: any) => p.target_name)];
   
   const sampleNames = allExcludes.join("、");
@@ -1316,9 +1330,19 @@ app.post("/archive-figure", async (c) => {
   }
 
   // Check if blacklisted
-  const errorCount = await db.prepare("SELECT COUNT(*) as count FROM explore_queue WHERE LOWER(target_name) = ? AND status = 'error'").get(targetName.toLowerCase()) as any;
-  if (errorCount.count >= 5) {
-      return c.json({ error: `[${targetName}] 已连续 5 次入库失败，已被自动拉黑，不可再入库。` }, 400);
+  const errStats = await db.prepare(`
+      SELECT 
+        COUNT(*) as total_errors,
+        SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) as photo_errors
+      FROM explore_queue
+      WHERE LOWER(target_name) = ? AND status = 'error'
+  `).get(targetName.toLowerCase()) as { total_errors: number, photo_errors: number };
+
+  const totalErrors = errStats?.total_errors || 0;
+  const photoErrors = errStats?.photo_errors || 0;
+  if (photoErrors >= 2 || totalErrors >= 7) {
+      const bReason = photoErrors >= 2 ? `Wikidata 缺少相片入库失败达 ${photoErrors} 次` : `AI调用/系统错误落库失败达 ${totalErrors} 次`;
+      return c.json({ error: `[${targetName}] 已触碰时空偏航熔断规则（${bReason}），已被系统自动拦截，不可再入库。` }, 400);
   }
   
   // Check if already in queue
@@ -1693,7 +1717,7 @@ app.post("/internal/submit", async (c) => {
                 : (!hasEffectiveAchievements ? "主要成就数据缺失或过短" : "时空关系网络数据缺失或无效");
              
              if (taskId) {
-                await db.prepare("UPDATE explore_queue SET status = 'error', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(taskId);
+                await db.prepare("UPDATE explore_queue SET status = 'error', reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run("落库校验中止: " + reason, taskId);
              }
              await updateExplorationState(db, { status: "error", error: `时空锁死：经 AI 高维扫描，该人物的${reason}。为维持馆藏档案品质，已强制中止本次入库。` }, { msg: `入库强制中止：${reason} [${targetName}]`, type: "error" });
              return c.json({ success: false, error: reason });
@@ -1739,6 +1763,20 @@ app.post("/internal/submit", async (c) => {
                  const queueCount = await db.prepare("SELECT COUNT(*) as count FROM explore_queue WHERE (status = 'pending' OR status = 'processing')").get() as { count: number };
                  if (queueCount.count >= 1) return;
 
+                 // 实时暖机：当队列完全空了时，若开启了自动任务补位，我们使用 pickTarget 获取全局优先级最高的人物进行补位，不放空队列
+                 const refillEnabled = await getConfig(db, "auto_refill_enabled", "false") === "true";
+                 if (refillEnabled) {
+                     const { targetName: globalTarget, isEmpty } = await pickTarget(db);
+                     if (!isEmpty && globalTarget) {
+                         const inQueueCheck = await db.prepare("SELECT id FROM explore_queue WHERE target_name = ? AND (status = 'pending' OR status = 'processing') COLLATE NOCASE").get(globalTarget) as any;
+                         if (!inQueueCheck) {
+                             await db.prepare("INSERT INTO explore_queue (target_name, priority, reason) VALUES (?, 1, ?)").run(globalTarget, `自动补位：由[${targetName}]完成落库触发的全局关联排序暖机`);
+                             console.log(`[Queue Control] 实时暖机自动排入全局最高优先级人物：${globalTarget}`);
+                         }
+                     }
+                 }
+                 return;
+
                  // 确定优先级：只有当 FIGURE_POOL 全部入库后，才通过关系网自动发现无关预设的人物
                  const flatPool = Object.values(FIGURE_POOL).flat();
                  const isInPool = flatPool.some(n => n.toLowerCase() === normalizedRelation.toLowerCase());
@@ -1774,7 +1812,7 @@ app.post("/internal/submit", async (c) => {
         }
     } else {
         if (taskId) {
-            await db.prepare("UPDATE explore_queue SET status = 'error', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(taskId);
+            await db.prepare("UPDATE explore_queue SET status = 'error', reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(error || "Worker 任务执行失败", taskId);
         }
         await updateExplorationState(db, { status: "error", error: error || "Worker 任务执行失败" }, { msg: `Worker 汇报任务失败: ${error}`, type: "error" });
     }
@@ -1815,8 +1853,15 @@ app.get("/admin/stats", async (c) => {
     const connectedArchivedRows = await db.prepare("SELECT DISTINCT p.id FROM people p JOIN relationships r ON p.id = r.person1_id OR p.id = r.person2_id").all() as any[];
     const connectedArchivedCount = connectedArchivedRows.length;
     
-    // Failed >= 5 (blacklist count)
-    const failedPeopleRows = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'error' GROUP BY LOWER(target_name) HAVING COUNT(*) >= 5").all() as any[];
+    // Failed (wikidata photo error >= 2, or overall error >= 7) (blacklist count)
+    const failedPeopleRows = await db.prepare(`
+        SELECT target_name 
+        FROM explore_queue 
+        WHERE status = 'error' 
+        GROUP BY LOWER(target_name) 
+        HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2 
+           OR COUNT(*) >= 7
+    `).all() as any[];
     const blacklistCount = failedPeopleRows.length;
 
     return c.json({
@@ -1833,7 +1878,14 @@ app.get("/admin/blacklist", async (c) => {
     const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
     if (!isAdmin) return c.json({ error: "Unauthorized" }, 401);
     
-    const rows = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'error' GROUP BY LOWER(target_name) HAVING COUNT(*) >= 5").all() as any[];
+    const rows = await db.prepare(`
+        SELECT target_name 
+        FROM explore_queue 
+        WHERE status = 'error' 
+        GROUP BY LOWER(target_name) 
+        HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2 
+           OR COUNT(*) >= 7
+    `).all() as any[];
     const names = rows.map(r => r.target_name);
     return c.json(names);
 });
@@ -1854,9 +1906,19 @@ app.post("/explore/enqueue", async (c) => {
     }
     
     // Check if blacklisted
-    const errorCount = await db.prepare("SELECT COUNT(*) as count FROM explore_queue WHERE LOWER(target_name) = ? AND status = 'error'").get(targetName.toLowerCase()) as any;
-    if (errorCount.count >= 5) {
-        return c.json({ error: `[${targetName}] 已连续 5 次入库失败，已被自动拉黑，不可再入库。` }, 400);
+    const errStats = await db.prepare(`
+        SELECT 
+          COUNT(*) as total_errors,
+          SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) as photo_errors
+        FROM explore_queue
+        WHERE LOWER(target_name) = ? AND status = 'error'
+    `).get(targetName.toLowerCase()) as { total_errors: number, photo_errors: number };
+
+    const totalErrors = errStats?.total_errors || 0;
+    const photoErrors = errStats?.photo_errors || 0;
+    if (photoErrors >= 2 || totalErrors >= 7) {
+        const bReason = photoErrors >= 2 ? `Wikidata 缺少相片入库失败达 ${photoErrors} 次` : `AI调用/系统错误落库失败达 ${totalErrors} 次`;
+        return c.json({ error: `[${targetName}] 已触碰时空偏航熔断规则（${bReason}），已被系统自动拦截，不可再入库。` }, 400);
     }
     
     // Check if already in queue
@@ -1906,9 +1968,19 @@ app.post("/explore/start", async (c) => {
   }
 
   // Check if blacklisted
-  const errorCount = await db.prepare("SELECT COUNT(*) as count FROM explore_queue WHERE LOWER(target_name) = ? AND status = 'error'").get(targetName.toLowerCase()) as any;
-  if (errorCount.count >= 5) {
-      return c.json({ error: `[${targetName}] 已连续 5 次入库失败，已被自动拉黑，不可再入库。` }, 400);
+  const errStats = await db.prepare(`
+      SELECT 
+        COUNT(*) as total_errors,
+        SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) as photo_errors
+      FROM explore_queue
+      WHERE LOWER(target_name) = ? AND status = 'error'
+  `).get(targetName.toLowerCase()) as { total_errors: number, photo_errors: number };
+
+  const totalErrors = errStats?.total_errors || 0;
+  const photoErrors = errStats?.photo_errors || 0;
+  if (photoErrors >= 2 || totalErrors >= 7) {
+      const bReason = photoErrors >= 2 ? `Wikidata 缺少相片入库失败达 ${photoErrors} 次` : `AI调用/系统错误落库失败达 ${totalErrors} 次`;
+      return c.json({ error: `[${targetName}] 已触碰时空偏航熔断规则（${bReason}），已被系统自动拦截，不可再入库。` }, 400);
   }
 
   // Check if already in queue
