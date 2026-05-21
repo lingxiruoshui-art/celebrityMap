@@ -166,6 +166,14 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
         for (const m of migrations) {
           try { await db.prepare(m).run(); } catch (e) {}
         }
+        
+        // Clean up historic error records without logged reasons to give them another retry chance
+        try {
+          await db.prepare("DELETE FROM explore_queue WHERE status = 'error' AND (reason IS NULL OR reason = '')").run();
+        } catch (e) {
+          console.error("Failed to clean up empty-reason error records:", e);
+        }
+
         dbInitialized = true;
       })();
     }
@@ -1194,15 +1202,8 @@ export async function pickTarget(db: DatabaseAdapter) {
   const queuedPeopleRows = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' OR status = 'processing' OR status = 'completed'").all() as any[];
   queuedPeopleRows.forEach(t => archivedSet.add(t.target_name.toLowerCase()));
 
-  // Also exclude blacklisted people (wikidata photo error >= 2, or other errors >= 5)
-  const failedPeopleRows = await db.prepare(`
-    SELECT LOWER(target_name) as target_name 
-    FROM explore_queue 
-    WHERE status = 'error' 
-    GROUP BY LOWER(target_name) 
-    HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2 
-       OR (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 5
-  `).all() as any[];
+  // Also exclude previously failed people from automated picking (so they do not immediately retry automatically)
+  const failedPeopleRows = await db.prepare("SELECT DISTINCT LOWER(target_name) as target_name FROM explore_queue WHERE status = 'error'").all() as any[];
   failedPeopleRows.forEach((t: any) => archivedSet.add(t.target_name.toLowerCase()));
   
   const shuffle = (array: any[]) => {
@@ -1279,14 +1280,14 @@ app.post("/archiver/generate-target", async (c) => {
   const db = await getDb(c);
   const samplePeople = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 20").all() as any[];
   
-  // Exclude blacklisted people (wikidata photo error >= 2, or other errors >= 5)
+  // Exclude blacklisted people (wikidata photo error >= 2, or other errors >= 3)
   const failedPeopleRows = await db.prepare(`
     SELECT target_name 
     FROM explore_queue 
     WHERE status = 'error' 
     GROUP BY LOWER(target_name) 
     HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2 
-       OR (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 5
+       OR (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 3
   `).all() as any[];
   const allExcludes = [...samplePeople.map((p: any) => p.name), ...failedPeopleRows.map((p: any) => p.target_name)];
   
@@ -1341,7 +1342,7 @@ app.post("/archive-figure", async (c) => {
   const totalErrors = errStats?.total_errors || 0;
   const photoErrors = errStats?.photo_errors || 0;
   const otherErrors = totalErrors - photoErrors;
-  if (photoErrors >= 2 || otherErrors >= 5) {
+  if (photoErrors >= 2 || otherErrors >= 3) {
       const bReason = photoErrors >= 2 ? `Wikidata 缺少相片入库失败达 ${photoErrors} 次` : `AI调用/系统错误落库失败达 ${otherErrors} 次`;
       return c.json({ error: `[${targetName}] 已触碰时空偏航熔断规则（${bReason}），已被系统自动拦截，不可再入库。` }, 400);
   }
@@ -1864,24 +1865,24 @@ app.get("/admin/stats", async (c) => {
     `).all() as any[];
     const photoBlacklistCount = photoBlacklistRows.length;
 
-    // 其他错误黑名单个数 (COUNT(*) - SUM(photo_reason) >= 5)
+    // 其他错误黑名单个数 (COUNT(*) - SUM(photo_reason) >= 3)
     const otherBlacklistRows = await db.prepare(`
         SELECT target_name 
         FROM explore_queue 
         WHERE status = 'error' 
         GROUP BY LOWER(target_name) 
-        HAVING (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 5
+        HAVING (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 3
     `).all() as any[];
     const otherBlacklistCount = otherBlacklistRows.length;
 
-    // Failed (wikidata photo error >= 2, or other error >= 5) (blacklist count union)
+    // Failed (wikidata photo error >= 2, or other error >= 3) (blacklist count union)
     const failedPeopleRows = await db.prepare(`
         SELECT target_name 
         FROM explore_queue 
         WHERE status = 'error' 
         GROUP BY LOWER(target_name) 
         HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2 
-           OR (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 5
+           OR (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 3
     `).all() as any[];
     const blacklistCount = failedPeopleRows.length;
 
@@ -1917,7 +1918,7 @@ app.get("/admin/blacklist", async (c) => {
             FROM explore_queue 
             WHERE status = 'error' 
             GROUP BY LOWER(target_name) 
-            HAVING (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 5
+            HAVING (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 3
         `).all() as any[];
     } else {
         rows = await db.prepare(`
@@ -1926,11 +1927,20 @@ app.get("/admin/blacklist", async (c) => {
             WHERE status = 'error' 
             GROUP BY LOWER(target_name) 
             HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2 
-               OR (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 5
+               OR (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 3
         `).all() as any[];
     }
     
-    const names = rows.map(r => r.target_name);
+    const names = [];
+    for (const r of rows) {
+        const target = r.target_name;
+        const errRows = await db.prepare("SELECT reason, created_at FROM explore_queue WHERE LOWER(target_name) = ? AND status = 'error' ORDER BY created_at ASC").all(target.toLowerCase()) as any[];
+        const reasons = errRows.map(er => {
+            const dateStr = er.created_at ? er.created_at.substring(5, 16) : "未知时间";
+            return `[${dateStr}] ${er.reason || "未知原因"}`;
+        }).join(" | ");
+        names.push(`${target} (共失败 ${errRows.length} 次: ${reasons})`);
+    }
     return c.json(names);
 });
 
@@ -1961,7 +1971,7 @@ app.post("/explore/enqueue", async (c) => {
     const totalErrors = errStats?.total_errors || 0;
     const photoErrors = errStats?.photo_errors || 0;
     const otherErrors = totalErrors - photoErrors;
-    if (photoErrors >= 2 || otherErrors >= 5) {
+    if (photoErrors >= 2 || otherErrors >= 3) {
         const bReason = photoErrors >= 2 ? `Wikidata 缺少相片入库失败达 ${photoErrors} 次` : `AI调用/系统错误落库失败达 ${otherErrors} 次`;
         return c.json({ error: `[${targetName}] 已触碰时空偏航熔断规则（${bReason}），已被系统自动拦截，不可再入库。` }, 400);
     }
@@ -2024,7 +2034,7 @@ app.post("/explore/start", async (c) => {
   const totalErrors = errStats?.total_errors || 0;
   const photoErrors = errStats?.photo_errors || 0;
   const otherErrors = totalErrors - photoErrors;
-  if (photoErrors >= 2 || otherErrors >= 5) {
+  if (photoErrors >= 2 || otherErrors >= 3) {
       const bReason = photoErrors >= 2 ? `Wikidata 缺少相片入库失败达 ${photoErrors} 次` : `AI调用/系统错误落库失败达 ${otherErrors} 次`;
       return c.json({ error: `[${targetName}] 已触碰时空偏航熔断规则（${bReason}），已被系统自动拦截，不可再入库。` }, 400);
   }
