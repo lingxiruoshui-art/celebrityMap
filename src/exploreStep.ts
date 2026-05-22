@@ -75,7 +75,17 @@ export async function doFinalizeInsert(db: DatabaseAdapter, finalName: string, p
                 }
             }
         }
-        const previousMentions = await db.prepare(`SELECT id, name, raw_relationships FROM people WHERE id != ? AND raw_relationships LIKE ?`).all(newId, `%${finalName}%`) as any[];
+        const previousMentions = await db.prepare(`
+            SELECT id, name, raw_relationships 
+            FROM people 
+            WHERE id != ? 
+              AND json_valid(raw_relationships) 
+              AND EXISTS (
+                SELECT 1 
+                FROM json_each(people.raw_relationships) 
+                WHERE LOWER(json_extract(value, '$.personName')) = LOWER(?)
+              )
+        `).all(newId, finalName) as any[];
         for (const p of previousMentions) {
             try {
                 const rels = JSON.parse(p.raw_relationships || "[]");
