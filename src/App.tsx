@@ -60,6 +60,14 @@ export default function App() {
 
   const incrementView = async (id: number) => {
     try {
+      // 避免单次探索会话内切换、刷新等操作导致访问量异常刷高，采用 Session 级去重机制
+      const sessionKey = `viewed_p_${id}`;
+      if (typeof window !== "undefined" && window.sessionStorage) {
+        if (sessionStorage.getItem(sessionKey)) {
+          return; // 本次会话内已统计过，不再重复累加
+        }
+        sessionStorage.setItem(sessionKey, "1");
+      }
       await fetch(`/api/people/${id}/view`, { method: "POST" });
     } catch (e) {
       console.error("Failed to increment view", e);
