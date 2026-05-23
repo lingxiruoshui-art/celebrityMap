@@ -2,6 +2,17 @@ import { DatabaseAdapter } from "./db.ts";
 import { ExploreState } from "./exploreTask.ts";
 import { sify } from "chinese-conv";
 
+async function fetchWikidataId(name: string): Promise<string | null> {
+    const headers = { "User-Agent": "HistoricalArchiveApp/1.0" };
+    try {
+        const res = await fetch(`https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(name)}&language=zh&format=json`, { headers });
+        const data = await res.json() as any;
+        return data.search?.[0]?.id || null;
+    } catch (e) {
+        return null;
+    }
+}
+
 export async function initExplorationState(
   db: DatabaseAdapter,
   getConfig: any,
@@ -60,15 +71,26 @@ export async function doFinalizeInsert(db: DatabaseAdapter, finalName: string, p
     const existing = await db.prepare("SELECT id FROM people WHERE name = ? COLLATE NOCASE").get(finalName) as any;
     const isUpdate = !!existing;
 
+    // Resolve Wikidata ID for the person
+    let wikidataId = wikiMeta?.wikidataId || null;
+    if (!wikidataId) {
+        wikidataId = await fetchWikidataId(finalName);
+    }
+
     const res = await db.prepare(
-        `INSERT INTO people (name, category, keyword, biography, achievements, raw_relationships, lifespan, birthplace, image_url)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO people (name, category, keyword, biography, achievements, raw_relationships, lifespan, birthplace, image_url, wikidata_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(name) DO UPDATE SET 
             category=excluded.category, keyword=excluded.keyword, biography=excluded.biography, image_url=excluded.image_url,
             achievements=excluded.achievements, raw_relationships=excluded.raw_relationships, lifespan=excluded.lifespan, birthplace=excluded.birthplace,
+            wikidata_id=COALESCE(excluded.wikidata_id, people.wikidata_id),
             created_at=CURRENT_TIMESTAMP
          RETURNING id`
-    ).get(finalName, personData.category || "未知", personData.keyword || "", personData.biography || "", JSON.stringify(personData.achievements || []), JSON.stringify(personData.relationships || []), personData.lifespan || "", personData.birthplace || "", portraitUrl);
+    ).get(
+        finalName, personData.category || "未知", personData.keyword || "", personData.biography || "", 
+        JSON.stringify(personData.achievements || []), JSON.stringify(personData.relationships || []), 
+        personData.lifespan || "", personData.birthplace || "", portraitUrl, wikidataId
+    );
     
     let newId = (res as any)?.id;
     if (!newId && isUpdate) newId = existing.id;
@@ -103,54 +125,20 @@ export async function doFinalizeInsert(db: DatabaseAdapter, finalName: string, p
             } catch(e) {}
         }
 
-        // Mark as archived in figure_pool_sync if it matches a preset
+        // Mark as archived in figure_pool_sync if it matches a preset (simplified elegant match using Wikidata ID)
         try {
-            const unarchivedPresets = await db.prepare("SELECT preset_name FROM figure_pool_sync WHERE is_archived = 0").all() as any[];
-            if (unarchivedPresets.length > 0) {
-                const synonyms: Record<string, string[]> = {
-                  "居里夫人": ["居里", "curie", "玛丽"],
-                };
-
-                let matchedPresetName: string | null = null;
-                const finalNameLower = finalName.trim().toLowerCase();
-
-                for (const pRow of unarchivedPresets) {
-                    const presetLower = pRow.preset_name.trim().toLowerCase();
-                    
-                    if (presetLower === finalNameLower) {
-                        matchedPresetName = pRow.preset_name;
-                        break;
-                    }
-                    
-                    if ((finalNameLower.includes(presetLower) || presetLower.includes(finalNameLower)) && (finalNameLower.length >= 2 && presetLower.length >= 2)) {
-                        matchedPresetName = pRow.preset_name;
-                        break;
-                    }
-
-                    const partsF = finalNameLower.split('·');
-                    const lastPartF = partsF[partsF.length - 1];
-                    const partsP = presetLower.split('·');
-                    const lastPartP = partsP[partsP.length - 1];
-                    if (lastPartF && lastPartP && lastPartF.length >= 2 && lastPartP.length >= 2) {
-                        if (lastPartF === lastPartP) {
-                            matchedPresetName = pRow.preset_name;
-                            break;
-                        }
-                    }
-
-                    if (synonyms[pRow.preset_name]) {
-                        if (synonyms[pRow.preset_name].some(syn => finalNameLower.includes(syn))) {
-                            matchedPresetName = pRow.preset_name;
-                            break;
-                        }
-                    }
-                }
-
-                if (matchedPresetName) {
-                    await db.prepare("UPDATE figure_pool_sync SET is_archived = 1, archived_person_id = ?, archived_name = ?, updated_at = CURRENT_TIMESTAMP WHERE preset_name = ?")
-                        .run(newId, finalName, matchedPresetName);
-                    console.log(`[Database Sync] Marked preset "${matchedPresetName}" as archived for database person "${finalName}" (ID: ${newId})`);
-                }
+            if (wikidataId) {
+                await db.prepare(`
+                    UPDATE figure_pool_sync 
+                    SET is_archived = 1, archived_person_id = ?, archived_name = ?, updated_at = CURRENT_TIMESTAMP 
+                    WHERE (wikidata_id = ? OR LOWER(preset_name) = LOWER(?))
+                `).run(newId, finalName, wikidataId, finalName);
+            } else {
+                await db.prepare(`
+                    UPDATE figure_pool_sync 
+                    SET is_archived = 1, archived_person_id = ?, archived_name = ?, updated_at = CURRENT_TIMESTAMP 
+                    WHERE LOWER(preset_name) = LOWER(?)
+                `).run(newId, finalName, finalName);
             }
         } catch (syncErr) {
             console.error("Failed to sync preset status on insertion in doFinalizeInsert:", syncErr);

@@ -71,6 +71,65 @@ let nodeDbInstance: DatabaseAdapter | null = null;
 let dbInitialized = false;
 let initPromise: Promise<void> | null = null;
 
+async function runBackgroundAlignment(db: DatabaseAdapter) {
+  try {
+    console.log("[Wikidata Sync] Starting background Wikidata alignment...");
+
+    // 1. Resolve for people who don't have wikidata_id yet
+    const unalignedPeople = await db.prepare("SELECT id, name FROM people WHERE wikidata_id IS NULL").all() as any[];
+    for (const p of unalignedPeople) {
+      const wid = await resolveWikidataId(p.name);
+      if (wid) {
+        await db.prepare("UPDATE people SET wikidata_id = ? WHERE id = ?").run(wid, p.id);
+        console.log(`[Wikidata Sync] Resolved person "${p.name}" to Wikidata ID: ${wid}`);
+      }
+      // Small delay of 100ms to be extremely polite to API
+      await new Promise(r => setTimeout(r, 100));
+    }
+
+    // 2. Resolve for presets who don't have wikidata_id yet
+    const unalignedPresets = await db.prepare("SELECT preset_name FROM figure_pool_sync WHERE wikidata_id IS NULL").all() as any[];
+    for (const pr of unalignedPresets) {
+      const wid = await resolveWikidataId(pr.preset_name);
+      if (wid) {
+        await db.prepare("UPDATE figure_pool_sync SET wikidata_id = ? WHERE preset_name = ?").run(wid, pr.preset_name);
+        console.log(`[Wikidata Sync] Resolved preset "${pr.preset_name}" to Wikidata ID: ${wid}`);
+      }
+      // Small delay of 100ms to be extremely polite to API
+      await new Promise(r => setTimeout(r, 100));
+    }
+
+    // 3. Link them by Wikidata ID or direct name matches
+    await db.prepare(`
+      UPDATE figure_pool_sync
+      SET is_archived = 1,
+          archived_person_id = (
+            SELECT id FROM people 
+            WHERE (people.wikidata_id = figure_pool_sync.wikidata_id AND people.wikidata_id IS NOT NULL)
+               OR LOWER(people.name) = LOWER(figure_pool_sync.preset_name)
+            LIMIT 1
+          ),
+          archived_name = (
+            SELECT name FROM people 
+            WHERE (people.wikidata_id = figure_pool_sync.wikidata_id AND people.wikidata_id IS NOT NULL)
+               OR LOWER(people.name) = LOWER(figure_pool_sync.preset_name)
+            LIMIT 1
+          ),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE is_archived = 0
+        AND EXISTS (
+          SELECT 1 FROM people 
+          WHERE (people.wikidata_id = figure_pool_sync.wikidata_id AND people.wikidata_id IS NOT NULL)
+             OR LOWER(people.name) = LOWER(figure_pool_sync.preset_name)
+        )
+    `).run();
+
+    console.log(`[Wikidata Sync] Background alignment complete.`);
+  } catch (err) {
+    console.error("[Wikidata Sync] Error in background alignment:", err);
+  }
+}
+
 export async function getDb(c: any): Promise<DatabaseAdapter> {
   let db: DatabaseAdapter;
   if (c.env && c.env.DB_ADAPTER) {
@@ -157,6 +216,7 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
             is_archived INTEGER DEFAULT 0,
             archived_person_id INTEGER,
             archived_name TEXT,
+            wikidata_id TEXT,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
           )`
         ];
@@ -169,8 +229,12 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
           "ALTER TABLE people ADD COLUMN lifespan TEXT",
           "ALTER TABLE people ADD COLUMN birthplace TEXT",
           "ALTER TABLE explore_queue ADD COLUMN reason TEXT",
+          "ALTER TABLE people ADD COLUMN wikidata_id TEXT",
+          "ALTER TABLE figure_pool_sync ADD COLUMN wikidata_id TEXT",
           "CREATE INDEX IF NOT EXISTS idx_relationships_person2 ON relationships(person2_id)",
-          "CREATE INDEX IF NOT EXISTS idx_figure_pool_sync_is_archived ON figure_pool_sync(is_archived)"
+          "CREATE INDEX IF NOT EXISTS idx_figure_pool_sync_is_archived ON figure_pool_sync(is_archived)",
+          "CREATE INDEX IF NOT EXISTS idx_people_wikidata_id ON people(wikidata_id)",
+          "CREATE INDEX IF NOT EXISTS idx_figure_pool_sync_wikidata_id ON figure_pool_sync(wikidata_id)"
         ];
         for (const m of migrations) {
           try { await db.prepare(m).run(); } catch (e) {}
@@ -285,54 +349,10 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
           console.error("加载 FIGURE_POOL 到数据库失败:", poolLoadErr);
         }
 
-        // Run global alignment pre-matching for archived figures
-        try {
-          const unarchivedPresets = await db.prepare("SELECT preset_name FROM figure_pool_sync WHERE is_archived = 0").all() as any[];
-          if (unarchivedPresets.length > 0) {
-            const allPeople = await db.prepare("SELECT id, name FROM people").all() as any[];
-            
-            // Helper to match preset name with database names (the same robust logic!)
-            const matchPresetWithPeople = (pName: string): any | null => {
-              const pNameLower = pName.toLowerCase();
-              const synonyms: Record<string, string[]> = {
-                "居里夫人": ["居里", "curie", "玛丽"],
-              };
-
-              for (const aPerson of allPeople) {
-                const aName = aPerson.name.trim().toLowerCase();
-                if (aName === pNameLower) return aPerson;
-                
-                // Substring match
-                if ((aName.includes(pNameLower) || pNameLower.includes(aName)) && (aName.length >= 2 && pNameLower.length >= 2)) return aPerson;
-                
-                // Split dot parts
-                const partsA = aName.split('·');
-                const lastPartA = partsA[partsA.length - 1];
-                const partsP = pNameLower.split('·');
-                const lastPartP = partsP[partsP.length - 1];
-                if (lastPartA && lastPartP && lastPartA.length >= 2 && lastPartP.length >= 2) {
-                  if (lastPartA === lastPartP) return aPerson;
-                }
-
-                if (synonyms[pName]) {
-                  if (synonyms[pName].some(syn => aName.includes(syn))) return aPerson;
-                }
-              }
-              return null;
-            };
-
-            for (const presetRow of unarchivedPresets) {
-              const matchedPerson = matchPresetWithPeople(presetRow.preset_name);
-              if (matchedPerson) {
-                await db.prepare("UPDATE figure_pool_sync SET is_archived = 1, archived_person_id = ?, archived_name = ?, updated_at = CURRENT_TIMESTAMP WHERE preset_name = ?")
-                  .run(matchedPerson.id, matchedPerson.name, presetRow.preset_name);
-                console.log(`[Database Sync Linker] Linked preset "${presetRow.preset_name}" to archive "${matchedPerson.name}" (ID: ${matchedPerson.id})`);
-              }
-            }
-          }
-        } catch (globalLinkErr) {
-          console.error("加载启动时历史人物对齐匹配映射失败:", globalLinkErr);
-        }
+        // Run global alignment in the background to handle precise mapping without blocking startup
+        runBackgroundAlignment(db).catch(err => {
+          console.error("启动时历史人物后台 Wikidata 映射对齐失败:", err);
+        });
 
         dbInitialized = true;
       })();
@@ -551,6 +571,19 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
   }
 }
 
+export async function resolveWikidataId(name: string): Promise<string | null> {
+  const headers = { "User-Agent": "HistoricalArchiveApp/1.0 (zhiduanchangyu@gmail.com)" };
+  try {
+    const searchRes = await fetch(`https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(name)}&language=zh&format=json`, { headers });
+    const searchData = await searchRes.json() as any;
+    const entity = searchData.search?.[0];
+    if (entity) return entity.id;
+  } catch (e) {
+    console.error(`[Wiki API] resolveWikidataId failed for ${name}:`, e);
+  }
+  return null;
+}
+
 export async function fetchMetadataFromWiki(name: string) {
   const headers = { "User-Agent": "HistoricalArchiveApp/1.0 (zhiduanchangyu@gmail.com)" };
   try {
@@ -583,7 +616,8 @@ export async function fetchMetadataFromWiki(name: string) {
       return {
         normalizedName: zhLabel || entity.label || name,
         description,
-        imageUrl: imageUrl || null
+        imageUrl: imageUrl || null,
+        wikidataId: entityId || null
       };
     }
     
@@ -598,15 +632,16 @@ export async function fetchMetadataFromWiki(name: string) {
         return {
             normalizedName: wikiItem.title,
             description: snippet,
-            imageUrl: null
+            imageUrl: null,
+            wikidataId: null
         };
     }
 
     console.log(`[Wiki API] Nothing found for ${name}`);
-    return { normalizedName: name, description: "", imageUrl: null };
+    return { normalizedName: name, description: "", imageUrl: null, wikidataId: null };
   } catch (e) {
     console.error("Wiki/Wikidata fetch error:", e);
-    return { normalizedName: name, description: "", imageUrl: null };
+    return { normalizedName: name, description: "", imageUrl: null, wikidataId: null };
   }
 }
 
@@ -1209,19 +1244,38 @@ app.post("/save-archive", async (c) => {
 
   try {
     const portraitUrl = await getPortraitUrl(c, name);
+    const wikidataId = await resolveWikidataId(name);
     const stmt = db.prepare(`
-      INSERT INTO people (name, category, keyword, lifespan, birthplace, biography, achievements, image_url, raw_relationships)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO people (name, category, keyword, lifespan, birthplace, biography, achievements, image_url, raw_relationships, wikidata_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(name) DO UPDATE SET 
         category=excluded.category, keyword=excluded.keyword, lifespan=excluded.lifespan, birthplace=excluded.birthplace, biography=excluded.biography, 
-        achievements=excluded.achievements, image_url=excluded.image_url, raw_relationships=excluded.raw_relationships
+        achievements=excluded.achievements, image_url=excluded.image_url, raw_relationships=excluded.raw_relationships,
+        wikidata_id=COALESCE(excluded.wikidata_id, people.wikidata_id)
       RETURNING id
     `);
     
     const inserted = await stmt.get(
         name, data.category || "其他", data.keyword || "", data.lifespan || "", data.birthplace || "", data.biography || "",
-        JSON.stringify(data.achievements || []), portraitUrl, JSON.stringify(data.relationships || [])
+        JSON.stringify(data.achievements || []), portraitUrl, JSON.stringify(data.relationships || []), wikidataId
     ) as { id: number };
+
+    // Update figure_pool_sync
+    if (inserted && inserted.id) {
+      if (wikidataId) {
+        await db.prepare(`
+          UPDATE figure_pool_sync 
+          SET is_archived = 1, archived_person_id = ?, archived_name = ?, updated_at = CURRENT_TIMESTAMP 
+          WHERE (wikidata_id = ? OR LOWER(preset_name) = LOWER(?))
+        `).run(inserted.id, name, wikidataId, name);
+      } else {
+        await db.prepare(`
+          UPDATE figure_pool_sync 
+          SET is_archived = 1, archived_person_id = ?, archived_name = ?, updated_at = CURRENT_TIMESTAMP 
+          WHERE LOWER(preset_name) = LOWER(?)
+        `).run(inserted.id, name, name);
+      }
+    }
 
     let connCount = 0;
     if (data.relationships && Array.isArray(data.relationships)) {
