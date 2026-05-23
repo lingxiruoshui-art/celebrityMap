@@ -151,6 +151,13 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
             ip TEXT PRIMARY KEY,
             reason TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )`,
+          `CREATE TABLE IF NOT EXISTS figure_pool_sync (
+            preset_name TEXT PRIMARY KEY,
+            is_archived INTEGER DEFAULT 0,
+            archived_person_id INTEGER,
+            archived_name TEXT,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
           )`
         ];
         for (const q of initQueries) {
@@ -162,7 +169,8 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
           "ALTER TABLE people ADD COLUMN lifespan TEXT",
           "ALTER TABLE people ADD COLUMN birthplace TEXT",
           "ALTER TABLE explore_queue ADD COLUMN reason TEXT",
-          "CREATE INDEX IF NOT EXISTS idx_relationships_person2 ON relationships(person2_id)"
+          "CREATE INDEX IF NOT EXISTS idx_relationships_person2 ON relationships(person2_id)",
+          "CREATE INDEX IF NOT EXISTS idx_figure_pool_sync_is_archived ON figure_pool_sync(is_archived)"
         ];
         for (const m of migrations) {
           try { await db.prepare(m).run(); } catch (e) {}
@@ -264,6 +272,66 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
           }
         } catch (relMigrErr) {
           console.error("Relationships clean up/deduplication failed:", relMigrErr);
+        }
+
+        // Load all figures from FIGURE_POOL into figure_pool_sync
+        try {
+          const flatPool = Object.values(FIGURE_POOL).flat();
+          for (const rawName of flatPool) {
+            const simpName = sify(rawName).trim();
+            await db.prepare("INSERT OR IGNORE INTO figure_pool_sync (preset_name, is_archived) VALUES (?, 0)").run(simpName);
+          }
+        } catch (poolLoadErr) {
+          console.error("加载 FIGURE_POOL 到数据库失败:", poolLoadErr);
+        }
+
+        // Run global alignment pre-matching for archived figures
+        try {
+          const unarchivedPresets = await db.prepare("SELECT preset_name FROM figure_pool_sync WHERE is_archived = 0").all() as any[];
+          if (unarchivedPresets.length > 0) {
+            const allPeople = await db.prepare("SELECT id, name FROM people").all() as any[];
+            
+            // Helper to match preset name with database names (the same robust logic!)
+            const matchPresetWithPeople = (pName: string): any | null => {
+              const pNameLower = pName.toLowerCase();
+              const synonyms: Record<string, string[]> = {
+                "居里夫人": ["居里", "curie", "玛丽"],
+              };
+
+              for (const aPerson of allPeople) {
+                const aName = aPerson.name.trim().toLowerCase();
+                if (aName === pNameLower) return aPerson;
+                
+                // Substring match
+                if ((aName.includes(pNameLower) || pNameLower.includes(aName)) && (aName.length >= 2 && pNameLower.length >= 2)) return aPerson;
+                
+                // Split dot parts
+                const partsA = aName.split('·');
+                const lastPartA = partsA[partsA.length - 1];
+                const partsP = pNameLower.split('·');
+                const lastPartP = partsP[partsP.length - 1];
+                if (lastPartA && lastPartP && lastPartA.length >= 2 && lastPartP.length >= 2) {
+                  if (lastPartA === lastPartP) return aPerson;
+                }
+
+                if (synonyms[pName]) {
+                  if (synonyms[pName].some(syn => aName.includes(syn))) return aPerson;
+                }
+              }
+              return null;
+            };
+
+            for (const presetRow of unarchivedPresets) {
+              const matchedPerson = matchPresetWithPeople(presetRow.preset_name);
+              if (matchedPerson) {
+                await db.prepare("UPDATE figure_pool_sync SET is_archived = 1, archived_person_id = ?, archived_name = ?, updated_at = CURRENT_TIMESTAMP WHERE preset_name = ?")
+                  .run(matchedPerson.id, matchedPerson.name, presetRow.preset_name);
+                console.log(`[Database Sync Linker] Linked preset "${presetRow.preset_name}" to archive "${matchedPerson.name}" (ID: ${matchedPerson.id})`);
+              }
+            }
+          }
+        } catch (globalLinkErr) {
+          console.error("加载启动时历史人物对齐匹配映射失败:", globalLinkErr);
         }
 
         dbInitialized = true;
@@ -1353,13 +1421,16 @@ export async function pickTarget(db: DatabaseAdapter) {
     return array;
   };
   
-  // Priority 1: From pre-defined Figure Pool (Background Collection)
-  const poolUnarchived: string[] = [];
-  for (const cat of CATEGORIES) {
-      FIGURE_POOL[cat]?.forEach((n: string) => { 
-          if (!isFigInDb(n, archivedNamesList)) poolUnarchived.push(n); 
-      });
-  }
+  // Priority 1: From pre-defined Figure Pool (Background Collection) via the database table figure_pool_sync
+  const poolUnarchivedRows = await db.prepare(`
+    SELECT preset_name FROM figure_pool_sync
+    WHERE is_archived = 0
+      AND LOWER(preset_name) NOT IN (
+        SELECT LOWER(target_name) FROM explore_queue
+        WHERE status IN ('pending', 'processing', 'completed', 'error')
+      )
+  `).all() as any[];
+  const poolUnarchived = poolUnarchivedRows.map(r => r.preset_name);
   const uniquePoolUnarchived = Array.from(new Set(poolUnarchived));
 
   if (uniquePoolUnarchived.length >= 1) {
@@ -1973,8 +2044,9 @@ app.get("/admin/stats", async (c) => {
     // Total figures pool
     const totalPool = Object.values(FIGURE_POOL).reduce((acc, curr) => acc + curr.length, 0);
     
-    // Archived people count
-    const archivedPeopleCount = (await db.prepare("SELECT COUNT(*) as count FROM people").get() as any).count;
+    // Archived preset figures count (precise synchronised metrics)
+    const archivedPresetRow = await db.prepare("SELECT COUNT(*) as count FROM figure_pool_sync WHERE is_archived = 1").get() as any;
+    const archivedPoolCount = archivedPresetRow ? archivedPresetRow.count : 0;
     
     // Connected total count (all people mentioned in raw_relationships + archived people)
     const allPeopleRows = await db.prepare("SELECT raw_relationships FROM people").all() as any[];
@@ -2031,7 +2103,7 @@ app.get("/admin/stats", async (c) => {
 
     return c.json({
         totalPool,
-        archivedPool: archivedPeopleCount,
+        archivedPool: archivedPoolCount,
         connectedTotal: connectedTotalCountUnique,
         connectedArchived: connectedArchivedCount,
         blacklistCount,

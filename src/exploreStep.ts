@@ -102,6 +102,59 @@ export async function doFinalizeInsert(db: DatabaseAdapter, finalName: string, p
                 if (matchingRel) await addRelationship(db, p.id, newId, matchingRel.relationshipType);
             } catch(e) {}
         }
+
+        // Mark as archived in figure_pool_sync if it matches a preset
+        try {
+            const unarchivedPresets = await db.prepare("SELECT preset_name FROM figure_pool_sync WHERE is_archived = 0").all() as any[];
+            if (unarchivedPresets.length > 0) {
+                const synonyms: Record<string, string[]> = {
+                  "居里夫人": ["居里", "curie", "玛丽"],
+                };
+
+                let matchedPresetName: string | null = null;
+                const finalNameLower = finalName.trim().toLowerCase();
+
+                for (const pRow of unarchivedPresets) {
+                    const presetLower = pRow.preset_name.trim().toLowerCase();
+                    
+                    if (presetLower === finalNameLower) {
+                        matchedPresetName = pRow.preset_name;
+                        break;
+                    }
+                    
+                    if ((finalNameLower.includes(presetLower) || presetLower.includes(finalNameLower)) && (finalNameLower.length >= 2 && presetLower.length >= 2)) {
+                        matchedPresetName = pRow.preset_name;
+                        break;
+                    }
+
+                    const partsF = finalNameLower.split('·');
+                    const lastPartF = partsF[partsF.length - 1];
+                    const partsP = presetLower.split('·');
+                    const lastPartP = partsP[partsP.length - 1];
+                    if (lastPartF && lastPartP && lastPartF.length >= 2 && lastPartP.length >= 2) {
+                        if (lastPartF === lastPartP) {
+                            matchedPresetName = pRow.preset_name;
+                            break;
+                        }
+                    }
+
+                    if (synonyms[pRow.preset_name]) {
+                        if (synonyms[pRow.preset_name].some(syn => finalNameLower.includes(syn))) {
+                            matchedPresetName = pRow.preset_name;
+                            break;
+                        }
+                    }
+                }
+
+                if (matchedPresetName) {
+                    await db.prepare("UPDATE figure_pool_sync SET is_archived = 1, archived_person_id = ?, archived_name = ?, updated_at = CURRENT_TIMESTAMP WHERE preset_name = ?")
+                        .run(newId, finalName, matchedPresetName);
+                    console.log(`[Database Sync] Marked preset "${matchedPresetName}" as archived for database person "${finalName}" (ID: ${newId})`);
+                }
+            }
+        } catch (syncErr) {
+            console.error("Failed to sync preset status on insertion in doFinalizeInsert:", syncErr);
+        }
     }
 
     return { id: newId, isUpdate };
