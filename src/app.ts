@@ -662,36 +662,129 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
   }
 }
 
+export function generateWikidataSearchTerms(name: string): string[] {
+  const terms: string[] = [];
+  const rawClean = name.trim();
+  
+  // 1. Original name as-is
+  terms.push(rawClean);
+  
+  // 2. Simplified name
+  const simplified = sify(rawClean);
+  terms.push(simplified);
+
+  // 3. Clean up hyphens and suffixes (e.g. "麦哲伦 - 智利南极大区")
+  let strippedSuffix = rawClean;
+  if (rawClean.includes(" - ")) {
+    strippedSuffix = rawClean.split(" - ")[0].trim();
+    terms.push(sify(strippedSuffix));
+  } else if (rawClean.includes("-")) {
+    const splitDash = rawClean.split("-");
+    if (splitDash.length > 1 && splitDash[splitDash.length - 1].trim().length > 5) {
+      strippedSuffix = splitDash[0].trim();
+      terms.push(sify(strippedSuffix));
+    }
+  }
+
+  // 4. Clean trailing punctuation/symbols (like ending dot/·)
+  const cleanTrailing = strippedSuffix.replace(/[·\-\s\.]+$/, "").trim();
+  if (cleanTrailing !== rawClean) {
+    terms.push(sify(cleanTrailing));
+  }
+
+  // 5. Hardcoded high-frequency translations/synonyms mapping
+  const syns: Record<string, string[]> = {
+    "差利·卓别灵": ["查理·卓别林", "卓别林", "Charlie Chaplin"],
+    "夏绿蒂·勃朗特": ["夏洛特·勃朗特", "勃朗特", "Charlotte Bronte"],
+    "玛丽亚·蒙特梭利": ["玛丽亚·蒙台梭利", "蒙台梭利", "Maria Montessori"],
+    "芙烈达·卡罗": ["弗里达·卡洛", "卡洛", "Frida Kahlo"],
+    "释弘一": ["弘一法师", "李叔同", "弘一"],
+    "乾隆帝": ["乾隆", "Qianlong Emperor"],
+    "亚历山大·德·布哈奈": ["亚历山大·德·博阿尔内", "博阿尔内", "Alexandre de Beauharnais"],
+    "乔治·雅各布·格甚温": ["乔治·格什温", "格什温", "George Gershwin"],
+    "乔治·雅各布·格什温": ["乔治·格什温", "格什温", "George Gershwin"],
+    "理查德·菲利普斯·费曼": ["理查德·费曼", "费曼", "Richard Feynman"]
+  };
+
+  for (const [key, list] of Object.entries(syns)) {
+    if (rawClean.includes(key) || key.includes(rawClean) || cleanTrailing.includes(key)) {
+      list.forEach(v => {
+        terms.push(sify(v));
+      });
+    }
+  }
+
+  // 6. Handle middle name split for western transliterations
+  if (cleanTrailing.includes("·")) {
+    const parts = cleanTrailing.split("·").map(p => p.trim());
+    if (parts.length >= 3) {
+      terms.push(sify(`${parts[0]}·${parts[parts.length - 1]}`));
+      terms.push(sify(parts[parts.length - 1]));
+    }
+    if (parts.length >= 2) {
+      terms.push(sify(parts[parts.length - 1]));
+      terms.push(sify(parts[0]));
+    }
+  }
+
+  const uniqueTerms = Array.from(new Set(terms.map(t => t.trim()).filter(Boolean)));
+  return uniqueTerms;
+}
+
 export async function resolveWikidataId(name: string): Promise<string | null> {
   const headers = { "User-Agent": "HistoricalArchiveApp/1.0 (zhiduanchangyu@gmail.com)" };
-  try {
-    const searchRes = await fetch(`https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(name)}&language=zh&format=json`, { headers });
-    const searchData = await searchRes.json() as any;
-    const entity = searchData.search?.[0];
-    if (entity) return entity.id;
-  } catch (e) {
-    console.error(`[Wiki API] resolveWikidataId failed for ${name}:`, e);
+  const queryTerms = generateWikidataSearchTerms(name);
+  
+  for (const q of queryTerms) {
+    try {
+      const searchRes = await fetch(`https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(q)}&language=zh&format=json`, { headers });
+      if (!searchRes.ok) continue;
+      const searchData = await searchRes.json() as any;
+      const entity = searchData.search?.[0];
+      if (entity) {
+        console.log(`[Wiki API] Successfully resolved "${name}" via robust term "${q}" -> ${entity.id} (${entity.label})`);
+        return entity.id;
+      }
+    } catch (e) {
+      console.error(`[Wiki API] resolveWikidataId query failed for nested word "${q}":`, e);
+    }
   }
+  
+  // English fallback with cleaned term if Chinese search fails completely
+  const cleanEng = name.replace(/[·\-\s\.]+$/, "").trim();
+  if (cleanEng && cleanEng !== name) {
+    try {
+      const searchRes = await fetch(`https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(cleanEng)}&language=en&format=json`, { headers });
+      if (searchRes.ok) {
+        const searchData = await searchRes.json() as any;
+        const entity = searchData.search?.[0];
+        if (entity) {
+          console.log(`[Wiki API] Successfully resolved "${name}" via English fallback "${cleanEng}" -> ${entity.id}`);
+          return entity.id;
+        }
+      }
+    } catch (e) {
+      console.error(`[Wiki API] resolveWikidataId English fallback failed for "${cleanEng}":`, e);
+    }
+  }
+  
   return null;
 }
 
 export async function fetchMetadataFromWiki(name: string) {
   const headers = { "User-Agent": "HistoricalArchiveApp/1.0 (zhiduanchangyu@gmail.com)" };
   try {
-    console.log(`[Wiki API] Searching Wikidata for: ${name}`);
-    const searchRes = await fetch(`https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(name)}&language=zh&format=json`, { headers });
-    const searchData = await searchRes.json() as any;
-    const entity = searchData.search?.[0];
+    console.log(`[Wiki API] Searching Wikidata robustly for: ${name}`);
+    const entityId = await resolveWikidataId(name);
     
-    if (entity) {
-      console.log(`[Wiki API] Found Wikidata entity: ${entity.id} - ${entity.label}`);
-      const entityId = entity.id;
+    if (entityId) {
+      console.log(`[Wiki API] Found Wikidata entity: ${entityId}`);
       const entityRes = await fetch(`https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${entityId}&props=claims|descriptions|labels&languages=zh|en&format=json`, { headers });
       const entityData = await entityRes.json() as any;
       const item = entityData.entities[entityId];
       
       const zhLabel = item.labels?.zh?.value;
-      const description = item.descriptions?.zh?.value || item.descriptions?.en?.value || entity.description || "";
+      const description = item.descriptions?.zh?.value || item.descriptions?.en?.value || "";
       console.log(`[Wiki API] Parsed description: ${description.substring(0, 50)}...`);
       const claims = item.claims || {};
       let imageUrl = "";
@@ -705,7 +798,7 @@ export async function fetchMetadataFromWiki(name: string) {
       }
       
       return {
-        normalizedName: zhLabel || entity.label || name,
+        normalizedName: zhLabel || name,
         description,
         imageUrl: imageUrl || null,
         wikidataId: entityId || null
@@ -1249,7 +1342,12 @@ app.get("/archive", async (c) => {
   
   let peopleQuery = `
     SELECT p.*, 
-    (SELECT COUNT(*) FROM relationships WHERE person1_id = p.id OR person2_id = p.id) as connectionsCount
+    (SELECT COUNT(*) FROM relationships WHERE person1_id = p.id OR person2_id = p.id) as connectionsCount,
+    (SELECT MIN(f.preset_name) FROM figure_pool_sync f WHERE 
+       p.id = f.archived_person_id 
+       OR (p.wikidata_id = f.wikidata_id AND p.wikidata_id IS NOT NULL AND p.wikidata_id != '')
+       OR LOWER(p.name) = LOWER(f.preset_name)
+    ) as preset_name
     FROM people p
   `;
   
@@ -2304,6 +2402,34 @@ app.get("/admin/stats", async (c) => {
         console.error("Error fetching blacklistCount:", e);
     }
 
+    // 7. Dynamic people stats
+    let peopleCount = 0;
+    try {
+        const row = await db.prepare("SELECT COUNT(*) as count FROM people").get() as any;
+        peopleCount = row ? row.count : 0;
+    } catch (e: any) {
+        queryErrors.peopleCount = e.message || String(e);
+        console.error("Error fetching peopleCount:", e);
+    }
+
+    let missingWikidataCount = 0;
+    try {
+        const row = await db.prepare("SELECT COUNT(*) as count FROM people WHERE wikidata_id IS NULL OR wikidata_id = ''").get() as any;
+        missingWikidataCount = row ? row.count : 0;
+    } catch (e: any) {
+        queryErrors.missingWikidataCount = e.message || String(e);
+        console.error("Error fetching missingWikidataCount:", e);
+    }
+
+    let missingPhotoCount = 0;
+    try {
+        const row = await db.prepare("SELECT COUNT(*) as count FROM people WHERE image_url IS NULL OR image_url = '' OR image_url LIKE '%placeholder%'").get() as any;
+        missingPhotoCount = row ? row.count : 0;
+    } catch (e: any) {
+        queryErrors.missingPhotoCount = e.message || String(e);
+        console.error("Error fetching missingPhotoCount:", e);
+    }
+
     return c.json({
         totalPool,
         archivedPool: archivedPoolCount,
@@ -2312,6 +2438,9 @@ app.get("/admin/stats", async (c) => {
         blacklistCount,
         photoBlacklistCount,
         otherBlacklistCount,
+        peopleCount,
+        missingWikidataCount,
+        missingPhotoCount,
         queryErrors: Object.keys(queryErrors).length > 0 ? queryErrors : undefined
     });
 });
@@ -2341,10 +2470,19 @@ app.get("/admin/export-alignment", async (c) => {
     if (!isAdmin) return c.json({ error: "Unauthorized" }, 401);
 
     try {
-        const people = await db.prepare("SELECT * FROM people ORDER BY id ASC").all() as any[];
+        const people = await db.prepare(`
+            SELECT p.*,
+            (SELECT MIN(f.preset_name) FROM figure_pool_sync f WHERE 
+               p.id = f.archived_person_id 
+               OR (p.wikidata_id = f.wikidata_id AND p.wikidata_id IS NOT NULL AND p.wikidata_id != '')
+               OR LOWER(p.name) = LOWER(f.preset_name)
+            ) as preset_name
+            FROM people p
+            ORDER BY p.id ASC
+        `).all() as any[];
         
         // CSV headers
-        const headers = ["ID(序号)", "姓名", "分类", "关键词", "生卒寿命", "出生地", "Wikidata ID(对齐标识)", "访问次数", "入库时间", "简要传记(首150字)"];
+        const headers = ["ID(序号)", "姓名", "预设池姓名", "分类", "关键词", "生卒寿命", "出生地", "Wikidata ID(对齐标识)", "访问次数", "入库时间", "转存图片路径"];
         const rows = people.map(p => {
             const escape = (val: any) => {
                 if (val === null || val === undefined) return "";
@@ -2357,6 +2495,7 @@ app.get("/admin/export-alignment", async (c) => {
             return [
                 p.id,
                 escape(p.name),
+                escape(p.preset_name || ""),
                 escape(p.category),
                 escape(p.keyword),
                 escape(p.lifespan),
@@ -2364,7 +2503,7 @@ app.get("/admin/export-alignment", async (c) => {
                 escape(p.wikidata_id || "未对齐"),
                 p.views,
                 escape(p.created_at),
-                escape((p.biography || "").slice(0, 150) + ((p.biography || "").length > 150 ? "..." : ""))
+                escape(p.image_url)
             ].join(",");
         });
 

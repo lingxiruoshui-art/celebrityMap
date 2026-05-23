@@ -499,7 +499,7 @@ export default function NetworkGraph({
         // Highlight connected links
         const hasPath = discoveryPath && discoveryPath.length > 1;
         linkElements
-          .attr("stroke", (l: any) => (hasPath && l.inPath) ? "#10b981" : ((l.sourcePerson.id === d.id || l.targetPerson.id === d.id) ? "#3b82f6" : "#475569"))
+          .attr("stroke", (l: any) => (hasPath && l.inPath) ? "#10b981" : ((l.sourcePerson.id === d.id || l.targetPerson.id === d.id) ? "#8b5cf6" : "#475569"))
           .attr("stroke-opacity", (l: any) => (l.sourcePerson.id === d.id || l.targetPerson.id === d.id) ? 1 : (hasPath && l.inPath ? 1 : 0.25))
           .attr("stroke-width", (l: any) => (l.sourcePerson.id === d.id || l.targetPerson.id === d.id) ? 2.5 : (hasPath && l.inPath ? 2.8 : 0.8));
       })
@@ -588,7 +588,7 @@ export default function NetworkGraph({
         .classed("is-selected-rel", (d: any) => !!activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId))
         .attr("stroke", (d: any) => {
           if (hasPath && d.inPath) return "#10b981"; // Discovery path: Emerald Green (Solid/Stable)
-          if (activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId)) return "#3b82f6"; // Focal Person: Bright Blue
+          if (activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId)) return "#8b5cf6"; // Focal Person: Vibrant Purple
           return "#475569"; // Unified base grey: Darker Slate for visibility
         })
         .attr("stroke-opacity", (d: any) => {

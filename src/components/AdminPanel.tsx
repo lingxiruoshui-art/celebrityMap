@@ -979,9 +979,16 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                           onClick={() => onPreviewPerson?.(p.id)}
                           title="点击在前台查看"
                         >
-                          <div className="flex items-center gap-2">
-                             {p.name}
-                             <Eye className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                          <div className="flex flex-col gap-0.5 justify-center">
+                            <div className="flex items-center gap-1.5">
+                              <span>{p.name}</span>
+                              <Eye className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                            </div>
+                            {(p as any).preset_name && (p as any).preset_name !== p.name && (
+                              <span className="text-[10px] text-indigo-600 bg-indigo-50 font-medium px-1.5 py-0.5 rounded border border-indigo-100 w-fit">
+                                匹配预设: {(p as any).preset_name}
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td className="px-4 py-3 text-sm text-slate-600 whitespace-nowrap">{p.category}</td>

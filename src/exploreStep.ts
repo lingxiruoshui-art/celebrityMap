@@ -2,15 +2,111 @@ import { DatabaseAdapter } from "./db.ts";
 import { ExploreState } from "./exploreTask.ts";
 import { sify } from "chinese-conv";
 
+function generateWikidataSearchTerms(name: string): string[] {
+  const terms: string[] = [];
+  const rawClean = name.trim();
+  
+  // 1. Original name as-is
+  terms.push(rawClean);
+  
+  // 2. Simplified name
+  const simplified = sify(rawClean);
+  terms.push(simplified);
+
+  // 3. Clean up hyphens and suffixes (e.g. "麦哲伦 - 智利南极大区")
+  let strippedSuffix = rawClean;
+  if (rawClean.includes(" - ")) {
+    strippedSuffix = rawClean.split(" - ")[0].trim();
+    terms.push(sify(strippedSuffix));
+  } else if (rawClean.includes("-")) {
+    const splitDash = rawClean.split("-");
+    if (splitDash.length > 1 && splitDash[splitDash.length - 1].trim().length > 5) {
+      strippedSuffix = splitDash[0].trim();
+      terms.push(sify(strippedSuffix));
+    }
+  }
+
+  // 4. Clean trailing punctuation/symbols (like ending dot/·)
+  const cleanTrailing = strippedSuffix.replace(/[·\-\s\.]+$/, "").trim();
+  if (cleanTrailing !== rawClean) {
+    terms.push(sify(cleanTrailing));
+  }
+
+  // 5. Hardcoded high-frequency translations/synonyms mapping
+  const syns: Record<string, string[]> = {
+    "差利·卓别灵": ["查理·卓别林", "卓别林", "Charlie Chaplin"],
+    "夏绿蒂·勃朗特": ["夏洛特·勃朗特", "勃朗特", "Charlotte Bronte"],
+    "玛丽亚·蒙特梭利": ["玛丽亚·蒙台梭利", "蒙台梭利", "Maria Montessori"],
+    "芙烈达·卡罗": ["弗里达·卡洛", "卡洛", "Frida Kahlo"],
+    "释弘一": ["弘一法师", "李叔同", "弘一"],
+    "乾隆帝": ["乾隆", "Qianlong Emperor"],
+    "亚历山大·德·布哈奈": ["亚历山大·德·博阿尔内", "博阿尔内", "Alexandre de Beauharnais"],
+    "乔治·雅各布·格甚温": ["乔治·格什温", "格什温", "George Gershwin"],
+    "乔治·雅各布·格什温": ["乔治·格什温", "格什温", "George Gershwin"],
+    "理查德·菲利普斯·费曼": ["理查德·费曼", "费曼", "Richard Feynman"]
+  };
+
+  for (const [key, list] of Object.entries(syns)) {
+    if (rawClean.includes(key) || key.includes(rawClean) || cleanTrailing.includes(key)) {
+      list.forEach(v => {
+        terms.push(sify(v));
+      });
+    }
+  }
+
+  // 6. Handle middle name split for western transliterations
+  if (cleanTrailing.includes("·")) {
+    const parts = cleanTrailing.split("·").map(p => p.trim());
+    if (parts.length >= 3) {
+      terms.push(sify(`${parts[0]}·${parts[parts.length - 1]}`));
+      terms.push(sify(parts[parts.length - 1]));
+    }
+    if (parts.length >= 2) {
+      terms.push(sify(parts[parts.length - 1]));
+      terms.push(sify(parts[0]));
+    }
+  }
+
+  const uniqueTerms = Array.from(new Set(terms.map(t => t.trim()).filter(Boolean)));
+  return uniqueTerms;
+}
+
 async function fetchWikidataId(name: string): Promise<string | null> {
     const headers = { "User-Agent": "HistoricalArchiveApp/1.0" };
-    try {
-        const res = await fetch(`https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(name)}&language=zh&format=json`, { headers });
-        const data = await res.json() as any;
-        return data.search?.[0]?.id || null;
-    } catch (e) {
-        return null;
+    const queryTerms = generateWikidataSearchTerms(name);
+    
+    for (const q of queryTerms) {
+        try {
+            const res = await fetch(`https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(q)}&language=zh&format=json`, { headers });
+            if (!res.ok) continue;
+            const data = await res.json() as any;
+            const entity = data.search?.[0];
+            if (entity) {
+                console.log(`[Wiki API] [exploreStep] Successfully resolved "${name}" via robust term "${q}" -> ${entity.id}`);
+                return entity.id;
+            }
+        } catch (e) {
+            // silent catch on retry
+        }
     }
+    
+    // English fallback with cleaned term
+    const cleanEng = name.replace(/[·\-\s\.]+$/, "").trim();
+    if (cleanEng && cleanEng !== name) {
+        try {
+            const res = await fetch(`https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(cleanEng)}&language=en&format=json`, { headers });
+            if (res.ok) {
+                const data = await res.json() as any;
+                const entity = data.search?.[0];
+                if (entity) {
+                    console.log(`[Wiki API] [exploreStep] Successfully resolved "${name}" via English fallback "${cleanEng}" -> ${entity.id}`);
+                    return entity.id;
+                }
+            }
+        } catch (e) {}
+    }
+    
+    return null;
 }
 
 export async function initExplorationState(

@@ -455,7 +455,10 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     connectedArchived: number,
     blacklistCount: number,
     photoBlacklistCount?: number,
-    otherBlacklistCount?: number
+    otherBlacklistCount?: number,
+    peopleCount?: number,
+    missingWikidataCount?: number,
+    missingPhotoCount?: number
   } | null>(null);
   const [isDownloadingBlacklist, setIsDownloadingBlacklist] = useState<string | null>(null);
   
@@ -1126,14 +1129,9 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                               <span>下载名单</span>
                             </button>
                         </div>
-                        <div className="flex items-center justify-between pt-1.5 border-t border-dashed border-slate-200 mt-1">
-                            <div className="flex-1 pr-2">
+                        <div className="flex flex-col gap-1.5 pt-1.5 border-t border-dashed border-slate-200 mt-1">
+                            <div className="flex items-center justify-between">
                                 <div className="text-slate-500">Wikidata 人物全量对齐</div>
-                                <div className="text-[9px] text-slate-400 mt-0.5 leading-tight">
-                                  {wikidataAlignmentMsg || "触发后台高精度全量比对，利用唯一 Wikidata ID 纠正和补全所有预设的归档映射状态。"}
-                                </div>
-                            </div>
-                            <div className="flex gap-1.5 shrink-0">
                                 <button
                                   onClick={handleExportAlignment}
                                   disabled={isExportingAlignment}
@@ -1144,21 +1142,28 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                                   ) : (
                                     <Download className="w-2.5 h-2.5" />
                                   )}
-                                  <span>下载对齐表</span>
-                                </button>
-                                <button
-                                  onClick={handleTriggerWikidataAlignment}
-                                  disabled={isAligningWikidata}
-                                  className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white h-[26px] px-2.5 text-[10px] font-bold rounded-lg transition-all shadow-sm flex items-center justify-center gap-1 active:scale-[0.98]"
-                                >
-                                  {isAligningWikidata ? (
-                                    <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                                  ) : (
-                                    <Sparkles className="w-2.5 h-2.5" />
-                                  )}
-                                  <span>立即对齐</span>
+                                  <span>下载数据</span>
                                 </button>
                             </div>
+                            <div className="grid grid-cols-3 gap-2 mt-0.5 bg-slate-50 p-1.5 rounded-md border border-slate-100">
+                                <div className="text-left">
+                                    <div className="text-[9px] text-slate-400">已入库总人物</div>
+                                    <div className="text-[11px] font-bold text-slate-700">{adminStats?.peopleCount ?? 0} 人</div>
+                                </div>
+                                <div className="text-center">
+                                    <div className="text-[9px] text-slate-400">Wikidata ID 缺失</div>
+                                    <div className="text-[11px] font-bold text-amber-600">{adminStats?.missingWikidataCount ?? 0} 人</div>
+                                </div>
+                                <div className="text-right">
+                                    <div className="text-[9px] text-slate-400">照片缺失</div>
+                                    <div className="text-[11px] font-bold text-red-500">{adminStats?.missingPhotoCount ?? 0} 人</div>
+                                </div>
+                            </div>
+                            {wikidataAlignmentMsg && (
+                              <div className="text-[9px] text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded leading-tight">
+                                {wikidataAlignmentMsg}
+                              </div>
+                            )}
                         </div>
                     </div>
                 </div>
