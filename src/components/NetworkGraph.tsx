@@ -553,15 +553,13 @@ export default function NetworkGraph({
             if (l.sourcePerson.id === d.id || l.targetPerson.id === d.id) return 1;
             if (hasPath && l.inPath) return 1;
             const isEndpointVisible = isNameVisible(l.sourcePerson) || isNameVisible(l.targetPerson);
-            if (isEndpointVisible) return 0.90; // Fully visible connection lines when endpoint name is visible
-            return 0.25;
+            if (isEndpointVisible) return 0.25; // Subtle gray connection for other visible names
+            return 0.15;
           })
           .attr("stroke-width", (l: any) => {
             if (l.sourcePerson.id === d.id || l.targetPerson.id === d.id) return 2.5;
             if (hasPath && l.inPath) return 2.8;
-            const isEndpointVisible = isNameVisible(l.sourcePerson) || isNameVisible(l.targetPerson);
-            if (isEndpointVisible) return 1.4; // Enhanced thickness when endpoint name is visible
-            return 0.8;
+            return 0.8; // Thin elegant lines for all others
           });
       })
       .on("mouseleave", function(event, d: any) {
@@ -663,15 +661,16 @@ export default function NetworkGraph({
            if (activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId)) return 1;
            if (hasPath && d.inPath) return 1;
            const isEndpointVisible = isNameVisible(d.sourcePerson) || isNameVisible(d.targetPerson);
-           if (isEndpointVisible) return 0.90; // Fully visible connection lines when endpoint name is visible
-           return (activeId || hasPath ? 0.2 : 0.6);
+           if (isEndpointVisible) {
+             // Visible but not prominent (using the previous gray color with a subtle, clean opacity)
+             return (activeId || hasPath ? 0.25 : 0.45);
+           }
+           return (activeId || hasPath ? 0.15 : 0.3);
         })
         .attr("stroke-width", (d: any) => {
           if (activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId)) return 2.0;
           if (hasPath && d.inPath) return 2.8;
-          const isEndpointVisible = isNameVisible(d.sourcePerson) || isNameVisible(d.targetPerson);
-          if (isEndpointVisible) return 1.4; // Enhanced thickness when endpoint name is visible
-          return 0.8;
+          return 0.8; // Thin elegant lines for all others
         });
 
       if (!nodesSelectionRef.current) return;
