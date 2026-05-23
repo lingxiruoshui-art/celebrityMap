@@ -44,15 +44,23 @@ export default function NetworkGraph({
   // Slicing and filtering logic for performance with large datasets (10,000+ people)
   // We only render a manageable "active subset" of the graph
   const filteredNodes = useMemo(() => {
-    if (people.length <= 200) return people;
+    if (people.length <= 250) return people;
     
-    const maxNodes = 200;
+    const maxNodes = 250;
     const activeId = selectedPersonId;
-    // 0. Add people in the discovery path first (to guarantee the green path renders fully)
-    const normalizedPathNames = (discoveryPath || []).map(p => p.name.trim().toLowerCase().replace(/·|•|・|●/g, "·").replace(/\s+/g, ""));
+    const corePeople: Person[] = [];
+    const coreIds = new Set<number>();
     const seenIds = new Set<number>();
-    const result: Person[] = [];
 
+    const addCore = (p: Person) => {
+      if (!coreIds.has(p.id)) {
+        corePeople.push(p);
+        coreIds.add(p.id);
+        seenIds.add(p.id);
+      }
+    };
+
+    // 1. Add people in the discovery path (must be core and fully visible)
     if (discoveryPath && discoveryPath.length > 0) {
       discoveryPath.forEach(pathItem => {
         const normItem = pathItem.name.trim().toLowerCase().replace(/·|•|・|●/g, "·").replace(/\s+/g, "");
@@ -60,68 +68,100 @@ export default function NetworkGraph({
           const normPersona = persona.name.trim().toLowerCase().replace(/·|•|・|●/g, "·").replace(/\s+/g, "");
           return normPersona === normItem;
         });
-        if (p && !seenIds.has(p.id)) {
-          result.push(p);
-          seenIds.add(p.id);
+        if (p) {
+          addCore(p);
         }
       });
     }
 
-    // 1. Add selected person
+    // 2. Add selected person
     if (activeId) {
       const p = people.find(persona => persona.id === activeId);
-      if (p && !seenIds.has(p.id)) {
-        result.push(p);
-        seenIds.add(p.id);
+      if (p) {
+        addCore(p);
       }
     }
 
-    // 2. Add direct neighbors of selected person
-    if (activeId) {
+    // 3. Add newest arrivals (up to 20, keeping batch additions as core)
+    const sortedByNewest = [...people].sort((a, b) => 
+      new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+    );
+    const maxDbCreatedAt = people.length > 0 
+      ? Math.max(...people.map(p => p.created_at ? new Date(p.created_at).getTime() : 0))
+      : 0;
+
+    // Add anyone within 10 seconds of maxDbCreatedAt or up to top 20 newest overall
+    for (const p of sortedByNewest) {
+      if (corePeople.length >= 60) break;
+      const isRecentBatch = p.created_at && (maxDbCreatedAt - new Date(p.created_at).getTime() < 10000);
+      const isTop20 = sortedByNewest.indexOf(p) < 20;
+      if (isRecentBatch || isTop20) {
+        addCore(p);
+      }
+    }
+
+    // Construct the result list with core people
+    const resultList = [...corePeople];
+
+    // 4. Ensure ALL neighbors of core people are added to resultList so their connection lines are drawn!
+    for (const corePerson of corePeople) {
+      if (resultList.length >= maxNodes) break;
+      
       const neighbors = relationships
-        .filter(r => r.person1_id === activeId || r.person2_id === activeId)
-        .map(r => r.person1_id === activeId ? r.person2_id : r.person1_id);
+        .filter(r => r.person1_id === corePerson.id || r.person2_id === corePerson.id)
+        .map(r => r.person1_id === corePerson.id ? r.person2_id : r.person1_id);
       
       for (const nid of neighbors) {
-        if (result.length >= maxNodes) break;
+        if (resultList.length >= maxNodes) break;
         if (!seenIds.has(nid)) {
           const p = people.find(persona => persona.id === nid);
           if (p) {
-            result.push(p);
-            seenIds.add(p.id);
+            resultList.push(p);
+            seenIds.add(nid);
           }
         }
       }
     }
 
-    // 3. Add newest arrivals (up to 20)
-    const sortedByNewest = [...people].sort((a, b) => 
-      new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
-    );
-    for (const p of sortedByNewest.slice(0, 20)) {
-      if (result.length >= maxNodes) break;
-      if (!seenIds.has(p.id)) {
-        result.push(p);
-        seenIds.add(p.id);
+    // 5. Fill remaining space up to maxNodes with active relationships from the database (prevents isolated floating dots!)
+    if (resultList.length < maxNodes) {
+      for (const r of relationships) {
+        if (resultList.length >= maxNodes) break;
+        
+        const p1 = people.find(persona => persona.id === r.person1_id);
+        const p2 = people.find(persona => persona.id === r.person2_id);
+        
+        if (p1 && p2) {
+          // Add both endpoints of the relationship to guarantee it renders
+          if (!seenIds.has(p1.id)) {
+            if (resultList.length < maxNodes) {
+              resultList.push(p1);
+              seenIds.add(p1.id);
+            }
+          }
+          if (!seenIds.has(p2.id)) {
+            if (resultList.length < maxNodes) {
+              resultList.push(p2);
+              seenIds.add(p2.id);
+            }
+          }
+        }
       }
     }
 
-    // 4. Fill remaining with random people to keep the globe populated
-    const remainingCount = maxNodes - result.length;
-    if (remainingCount > 0) {
-      // Simple "random" by taking people at even intervals if we have a lot
-      const step = Math.max(1, Math.floor(people.length / remainingCount));
-      for (let i = 0; i < people.length && result.length < maxNodes; i += step) {
-        const p = people[i];
+    // 6. Final absolute fallback: if there are somehow still empty slots, fill with remaining people
+    if (resultList.length < maxNodes) {
+      for (const p of people) {
+        if (resultList.length >= maxNodes) break;
         if (!seenIds.has(p.id)) {
-          result.push(p);
+          resultList.push(p);
           seenIds.add(p.id);
         }
       }
     }
 
-    return result;
-  }, [people, relationships, selectedPersonId]);
+    return resultList;
+  }, [people, relationships, selectedPersonId, discoveryPath]);
 
   const filteredRelationships = useMemo(() => {
     const nodeIds = new Set(filteredNodes.map(p => p.id));
