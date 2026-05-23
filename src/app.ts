@@ -82,10 +82,15 @@ let initPromise: Promise<void> | null = null;
 async function runBackgroundAlignment(db: DatabaseAdapter) {
   try {
     console.log("[Wikidata Sync] Starting background Wikidata alignment...");
+    
+    let totalFetches = 0;
+    const MAX_FETCHES = 25;
 
     // 1. Resolve for people who don't have wikidata_id yet
-    const unalignedPeople = await db.prepare("SELECT id, name FROM people WHERE wikidata_id IS NULL").all() as any[];
+    const unalignedPeople = await db.prepare("SELECT id, name FROM people WHERE wikidata_id IS NULL LIMIT 25").all() as any[];
     for (const p of unalignedPeople) {
+      if (totalFetches >= MAX_FETCHES) break;
+      totalFetches++;
       const wid = await resolveWikidataId(p.name);
       if (wid) {
         await db.prepare("UPDATE people SET wikidata_id = ? WHERE id = ?").run(wid, p.id);
@@ -96,8 +101,10 @@ async function runBackgroundAlignment(db: DatabaseAdapter) {
     }
 
     // 2. Resolve for presets who don't have wikidata_id yet
-    const unalignedPresets = await db.prepare("SELECT preset_name FROM figure_pool_sync WHERE wikidata_id IS NULL").all() as any[];
+    const unalignedPresets = await db.prepare("SELECT preset_name FROM figure_pool_sync WHERE wikidata_id IS NULL LIMIT 25").all() as any[];
     for (const pr of unalignedPresets) {
+      if (totalFetches >= MAX_FETCHES) break;
+      totalFetches++;
       const wid = await resolveWikidataId(pr.preset_name);
       if (wid) {
         await db.prepare("UPDATE figure_pool_sync SET wikidata_id = ? WHERE preset_name = ?").run(wid, pr.preset_name);
@@ -2184,7 +2191,7 @@ app.post("/admin/realign-wikidata", async (c) => {
 
     return c.json({ 
         success: true, 
-        message: "全量 Wikidata 比对与人物入库标识映射对齐任务已成功在后台启动！" 
+        message: "全量是对齐任务已在后台启动！(因 Cloudflare Workers 限制，每次点击最多处理 25 个未对齐人物，请根据后台数据分批点击)" 
     });
 });
 
