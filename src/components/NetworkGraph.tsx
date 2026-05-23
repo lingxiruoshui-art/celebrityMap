@@ -503,13 +503,13 @@ export default function NetworkGraph({
           .attr("stroke-opacity", (l: any) => {
             if (l.sourcePerson.id === d.id || l.targetPerson.id === d.id) return 1;
             if (hasPath && l.inPath) return 1;
-            if (scaleRef.current > 1.5 || filteredNodes.length <= 25) return 0.65;
+            if (scaleRef.current > 1.5 || filteredNodes.length <= 25) return 0.90; // Fully visible connection lines when zoomed
             return 0.25;
           })
           .attr("stroke-width", (l: any) => {
             if (l.sourcePerson.id === d.id || l.targetPerson.id === d.id) return 2.5;
             if (hasPath && l.inPath) return 2.8;
-            if (scaleRef.current > 1.5 || filteredNodes.length <= 25) return 1.1;
+            if (scaleRef.current > 1.5 || filteredNodes.length <= 25) return 1.4; // Enhanced thickness when zoomed
             return 0.8;
           });
       })
@@ -604,13 +604,13 @@ export default function NetworkGraph({
         .attr("stroke-opacity", (d: any) => {
            if (activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId)) return 1;
            if (hasPath && d.inPath) return 1;
-           if (scaleRef.current > 1.5 || filteredNodes.length <= 25) return 0.65;
+           if (scaleRef.current > 1.5 || filteredNodes.length <= 25) return 0.90; // Fully visible connection lines when zoomed or small pool
            return (activeId || hasPath ? 0.2 : 0.6);
         })
         .attr("stroke-width", (d: any) => {
           if (activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId)) return 2.0;
           if (hasPath && d.inPath) return 2.8;
-          if (scaleRef.current > 1.5 || filteredNodes.length <= 25) return 1.1;
+          if (scaleRef.current > 1.5 || filteredNodes.length <= 25) return 1.4; // Enhanced thickness to match visible names
           return 0.8;
         });
 
