@@ -184,6 +184,21 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
   if (!dbInitialized) {
     if (!initPromise) {
       initPromise = (async () => {
+        let skipSetup = false;
+        try {
+          const row = await db.prepare("SELECT value FROM config WHERE key = ?").get("init_done_v2") as any;
+          if (row && row.value === "true") {
+            skipSetup = true;
+          }
+        } catch (e) {
+          // Table or key does not exist yet, defaulting to full setup
+        }
+
+        if (skipSetup) {
+          dbInitialized = true;
+          return;
+        }
+
         const initQueries = [
           `CREATE TABLE IF NOT EXISTS people (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -390,10 +405,12 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
           console.error("加载 FIGURE_POOL 到数据库失败:", poolLoadErr);
         }
 
-        // Run global alignment in the background to handle precise mapping without blocking startup
-        runBackgroundAlignment(db).catch(err => {
-          console.error("启动时历史人物后台 Wikidata 映射对齐失败:", err);
-        });
+        // Mark database initialization as completed to bypass on future cold starts
+        try {
+          await db.prepare("INSERT OR REPLACE INTO config (key, value) VALUES ('init_done_v2', 'true')").run();
+        } catch (confErr) {
+          console.error("Failed to set init_done_v2:", confErr);
+        }
 
         dbInitialized = true;
       })();
@@ -414,7 +431,7 @@ export const setConfig = async (db: DatabaseAdapter, key: string, value: string)
 };
 
 const getAdminPassword = (c: any) => {
-    return (c.env && c.env.ADMIN_PASSWORD) || (typeof process !== "undefined" && process.env.ADMIN_PASSWORD) || "admin";
+    return (c.env && c.env.ADMIN_PASSWORD) || (typeof process !== "undefined" && process.env ? process.env.ADMIN_PASSWORD : "") || "admin";
 };
 
 export async function callAI(c: any, db: DatabaseAdapter, prompt: string, responseFormat: "text" | "json" = "text", schema?: any): Promise<string> {
@@ -424,7 +441,7 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
   if (provider === "aliyun") {
       apiKey = await getConfig(db, "aliyun_api_key");
   } else {
-      apiKey = (await getConfig(db, "gemini_api_key")) || (c.env && c.env.GEMINI_API_KEY) || (typeof process !== "undefined" && process.env.GEMINI_API_KEY) || "";
+      apiKey = (await getConfig(db, "gemini_api_key")) || (c.env && c.env.GEMINI_API_KEY) || (typeof process !== "undefined" && process.env ? process.env.GEMINI_API_KEY : "") || "";
   }
   
   const cleanup = () => {
@@ -547,7 +564,7 @@ export async function callAI(c: any, db: DatabaseAdapter, prompt: string, respon
     }
   } else {
     // apiKey is already retrieved at the top
-    const modelId = (await getConfig(db, "gemini_model_id")) || (c.env && c.env.GEMINI_MODEL_ID) || (typeof process !== "undefined" && process.env.GEMINI_MODEL_ID) || "gemini-1.5-flash";
+    const modelId = (await getConfig(db, "gemini_model_id")) || (c.env && c.env.GEMINI_MODEL_ID) || (typeof process !== "undefined" && process.env ? process.env.GEMINI_MODEL_ID : "") || "gemini-1.5-flash";
     if (!apiKey) { cleanup(); throw new Error("缺少 Gemini API Key"); }
     if (!modelId) { cleanup(); throw new Error("缺少 Gemini 模型 ID"); }
     
@@ -1250,7 +1267,7 @@ app.get("/metadata", async (c) => {
       existingNames: existingPeopleNames,
       activeProvider: await getConfig(db, "active_model_provider", "gemini"),
       geminiModelId: await getConfig(db, "gemini_model_id"),
-      geminiApiKey: !!((await getConfig(db, "gemini_api_key")) || (c.env && c.env.GEMINI_API_KEY) || (typeof process !== "undefined" && process.env.GEMINI_API_KEY)),
+      geminiApiKey: !!((await getConfig(db, "gemini_api_key")) || (c.env && c.env.GEMINI_API_KEY) || (typeof process !== "undefined" && process.env ? process.env.GEMINI_API_KEY : "")),
       aliyunModelId: await getConfig(db, "aliyun_model_id"),
       aliyunApiKey: !!(await getConfig(db, "aliyun_api_key")),
   });
@@ -2213,9 +2230,13 @@ app.post("/admin/realign-wikidata", async (c) => {
     if (!isAdmin) return c.json({ error: "Unauthorized" }, 401);
 
     // Run in background so it doesn't block HTTP response or timeout due to Wikidata rate limits/delays
-    runBackgroundAlignment(db).catch(err => {
+    const alignTask = runBackgroundAlignment(db).catch(err => {
         console.error("[Wikidata Sync Manual] Error during manual alignment:", err);
     });
+    
+    if (c.executionCtx && typeof c.executionCtx.waitUntil === "function") {
+        c.executionCtx.waitUntil(alignTask);
+    }
 
     return c.json({ 
         success: true, 
