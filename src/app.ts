@@ -124,6 +124,47 @@ async function runBackgroundAlignment(db: DatabaseAdapter) {
         )
     `).run();
 
+    // 4. Fallback matching: If still is_archived = 0 and Wikidata ID search failed or didn't yield a match, let's run our robust name matcher!
+    const unarchivedPresets = await db.prepare("SELECT preset_name FROM figure_pool_sync WHERE is_archived = 0").all() as any[];
+    if (unarchivedPresets.length > 0) {
+      const allPeople = await db.prepare("SELECT id, name FROM people").all() as any[];
+      const matchPresetWithPeople = (pName: string): any | null => {
+        const pNameLower = pName.toLowerCase();
+        const synonyms: Record<string, string[]> = {
+          "居里夫人": ["居里", "curie", "玛丽"],
+        };
+
+        for (const aPerson of allPeople) {
+          const aName = aPerson.name.trim().toLowerCase();
+          if (aName === pNameLower) return aPerson;
+          
+          if ((aName.includes(pNameLower) || pNameLower.includes(aName)) && (aName.length >= 2 && pNameLower.length >= 2)) return aPerson;
+          
+          const partsA = aName.split('·');
+          const lastPartA = partsA[partsA.length - 1];
+          const partsP = pNameLower.split('·');
+          const lastPartP = partsP[partsP.length - 1];
+          if (lastPartA && lastPartP && lastPartA.length >= 2 && lastPartP.length >= 2) {
+            if (lastPartA === lastPartP) return aPerson;
+          }
+
+          if (synonyms[pName]) {
+            if (synonyms[pName].some(syn => aName.includes(syn))) return aPerson;
+          }
+        }
+        return null;
+      };
+
+      for (const presetRow of unarchivedPresets) {
+        const matchedPerson = matchPresetWithPeople(presetRow.preset_name);
+        if (matchedPerson) {
+          await db.prepare("UPDATE figure_pool_sync SET is_archived = 1, archived_person_id = ?, archived_name = ?, updated_at = CURRENT_TIMESTAMP WHERE preset_name = ?")
+            .run(matchedPerson.id, matchedPerson.name, presetRow.preset_name);
+          console.log(`[Wikidata Sync Fallback] Linked preset "${presetRow.preset_name}" to archive "${matchedPerson.name}" (ID: ${matchedPerson.id})`);
+        }
+      }
+    }
+
     console.log(`[Wikidata Sync] Background alignment complete.`);
   } catch (err) {
     console.error("[Wikidata Sync] Error in background alignment:", err);
@@ -2163,6 +2204,22 @@ app.get("/admin/stats", async (c) => {
         blacklistCount,
         photoBlacklistCount,
         otherBlacklistCount
+    });
+});
+
+app.post("/admin/realign-wikidata", async (c) => {
+    const db = await getDb(c);
+    const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
+    if (!isAdmin) return c.json({ error: "Unauthorized" }, 401);
+
+    // Run in background so it doesn't block HTTP response or timeout due to Wikidata rate limits/delays
+    runBackgroundAlignment(db).catch(err => {
+        console.error("[Wikidata Sync Manual] Error during manual alignment:", err);
+    });
+
+    return c.json({ 
+        success: true, 
+        message: "全量 Wikidata 比对与人物入库标识映射对齐任务已成功在后台启动！" 
     });
 });
 

@@ -452,6 +452,32 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     otherBlacklistCount?: number
   } | null>(null);
   const [isDownloadingBlacklist, setIsDownloadingBlacklist] = useState<string | null>(null);
+  
+  const [isAligningWikidata, setIsAligningWikidata] = useState(false);
+  const [wikidataAlignmentMsg, setWikidataAlignmentMsg] = useState<string | null>(null);
+
+  const handleTriggerWikidataAlignment = async () => {
+    setIsAligningWikidata(true);
+    setWikidataAlignmentMsg(null);
+    try {
+      const res = await fetch("/api/admin/realign-wikidata", {
+        method: "POST",
+        headers: { "x-admin-password": localStorage.getItem("admin_password") || "" }
+      });
+      if (res.ok) {
+        const data = await res.json() as { message: string, success: boolean };
+        setWikidataAlignmentMsg(data.message || "对齐启动成功！");
+        setTimeout(() => setWikidataAlignmentMsg(null), 8000);
+      } else {
+        setWikidataAlignmentMsg("对齐启动失败，请检查管理员密码。");
+      }
+    } catch (e) {
+      console.error(e);
+      setWikidataAlignmentMsg("请求遇到错误，请重试。");
+    } finally {
+      setIsAligningWikidata(false);
+    }
+  };
 
   const handleDownloadBlacklist = async (type: "photos" | "others") => {
     setIsDownloadingBlacklist(type);
@@ -1042,6 +1068,26 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                                 <Download className="w-2.5 h-2.5 group-hover:translate-y-0.5 transition-transform" />
                               )}
                               <span>下载名单</span>
+                            </button>
+                        </div>
+                        <div className="flex items-center justify-between pt-1.5 border-t border-dashed border-slate-200 mt-1">
+                            <div className="flex-1 pr-2">
+                                <div className="text-slate-500">Wikidata 人物全量对齐</div>
+                                <div className="text-[9px] text-slate-400 mt-0.5 leading-tight">
+                                  {wikidataAlignmentMsg || "触发后台高精度全量比对，利用唯一 Wikidata ID 纠正和补全所有预设的归档映射状态。"}
+                                </div>
+                            </div>
+                            <button
+                              onClick={handleTriggerWikidataAlignment}
+                              disabled={isAligningWikidata}
+                              className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white h-[26px] px-2.5 text-[10px] font-bold rounded-lg transition-all shadow-sm flex items-center justify-center gap-1 active:scale-[0.98] shrink-0"
+                            >
+                              {isAligningWikidata ? (
+                                <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                              ) : (
+                                <Sparkles className="w-2.5 h-2.5" />
+                              )}
+                              <span>立即对齐</span>
                             </button>
                         </div>
                     </div>
