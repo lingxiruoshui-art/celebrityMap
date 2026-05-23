@@ -497,19 +497,30 @@ export default function NetworkGraph({
         d3.select(this).selectAll("text").transition().duration(200).style("opacity", 1);
         
         // Highlight connected links
+        const activeId = selectedPersonId;
         const hasPath = discoveryPath && discoveryPath.length > 1;
+
+        const isNameVisible = (node: any) => {
+          if (node.id === activeId || node.isNewest) return true;
+          if (discoveryPath && discoveryPath.some((p: any) => p.name === node.name)) return true;
+          if (scaleRef.current > 1.5 || filteredNodes.length <= 25) return true;
+          return false;
+        };
+
         linkElements
           .attr("stroke", (l: any) => (hasPath && l.inPath) ? "#10b981" : ((l.sourcePerson.id === d.id || l.targetPerson.id === d.id) ? "#8b5cf6" : "#475569"))
           .attr("stroke-opacity", (l: any) => {
             if (l.sourcePerson.id === d.id || l.targetPerson.id === d.id) return 1;
             if (hasPath && l.inPath) return 1;
-            if (scaleRef.current > 1.5 || filteredNodes.length <= 25) return 0.90; // Fully visible connection lines when zoomed
+            const isEndpointVisible = isNameVisible(l.sourcePerson) || isNameVisible(l.targetPerson);
+            if (isEndpointVisible) return 0.90; // Fully visible connection lines when endpoint name is visible
             return 0.25;
           })
           .attr("stroke-width", (l: any) => {
             if (l.sourcePerson.id === d.id || l.targetPerson.id === d.id) return 2.5;
             if (hasPath && l.inPath) return 2.8;
-            if (scaleRef.current > 1.5 || filteredNodes.length <= 25) return 1.4; // Enhanced thickness when zoomed
+            const isEndpointVisible = isNameVisible(l.sourcePerson) || isNameVisible(l.targetPerson);
+            if (isEndpointVisible) return 1.4; // Enhanced thickness when endpoint name is visible
             return 0.8;
           });
       })
@@ -592,6 +603,13 @@ export default function NetworkGraph({
     const updateStyles = () => {
       const activeId = selectedPersonId;
       const hasPath = discoveryPath && discoveryPath.length > 1;
+
+      const isNameVisible = (node: any) => {
+        if (node.id === activeId || node.isNewest) return true;
+        if (discoveryPath && discoveryPath.some((p: any) => p.name === node.name)) return true;
+        if (scaleRef.current > 1.5 || filteredNodes.length <= 25) return true;
+        return false;
+      };
       
       linkElements
         .classed("is-bridge", (d: any) => !!hasPath && d.inPath)
@@ -604,13 +622,15 @@ export default function NetworkGraph({
         .attr("stroke-opacity", (d: any) => {
            if (activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId)) return 1;
            if (hasPath && d.inPath) return 1;
-           if (scaleRef.current > 1.5 || filteredNodes.length <= 25) return 0.90; // Fully visible connection lines when zoomed or small pool
+           const isEndpointVisible = isNameVisible(d.sourcePerson) || isNameVisible(d.targetPerson);
+           if (isEndpointVisible) return 0.90; // Fully visible connection lines when endpoint name is visible
            return (activeId || hasPath ? 0.2 : 0.6);
         })
         .attr("stroke-width", (d: any) => {
           if (activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId)) return 2.0;
           if (hasPath && d.inPath) return 2.8;
-          if (scaleRef.current > 1.5 || filteredNodes.length <= 25) return 1.4; // Enhanced thickness to match visible names
+          const isEndpointVisible = isNameVisible(d.sourcePerson) || isNameVisible(d.targetPerson);
+          if (isEndpointVisible) return 1.4; // Enhanced thickness when endpoint name is visible
           return 0.8;
         });
 
