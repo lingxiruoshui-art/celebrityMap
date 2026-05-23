@@ -93,6 +93,8 @@ async function startServer() {
 
   // Hono API Routes
   app.all("/api/*", async (req, res) => {
+    // Ensure the URL passed to Hono retains the /api prefix correctly
+    req.url = req.originalUrl;
     console.log(`[API Request] ${req.method} ${req.url}`);
     try {
       await apiHandler(req, res);

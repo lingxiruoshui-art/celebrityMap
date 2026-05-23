@@ -1084,7 +1084,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                         </div>
                         <div className="flex items-center justify-between pt-1">
                             <div>
-                                <div className="text-slate-500">其他错误黑名单 (失败3次及以上)</div>
+                                <div className="text-slate-500">其他错误黑名单 (失败2次及以上)</div>
                                 <div className="font-bold text-red-600 mt-0.5">{adminStats.otherBlacklistCount || 0} 人</div>
                             </div>
                             <button

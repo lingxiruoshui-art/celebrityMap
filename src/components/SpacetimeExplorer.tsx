@@ -345,7 +345,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                       <div className="flex-1 pl-4 flex flex-col items-start min-w-0">
                         <button 
                           onClick={() => onSelectPerson(item.id, item.name)}
-                          className={`text-left text-[14px] font-bold hover:text-indigo-600 transition-colors truncate max-w-full
+                          className={`text-left text-[14px] font-bold hover:text-indigo-600 cursor-pointer transition-colors truncate max-w-full
                             ${isStart ? 'text-indigo-600' : isEnd ? 'text-purple-600' : 'text-slate-700'}`}
                         >
                           {item.name}

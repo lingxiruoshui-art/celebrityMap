@@ -67,15 +67,22 @@ export async function doFinalizeInsert(db: DatabaseAdapter, finalName: string, p
         }
     }
     
-    // Check if exists for logging purposes
-    const existing = await db.prepare("SELECT id FROM people WHERE name = ? COLLATE NOCASE").get(finalName) as any;
-    const isUpdate = !!existing;
-
     // Resolve Wikidata ID for the person
     let wikidataId = wikiMeta?.wikidataId || null;
     if (!wikidataId) {
         wikidataId = await fetchWikidataId(finalName);
     }
+
+    // Check if exists either by normalized name or match by Wikidata ID (synonyms)
+    let existing = await db.prepare("SELECT id, name FROM people WHERE name = ? COLLATE NOCASE").get(finalName) as any;
+    if (!existing && wikidataId) {
+        const matchedByWiki = await db.prepare("SELECT id, name FROM people WHERE wikidata_id = ?").get(wikidataId) as any;
+        if (matchedByWiki) {
+            existing = matchedByWiki;
+            finalName = matchedByWiki.name; // Keep existing standard name to trigger update and prevent duplicate
+        }
+    }
+    const isUpdate = !!existing;
 
     const res = await db.prepare(
         `INSERT INTO people (name, category, keyword, biography, achievements, raw_relationships, lifespan, birthplace, image_url, wikidata_id)

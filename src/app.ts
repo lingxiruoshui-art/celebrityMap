@@ -88,10 +88,24 @@ async function runBackgroundAlignment(db: DatabaseAdapter) {
     const MAX_FETCHES = 25;
 
     // 1. Resolve for people who don't have wikidata_id yet
-    const unalignedPeople = await db.prepare("SELECT id, name FROM people WHERE wikidata_id IS NULL LIMIT 25").all() as any[];
+    const lastPersonId = parseInt(await getConfig(db, "wikidata_last_person_id", "0"), 10);
+    let unalignedPeople = await db.prepare("SELECT id, name FROM people WHERE id > ? AND wikidata_id IS NULL ORDER BY id ASC LIMIT 25").all(lastPersonId) as any[];
+    
+    let maxPersonId = lastPersonId;
+    if (unalignedPeople.length === 0 && lastPersonId > 0) {
+      console.log(`[Wikidata Sync] Loop-around: reached end (lastPersonId=${lastPersonId}), resetting to start`);
+      unalignedPeople = await db.prepare("SELECT id, name FROM people WHERE id > 0 AND wikidata_id IS NULL ORDER BY id ASC LIMIT 25").all() as any[];
+      maxPersonId = 0;
+    }
+
     for (const p of unalignedPeople) {
       if (totalFetches >= MAX_FETCHES) break;
       totalFetches++;
+      
+      if (p.id > maxPersonId) {
+        maxPersonId = p.id;
+      }
+
       const wid = await resolveWikidataId(p.name);
       if (wid) {
         await db.prepare("UPDATE people SET wikidata_id = ? WHERE id = ?").run(wid, p.id);
@@ -102,11 +116,32 @@ async function runBackgroundAlignment(db: DatabaseAdapter) {
       await new Promise(r => setTimeout(r, 100));
     }
 
+    if (maxPersonId !== lastPersonId) {
+      await setConfig(db, "wikidata_last_person_id", String(maxPersonId));
+      console.log(`[Wikidata Sync] Updated last aligned person ID pointer from ${lastPersonId} to ${maxPersonId}`);
+    } else if (unalignedPeople.length === 0) {
+      await setConfig(db, "wikidata_last_person_id", "0");
+    }
+
     // 2. Resolve for presets who don't have wikidata_id yet
-    const unalignedPresets = await db.prepare("SELECT preset_name FROM figure_pool_sync WHERE wikidata_id IS NULL LIMIT 25").all() as any[];
+    const lastPresetName = await getConfig(db, "wikidata_last_preset_name", "");
+    let unalignedPresets = await db.prepare("SELECT preset_name FROM figure_pool_sync WHERE preset_name > ? AND wikidata_id IS NULL ORDER BY preset_name ASC LIMIT 25").all(lastPresetName) as any[];
+    
+    let maxPresetName = lastPresetName;
+    if (unalignedPresets.length === 0 && lastPresetName !== "") {
+      console.log(`[Wikidata Sync] Loop-around presets: reached end (lastPresetName="${lastPresetName}"), resetting to start`);
+      unalignedPresets = await db.prepare("SELECT preset_name FROM figure_pool_sync WHERE preset_name > '' AND wikidata_id IS NULL ORDER BY preset_name ASC LIMIT 25").all() as any[];
+      maxPresetName = "";
+    }
+
     for (const pr of unalignedPresets) {
       if (totalFetches >= MAX_FETCHES) break;
       totalFetches++;
+
+      if (pr.preset_name > maxPresetName) {
+        maxPresetName = pr.preset_name;
+      }
+
       const wid = await resolveWikidataId(pr.preset_name);
       if (wid) {
         await db.prepare("UPDATE figure_pool_sync SET wikidata_id = ? WHERE preset_name = ?").run(wid, pr.preset_name);
@@ -115,6 +150,13 @@ async function runBackgroundAlignment(db: DatabaseAdapter) {
       }
       // Small delay of 100ms to be extremely polite to API
       await new Promise(r => setTimeout(r, 100));
+    }
+
+    if (maxPresetName !== lastPresetName) {
+      await setConfig(db, "wikidata_last_preset_name", maxPresetName);
+      console.log(`[Wikidata Sync] Updated last aligned preset name pointer from "${lastPresetName}" to "${maxPresetName}"`);
+    } else if (unalignedPresets.length === 0) {
+      await setConfig(db, "wikidata_last_preset_name", "");
     }
 
     // 3. Link them by Wikidata ID or direct name matches
@@ -183,8 +225,8 @@ async function runBackgroundAlignment(db: DatabaseAdapter) {
       }
     }
 
-    const remainPeopleRes = await db.prepare("SELECT COUNT(*) as count FROM people WHERE wikidata_id IS NULL").first() as any;
-    const remainPoolRes = await db.prepare("SELECT COUNT(*) as count FROM figure_pool_sync WHERE wikidata_id IS NULL").first() as any;
+    const remainPeopleRes = await db.prepare("SELECT COUNT(*) as count FROM people WHERE wikidata_id IS NULL").get() as any;
+    const remainPoolRes = await db.prepare("SELECT COUNT(*) as count FROM figure_pool_sync WHERE wikidata_id IS NULL").get() as any;
     stats.remainPeople = remainPeopleRes?.count || 0;
     stats.remainPool = remainPoolRes?.count || 0;
 
@@ -219,11 +261,51 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
         }
 
         if (skipSetup) {
+          // Even if setup has been done previously, ensure all newer columns and tables exist (robust migration)
+          try {
+            await db.prepare("ALTER TABLE people ADD COLUMN wikidata_id TEXT").run();
+          } catch (e) {}
+          try {
+            await db.prepare(`CREATE TABLE IF NOT EXISTS figure_pool_sync (
+              preset_name TEXT PRIMARY KEY,
+              is_archived INTEGER DEFAULT 0,
+              archived_person_id INTEGER,
+              archived_name TEXT,
+              wikidata_id TEXT,
+              updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`).run();
+          } catch (e) {}
+          try {
+            await db.prepare("CREATE INDEX IF NOT EXISTS idx_people_wikidata_id ON people(wikidata_id)").run();
+          } catch (e) {}
+          try {
+            await db.prepare("CREATE INDEX IF NOT EXISTS idx_figure_pool_sync_wikidata_id ON figure_pool_sync(wikidata_id)").run();
+          } catch (e) {}
+          try {
+            await db.prepare("CREATE INDEX IF NOT EXISTS idx_figure_pool_sync_is_archived ON figure_pool_sync(is_archived)").run();
+          } catch (e) {}
+
+          // Seed missing preset figures if table is empty
+          try {
+            const countRow = await db.prepare("SELECT COUNT(*) as count FROM figure_pool_sync").get() as any;
+            if (!countRow || countRow.count === 0) {
+              const flatPool = Object.values(FIGURE_POOL).flat();
+              for (const name of flatPool) {
+                try {
+                  await db.prepare("INSERT OR IGNORE INTO figure_pool_sync (preset_name) VALUES (?)").run(name);
+                } catch (pe) {}
+              }
+              console.log(`[Database Seed skipSetup] Seeded ${flatPool.length} presets.`);
+            }
+          } catch (err) {
+            console.error("[Database Seed skipSetup] Failed to seed:", err);
+          }
+
           dbInitialized = true;
           return;
         }
 
-        const initQueries = [
+        const tableQueries = [
           `CREATE TABLE IF NOT EXISTS people (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT UNIQUE NOT NULL,
@@ -236,6 +318,7 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
             image_url TEXT,
             views INTEGER DEFAULT 0,
             raw_relationships TEXT DEFAULT '[]',
+            wikidata_id TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
           )`,
           `CREATE TABLE IF NOT EXISTS relationships (
@@ -298,14 +381,56 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
             archived_name TEXT,
             wikidata_id TEXT,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-          )`,
+          )`
+        ];
+        for (const q of tableQueries) {
+          await db.prepare(q).run();
+        }
+
+        const migrations = [
+          "ALTER TABLE people ADD COLUMN latitude REAL DEFAULT 0",
+          "ALTER TABLE people ADD COLUMN longitude REAL DEFAULT 0",
+          "ALTER TABLE people ADD COLUMN image_url TEXT",
+          "ALTER TABLE people ADD COLUMN lifespan TEXT",
+          "ALTER TABLE people ADD COLUMN birthplace TEXT",
+          "ALTER TABLE people ADD COLUMN wikidata_id TEXT"
+        ];
+        for (const m of migrations) {
+          try {
+            await db.prepare(m).run();
+          } catch (e) {
+            // Suppress error if column already exists
+          }
+        }
+
+        const indexQueries = [
           "CREATE INDEX IF NOT EXISTS idx_relationships_person2 ON relationships(person2_id)",
           "CREATE INDEX IF NOT EXISTS idx_figure_pool_sync_is_archived ON figure_pool_sync(is_archived)",
           "CREATE INDEX IF NOT EXISTS idx_people_wikidata_id ON people(wikidata_id)",
           "CREATE INDEX IF NOT EXISTS idx_figure_pool_sync_wikidata_id ON figure_pool_sync(wikidata_id)"
         ];
-        for (const q of initQueries) {
-          await db.prepare(q).run();
+        for (const q of indexQueries) {
+          try {
+            await db.prepare(q).run();
+          } catch (e) {
+            // Ignore index setup failures
+          }
+        }
+
+        // Seed missing preset figures if table is empty
+        try {
+          const countRow = await db.prepare("SELECT COUNT(*) as count FROM figure_pool_sync").get() as any;
+          if (!countRow || countRow.count === 0) {
+            const flatPool = Object.values(FIGURE_POOL).flat();
+            for (const name of flatPool) {
+              try {
+                await db.prepare("INSERT OR IGNORE INTO figure_pool_sync (preset_name) VALUES (?)").run(name);
+              } catch (pe) {}
+            }
+            console.log(`[Database Seed fullSetup] Seeded ${flatPool.length} presets.`);
+          }
+        } catch (err) {
+          console.error("[Database Seed fullSetup] Failed to seed:", err);
         }
         
         // Mark database initialization as completed to bypass on future cold starts
@@ -1195,7 +1320,19 @@ app.post("/save-archive", async (c) => {
     }));
   }
 
-  const existing = await db.prepare("SELECT id, biography FROM people WHERE name = ?").get(name) as any;
+  let wikidataId: string | null = null;
+  try {
+    wikidataId = await resolveWikidataId(name);
+  } catch (e) {}
+
+  let existing = await db.prepare("SELECT id, biography, name FROM people WHERE name = ?").get(name) as any;
+  if (!existing && wikidataId) {
+    const matchedByWiki = await db.prepare("SELECT id, biography, name FROM people WHERE wikidata_id = ?").get(wikidataId) as any;
+    if (matchedByWiki) {
+      existing = matchedByWiki;
+      name = matchedByWiki.name; // Use standard/existing name to redirect updating logic and prevent duplicates
+    }
+  }
   const isFull = existing && existing.biography !== "正在同步资料...";
 
   if (!data) {
@@ -1205,7 +1342,6 @@ app.post("/save-archive", async (c) => {
 
   try {
     const portraitUrl = await getPortraitUrl(c, name);
-    const wikidataId = await resolveWikidataId(name);
     const stmt = db.prepare(`
       INSERT INTO people (name, category, keyword, lifespan, birthplace, biography, achievements, image_url, raw_relationships, wikidata_id)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1512,7 +1648,7 @@ app.post("/archiver/generate-target", async (c) => {
     WHERE status = 'error' 
     GROUP BY LOWER(target_name) 
     HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2 
-       OR (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 3
+       OR (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 2
   `).all() as any[];
   const allExcludes = [...samplePeople.map((p: any) => p.name), ...failedPeopleRows.map((p: any) => p.target_name)];
   
@@ -1549,10 +1685,20 @@ app.post("/archive-figure", async (c) => {
   const targetName = sify((personName || "").trim());
   if (!targetName) return c.json({ error: "Invalid target" }, 400);
   
-  // Check if already in people table
-  const existingPerson = await db.prepare("SELECT id FROM people WHERE name = ? COLLATE NOCASE").get(targetName) as any;
+  // Resolve Wikidata ID immediately to search for standard spellings and avoid duplicate archival
+  let wikidataId: string | null = null;
+  try {
+      wikidataId = await resolveWikidataId(targetName);
+  } catch (e) {}
+
+  // Check if already in people table by name or Wikidata ID
+  let existingPerson = await db.prepare("SELECT id, name FROM people WHERE name = ? COLLATE NOCASE").get(targetName) as any;
+  if (!existingPerson && wikidataId) {
+      existingPerson = await db.prepare("SELECT id, name FROM people WHERE wikidata_id = ?").get(wikidataId) as any;
+  }
+
   if (existingPerson) {
-      return c.json({ error: `[${targetName}] 已在档案库中，无需重入。`, alreadyExists: true, personId: existingPerson.id }, 400);
+      return c.json({ error: `[${targetName}] 已在档案库中（以标准名称 [${existingPerson.name}] 存在），无需重复入库。`, alreadyExists: true, personId: existingPerson.id }, 400);
   }
 
   // Check if blacklisted
@@ -2145,7 +2291,7 @@ app.get("/admin/stats", async (c) => {
             WHERE status = 'error' 
             GROUP BY target_name 
             HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2 
-               OR (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 3
+               OR (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 2
         `).all() as any[];
         blacklistCount = failedPeopleRows.length;
     } catch (e: any) {
@@ -2214,7 +2360,7 @@ app.get("/admin/blacklist", async (c) => {
             WHERE status = 'error' 
             GROUP BY LOWER(target_name) 
             HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2 
-               OR (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 3
+               OR (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 2
         `).all() as any[];
     }
     

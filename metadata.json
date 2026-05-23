@@ -1,6 +1,6 @@
 {
-  "name": "名人图谱",
-  "description": "生命记录者：探索历史人物的时空关系与传奇故事。",
+  "name": "Remix: celebrityMap_v2",
+  "description": "基于AI生成的名人传记、成就及关系网络图谱。",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

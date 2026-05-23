@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS people (
   image_url TEXT,
   views INTEGER DEFAULT 0,
   raw_relationships TEXT DEFAULT '[]',
+  wikidata_id TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
