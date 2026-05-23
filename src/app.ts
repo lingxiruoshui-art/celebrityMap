@@ -2335,6 +2335,50 @@ app.post("/admin/realign-wikidata", async (c) => {
     });
 });
 
+app.get("/admin/export-alignment", async (c) => {
+    const db = await getDb(c);
+    const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
+    if (!isAdmin) return c.json({ error: "Unauthorized" }, 401);
+
+    try {
+        const people = await db.prepare("SELECT * FROM people ORDER BY id ASC").all() as any[];
+        
+        // CSV headers
+        const headers = ["ID(序号)", "姓名", "分类", "关键词", "生卒寿命", "出生地", "Wikidata ID(对齐标识)", "访问次数", "入库时间", "简要传记(首150字)"];
+        const rows = people.map(p => {
+            const escape = (val: any) => {
+                if (val === null || val === undefined) return "";
+                const str = String(val).replace(/"/g, '""').replace(/\r?\n|\r/g, " "); // Escape double quotes & handle newlines
+                if (str.includes(",") || str.includes('"')) {
+                    return `"${str}"`;
+                }
+                return str;
+            };
+            return [
+                p.id,
+                escape(p.name),
+                escape(p.category),
+                escape(p.keyword),
+                escape(p.lifespan),
+                escape(p.birthplace),
+                escape(p.wikidata_id || "未对齐"),
+                p.views,
+                escape(p.created_at),
+                escape((p.biography || "").slice(0, 150) + ((p.biography || "").length > 150 ? "..." : ""))
+            ].join(",");
+        });
+
+        const csvContent = "\ufeff" + [headers.join(","), ...rows].join("\n");
+        return c.text(csvContent, 200, {
+            "Content-Type": "text/csv; charset=utf-8",
+            "Content-Disposition": `attachment; filename="spacetime_alignment_report_${new Date().toISOString().slice(0, 10)}.csv"`
+        });
+    } catch (err: any) {
+        console.error("Export alignment error:", err);
+        return c.json({ error: "Export failed: " + err.message }, 500);
+    }
+});
+
 app.get("/admin/blacklist", async (c) => {
     const db = await getDb(c);
     const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);

@@ -361,8 +361,8 @@ export default function App() {
                       </div>
                     )}
                     <div className="absolute inset-0 bg-gradient-to-t from-slate-900/60 to-transparent flex flex-col justify-end p-3 z-10 pointer-events-none">
-                      <span className="text-[10px] text-white/90 font-mono tracking-wider font-semibold">
-                        档案号: {String(selectedPerson.id).padStart(4, "0")}
+                      <span className="text-[10px] text-white/90 font-mono tracking-wider font-semibold select-all" title={selectedPerson.wikidata_id || "未对齐"}>
+                        Wikidata ID: {selectedPerson.wikidata_id || "未对齐"}
                       </span>
                     </div>
                   </button>

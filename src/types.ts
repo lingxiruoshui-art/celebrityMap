@@ -10,6 +10,7 @@ export interface Person {
   achievements: string; // JSON string from DB
   image_url: string | null;
   raw_relationships?: string;
+  wikidata_id?: string | null;
   created_at?: string;
 }
 

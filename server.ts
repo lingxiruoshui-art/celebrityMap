@@ -93,8 +93,22 @@ async function startServer() {
 
   // Hono API Routes
   app.all("/api/*", async (req, res) => {
-    // Ensure the URL passed to Hono retains the /api prefix correctly
-    req.url = req.originalUrl;
+    // Ensure the URL passed to Hono is a robust relative path starting with /api
+    let targetUrl = req.originalUrl || req.url || "";
+    if (targetUrl.startsWith("http://") || targetUrl.startsWith("https://")) {
+      try {
+        const parsed = new URL(targetUrl);
+        targetUrl = parsed.pathname + parsed.search;
+      } catch (e) {
+        // Use as is if invalid
+      }
+    }
+    
+    // Clean up any duplicate slashes while preserving query parameters
+    const [pathPart, queryPart] = targetUrl.split("?");
+    targetUrl = pathPart.replace(/\/+/g, "/") + (queryPart !== undefined ? "?" + queryPart : "");
+    
+    req.url = targetUrl;
     console.log(`[API Request] ${req.method} ${req.url}`);
     try {
       await apiHandler(req, res);

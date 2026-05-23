@@ -460,6 +460,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   const [isDownloadingBlacklist, setIsDownloadingBlacklist] = useState<string | null>(null);
   
   const [isAligningWikidata, setIsAligningWikidata] = useState(false);
+  const [isExportingAlignment, setIsExportingAlignment] = useState(false);
   const [wikidataAlignmentMsg, setWikidataAlignmentMsg] = useState<string | null>(null);
 
   const handleTriggerWikidataAlignment = async () => {
@@ -482,6 +483,31 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
       setWikidataAlignmentMsg("请求遇到错误，请重试。");
     } finally {
       setIsAligningWikidata(false);
+    }
+  };
+
+  const handleExportAlignment = async () => {
+    setIsExportingAlignment(true);
+    try {
+      const res = await fetch("/api/admin/export-alignment", {
+        headers: { "x-admin-password": localStorage.getItem("admin_password") || "" }
+      });
+      if (!res.ok) {
+        throw new Error("导出失败");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `时空对齐全量报表_${new Date().toISOString().slice(0, 10)}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error("Failed to export alignment table", e);
+      setWikidataAlignmentMsg("下载对齐表失败，请稍后重试。");
+      setTimeout(() => setWikidataAlignmentMsg(null), 6000);
+    } finally {
+      setIsExportingAlignment(false);
     }
   };
 
@@ -1107,18 +1133,32 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                                   {wikidataAlignmentMsg || "触发后台高精度全量比对，利用唯一 Wikidata ID 纠正和补全所有预设的归档映射状态。"}
                                 </div>
                             </div>
-                            <button
-                              onClick={handleTriggerWikidataAlignment}
-                              disabled={isAligningWikidata}
-                              className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white h-[26px] px-2.5 text-[10px] font-bold rounded-lg transition-all shadow-sm flex items-center justify-center gap-1 active:scale-[0.98] shrink-0"
-                            >
-                              {isAligningWikidata ? (
-                                <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                              ) : (
-                                <Sparkles className="w-2.5 h-2.5" />
-                              )}
-                              <span>立即对齐</span>
-                            </button>
+                            <div className="flex gap-1.5 shrink-0">
+                                <button
+                                  onClick={handleExportAlignment}
+                                  disabled={isExportingAlignment}
+                                  className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white h-[26px] px-2.5 text-[10px] font-bold rounded-lg transition-all shadow-sm flex items-center justify-center gap-1 active:scale-[0.98]"
+                                >
+                                  {isExportingAlignment ? (
+                                    <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                                  ) : (
+                                    <Download className="w-2.5 h-2.5" />
+                                  )}
+                                  <span>下载对齐表</span>
+                                </button>
+                                <button
+                                  onClick={handleTriggerWikidataAlignment}
+                                  disabled={isAligningWikidata}
+                                  className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white h-[26px] px-2.5 text-[10px] font-bold rounded-lg transition-all shadow-sm flex items-center justify-center gap-1 active:scale-[0.98]"
+                                >
+                                  {isAligningWikidata ? (
+                                    <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                                  ) : (
+                                    <Sparkles className="w-2.5 h-2.5" />
+                                  )}
+                                  <span>立即对齐</span>
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
