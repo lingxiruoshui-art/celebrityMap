@@ -1,5 +1,6 @@
 import { DatabaseAdapter } from "./db.ts";
 import { ExploreState } from "./exploreTask.ts";
+import { sify } from "chinese-conv";
 
 export async function initExplorationState(
   db: DatabaseAdapter,
@@ -29,6 +30,14 @@ export async function initExplorationState(
 }
 
 export async function doFinalizeInsert(db: DatabaseAdapter, finalName: string, personData: any, wikiMeta: any, c: any, addRelationship: any, addLog: any, onDiscover?: (name: string, type: string) => Promise<void>) {
+    finalName = sify(finalName.trim());
+    if (personData.relationships && Array.isArray(personData.relationships)) {
+        personData.relationships = personData.relationships.map((rel: any) => ({
+            ...rel,
+            personName: sify((rel.personName || "").trim())
+        }));
+    }
+
     const portraitUrlRaw = wikiMeta?.imageUrl;
     const portraitUrl = `/api/portraits/${encodeURIComponent(finalName.toLowerCase())}.jpg`;
     if (c.env && c.env.IMAGES && portraitUrlRaw) {
