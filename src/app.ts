@@ -5,6 +5,7 @@ import { D1DatabaseAdapter, DatabaseAdapter } from "./db.ts";
 import { CATEGORIES, FIGURE_POOL } from "./figuresPool.ts";
 import { EXPAND_CONNECTIONS_PROMPT, EXPAND_CONNECTIONS_SCHEMA } from "./services/aiService.ts";
 import { initExplorationState, doFinalizeInsert } from "./exploreStep.ts";
+import { sify } from "chinese-conv";
 
 const root = new Hono<{ 
   Bindings: { 
@@ -300,50 +301,6 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
           await db.prepare("DELETE FROM explore_queue WHERE status = 'error' AND (reason IS NULL OR reason = '')").run();
         } catch (e) {
           console.error("Failed to clean up empty-reason error records:", e);
-        }
-
-        // 繁简体去重已迁移完成，此处于新环境略过
-
-        // Clean up and deduplicate relationships table (ensure min/max ordering and remove duplicates)
-        try {
-          const allRels = await db.prepare("SELECT * FROM relationships").all() as any[];
-          const seenRels = new Set<string>();
-          for (const r of allRels) {
-            const p1 = r.person1_id;
-            const p2 = r.person2_id;
-            const min = Math.min(p1, p2);
-            const max = Math.max(p1, p2);
-            const key = `${min}_${max}`;
-            
-            if (seenRels.has(key)) {
-              // This is a duplicate relationship, let's delete it
-              await db.prepare("DELETE FROM relationships WHERE id = ?").run(r.id);
-            } else {
-              seenRels.add(key);
-              if (p1 !== min || p2 !== max) {
-                // Wrong column order (p1 > p2), update order
-                await db.prepare("DELETE FROM relationships WHERE id = ?").run(r.id);
-                try {
-                  await db.prepare("INSERT INTO relationships (person1_id, person2_id, relationship_type) VALUES (?, ?, ?)").run(min, max, r.relationship_type);
-                } catch (insErr) {
-                  // If it conflicts/fails, we just deleted the duplicate, so that's perfect
-                }
-              }
-            }
-          }
-        } catch (relMigrErr) {
-          console.error("Relationships clean up/deduplication failed:", relMigrErr);
-        }
-
-        // Load all figures from FIGURE_POOL into figure_pool_sync
-        try {
-          const flatPool = Object.values(FIGURE_POOL).flat();
-          for (const rawName of flatPool) {
-            const simpName = rawName.trim();
-            await db.prepare("INSERT OR IGNORE INTO figure_pool_sync (preset_name, is_archived) VALUES (?, 0)").run(simpName);
-          }
-        } catch (poolLoadErr) {
-          console.error("加载 FIGURE_POOL 到数据库失败:", poolLoadErr);
         }
 
         // Mark database initialization as completed to bypass on future cold starts
@@ -1225,11 +1182,11 @@ app.post("/save-archive", async (c) => {
   const db = await getDb(c);
   let { name, data } = await c.req.json();
   if (!name) return c.json({ error: "Missing name" }, 400);
-  name = name.trim();
+  name = sify(name.trim());
   if (data && data.relationships && Array.isArray(data.relationships)) {
     data.relationships = data.relationships.map((rel: any) => ({
       ...rel,
-      personName: (rel.personName || "").trim()
+      personName: sify((rel.personName || "").trim())
     }));
   }
 
@@ -1584,7 +1541,7 @@ app.post("/archive-figure", async (c) => {
   }
 
   // Use the enqueue logic instead of direct processing
-  const targetName = (personName || "").trim();
+  const targetName = sify((personName || "").trim());
   if (!targetName) return c.json({ error: "Invalid target" }, 400);
   
   // Check if already in people table
@@ -1637,8 +1594,8 @@ app.post("/save-relationship", async (c) => {
   let { sourceName, targetName, relationshipType } = await c.req.json();
   if (!sourceName || !targetName || !relationshipType) return c.json({ error: "Missing info" }, 400);
 
-  sourceName = sourceName.trim();
-  targetName = targetName.trim();
+  sourceName = sify(sourceName.trim());
+  targetName = sify(targetName.trim());
 
   const p1 = await db.prepare("SELECT id FROM people WHERE name = ?").get(sourceName) as any;
   const p2 = await db.prepare("SELECT id FROM people WHERE name = ?").get(targetName) as any;
@@ -1970,7 +1927,7 @@ app.post("/internal/submit", async (c) => {
     const db = await getDb(c);
     const body = await c.req.json();
     const { taskId, success, personData, wikiMeta, error } = body;
-    const targetName = (body.targetName || "").trim();
+    const targetName = sify((body.targetName || "").trim());
     
     if (success) {
         // Validate effective information before proceeding
@@ -2012,7 +1969,7 @@ app.post("/internal/submit", async (c) => {
                  // 严格类型检查，防止 AI 输出异常导致的程序崩溃
                  if (typeof relatedName !== "string") return;
                  
-                 const normalizedRelation = relatedName.trim();
+                 const normalizedRelation = sify(relatedName.trim());
                  if (!normalizedRelation || normalizedRelation.length < 2 || normalizedRelation.length > 40) return;
 
                  // 拦截检测：如果姓名中包含英文 A-Z (且不是极短的特殊缩写)，则视为未翻译别名，不入排队队列
@@ -2240,7 +2197,7 @@ app.post("/explore/enqueue", async (c) => {
     
     let { targetName } = await c.req.json();
     if (!targetName) return c.json({ error: "Invalid target" }, 400);
-    targetName = targetName.trim();
+    targetName = sify(targetName.trim());
     
     // Check if already in people table
     const existingPerson = await db.prepare("SELECT id FROM people WHERE name = ? COLLATE NOCASE").get(targetName) as any;
@@ -2302,7 +2259,7 @@ app.post("/explore/start", async (c) => {
   }
 
   // Redirection: use enqueue for all exploration starts
-  const targetName = (target || "").trim();
+  const targetName = sify((target || "").trim());
   if (!targetName) return c.json({ error: "探索目标不能为空" }, 400);
 
   // Check if already in people table
