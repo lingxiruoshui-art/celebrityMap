@@ -58,7 +58,15 @@ app.use('*', async (c, next) => {
 
 app.onError((err, c) => {
   console.error("Hono error:", err);
-  return c.json({ error: err.message || "Internal Server Error", stack: typeof process !== 'undefined' && process.env.NODE_ENV === 'development' ? err.stack : undefined }, 500);
+  const errorPayload: any = {
+    error: err.message || String(err) || "Internal Server Error",
+    stack: err.stack || "No stack trace available",
+    raw_error: String(err)
+  };
+  if (err.cause) {
+    errorPayload.cause = String(err.cause);
+  }
+  return c.json(errorPayload, 500);
 });
 
 app.notFound((c) => {
@@ -2054,62 +2062,99 @@ app.get("/admin/stats", async (c) => {
     // Total figures pool
     const totalPool = Object.values(FIGURE_POOL).reduce((acc, curr) => acc + curr.length, 0);
     
-    // Archived preset figures count (precise synchronised metrics)
-    const archivedPresetRow = await db.prepare("SELECT COUNT(*) as count FROM figure_pool_sync WHERE is_archived = 1").get() as any;
-    const archivedPoolCount = archivedPresetRow ? archivedPresetRow.count : 0;
-    
-    // Connected total count (all people mentioned in raw_relationships + archived people)
-    const allPeopleRows = await db.prepare("SELECT raw_relationships FROM people").all() as any[];
-    const allConnectedNames = new Set<string>();
-    allPeopleRows.forEach(row => {
-        try {
-            const rels = JSON.parse(row.raw_relationships || "[]");
-            rels.forEach((r: any) => {
-                if (r.personName) allConnectedNames.add(r.personName.trim().toLowerCase());
-            });
-        } catch(e) {}
-    });
-    // Add all existing archived people names just to be safe
-    const archivedNamesRows = await db.prepare("SELECT name FROM people").all() as any[];
-    archivedNamesRows.forEach(row => {
-        if (row.name) allConnectedNames.add(row.name.trim().toLowerCase());
-    });
-    const connectedTotalCountUnique = allConnectedNames.size;
-    
-    // Connected count among archived (those in 'people' who have relationships)
-    const connectedArchivedRows = await db.prepare("SELECT DISTINCT p.id FROM people p JOIN relationships r ON p.id = r.person1_id OR p.id = r.person2_id").all() as any[];
-    const connectedArchivedCount = connectedArchivedRows.length;
-    
-    // 缺乏照片黑名单个数 (SUM(photo_reason) >= 2)
-    const photoBlacklistRows = await db.prepare(`
-        SELECT target_name 
-        FROM explore_queue 
-        WHERE status = 'error' 
-        GROUP BY LOWER(target_name) 
-        HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2
-    `).all() as any[];
-    const photoBlacklistCount = photoBlacklistRows.length;
+    let archivedPoolCount = 0;
+    let connectedTotalCountUnique = 0;
+    let connectedArchivedCount = 0;
+    let blacklistCount = 0;
+    let photoBlacklistCount = 0;
+    let otherBlacklistCount = 0;
+    const queryErrors: Record<string, string> = {};
 
-    // 其他错误黑名单个数 (COUNT(*) - SUM(photo_reason) >= 3)
-    const otherBlacklistRows = await db.prepare(`
-        SELECT target_name 
-        FROM explore_queue 
-        WHERE status = 'error' 
-        GROUP BY LOWER(target_name) 
-        HAVING (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 3
-    `).all() as any[];
-    const otherBlacklistCount = otherBlacklistRows.length;
+    // 1. Archived preset count
+    try {
+        const archivedPresetRow = await db.prepare("SELECT COUNT(*) as count FROM figure_pool_sync WHERE is_archived = 1").get() as any;
+        archivedPoolCount = archivedPresetRow ? archivedPresetRow.count : 0;
+    } catch (e: any) {
+        queryErrors.archivedPoolCount = e.message || String(e);
+        console.error("Error fetching archivedPoolCount:", e);
+    }
+    
+    // 2. Connected total count
+    try {
+        const allPeopleRows = await db.prepare("SELECT raw_relationships FROM people").all() as any[];
+        const allConnectedNames = new Set<string>();
+        allPeopleRows.forEach(row => {
+            try {
+                const rels = JSON.parse(row.raw_relationships || "[]");
+                rels.forEach((r: any) => {
+                    if (r.personName) allConnectedNames.add(r.personName.trim().toLowerCase());
+                });
+            } catch(e) {}
+        });
+        const archivedNamesRows = await db.prepare("SELECT name FROM people").all() as any[];
+        archivedNamesRows.forEach(row => {
+            if (row.name) allConnectedNames.add(row.name.trim().toLowerCase());
+        });
+        connectedTotalCountUnique = allConnectedNames.size;
+    } catch (e: any) {
+        queryErrors.connectedTotalCountUnique = e.message || String(e);
+        console.error("Error fetching connectedTotalCountUnique:", e);
+    }
+    
+    // 3. Connected count among archived
+    try {
+        const connectedArchivedRows = await db.prepare("SELECT DISTINCT p.id FROM people p JOIN relationships r ON p.id = r.person1_id OR p.id = r.person2_id").all() as any[];
+        connectedArchivedCount = connectedArchivedRows.length;
+    } catch (e: any) {
+        queryErrors.connectedArchivedCount = e.message || String(e);
+        console.error("Error fetching connectedArchivedCount:", e);
+    }
+    
+    // 4. Photo blacklist count
+    try {
+        const photoBlacklistRows = await db.prepare(`
+            SELECT target_name 
+            FROM explore_queue 
+            WHERE status = 'error' 
+            GROUP BY target_name 
+            HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2
+        `).all() as any[];
+        photoBlacklistCount = photoBlacklistRows.length;
+    } catch (e: any) {
+        queryErrors.photoBlacklistCount = e.message || String(e);
+        console.error("Error fetching photoBlacklistCount:", e);
+    }
 
-    // Failed (wikidata photo error >= 2, or other error >= 3) (blacklist count union)
-    const failedPeopleRows = await db.prepare(`
-        SELECT target_name 
-        FROM explore_queue 
-        WHERE status = 'error' 
-        GROUP BY LOWER(target_name) 
-        HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2 
-           OR (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 3
-    `).all() as any[];
-    const blacklistCount = failedPeopleRows.length;
+    // 5. Other blacklist count
+    try {
+        const otherBlacklistRows = await db.prepare(`
+            SELECT target_name 
+            FROM explore_queue 
+            WHERE status = 'error' 
+            GROUP BY target_name 
+            HAVING (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 3
+        `).all() as any[];
+        otherBlacklistCount = otherBlacklistRows.length;
+    } catch (e: any) {
+        queryErrors.otherBlacklistCount = e.message || String(e);
+        console.error("Error fetching otherBlacklistCount:", e);
+    }
+
+    // 6. Blacklist count
+    try {
+        const failedPeopleRows = await db.prepare(`
+            SELECT target_name 
+            FROM explore_queue 
+            WHERE status = 'error' 
+            GROUP BY target_name 
+            HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2 
+               OR (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 3
+        `).all() as any[];
+        blacklistCount = failedPeopleRows.length;
+    } catch (e: any) {
+        queryErrors.blacklistCount = e.message || String(e);
+        console.error("Error fetching blacklistCount:", e);
+    }
 
     return c.json({
         totalPool,
@@ -2118,7 +2163,8 @@ app.get("/admin/stats", async (c) => {
         connectedArchived: connectedArchivedCount,
         blacklistCount,
         photoBlacklistCount,
-        otherBlacklistCount
+        otherBlacklistCount,
+        queryErrors: Object.keys(queryErrors).length > 0 ? queryErrors : undefined
     });
 });
 

@@ -383,9 +383,15 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
 
   useEffect(() => {
     fetch("/api/metadata")
-      .then(res => res.json())
+      .then(async res => {
+          if (!res.ok) {
+              const text = await res.text();
+              throw new Error(`HTTP error ${res.status}: ${text}`);
+          }
+          return res.json();
+      })
       .then(data => setMetadata(data))
-      .catch(err => console.error("Failed to fetch metadata", err));
+      .catch(err => console.error("Failed to fetch metadata:", err));
   }, []);
 
   const handleStop = async () => {
@@ -505,13 +511,32 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     }
   };
 
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
   useEffect(() => {
     if (isAdmin) {
         const fetchStats = () => {
              fetch("/api/admin/stats", { headers: { "x-admin-password": localStorage.getItem("admin_password") || "" } })
-                .then(res => res.json())
-                .then(data => setAdminStats(data))
-                .catch(err => console.error("Failed to fetch stats", err));
+                .then(async res => {
+                    if (!res.ok) {
+                        const text = await res.text();
+                        throw new Error(`HTTP error ${res.status}: ${text}`);
+                    }
+                    return res.json();
+                })
+                .then(data => {
+                    if (data.queryErrors) {
+                        console.error("Stats API returned partial errors:", data.queryErrors);
+                        setErrorMsg(`Stats DB Errors: ${JSON.stringify(data.queryErrors)}`);
+                    } else {
+                        setErrorMsg(null);
+                    }
+                    setAdminStats(data);
+                })
+                .catch(err => {
+                    console.error("Failed to fetch stats:", err);
+                    setErrorMsg(`Fetch stats fail: ${err.message}`);
+                });
         };
         fetchStats();
         const interval = setInterval(fetchStats, 5000);
@@ -821,6 +846,11 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
 
   const content = (
     <div className={`flex flex-col flex-1 min-h-0 w-full overflow-hidden transition-all duration-300 ${!isCollapsed ? (isInline ? "p-0" : "p-6") : "p-0"}`}>
+      {errorMsg && (
+          <div className="bg-red-50 text-red-600 text-xs p-3 mb-2 rounded-lg border border-red-200">
+             {errorMsg}
+          </div>
+      )}
       {!isCollapsed && (
         <div className={`flex-1 flex flex-col lg:flex-row items-stretch overflow-hidden min-h-0 bg-white`}>
             {/* Main Controls & Results Column (Responsive Width - Now on Left) */}
