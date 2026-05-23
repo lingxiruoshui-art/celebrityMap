@@ -1351,26 +1351,11 @@ app.post("/admin/people/:id/expand-connections", async (c) => {
 
       await send({ type: 'info', msg: "全维度检索完毕，未发现可收录的新目标。" });
       await send({ type: 'result', addedCount: 0 });
-      
-    } catch (e: any) {
-        await send({ type: 'error', msg: e.message });
-    }
-  });
-});
-
-app.post("/admin/repair-images", async (c) => {
-  if (c.req.header("x-admin-password") !== getAdminPassword(c)) return c.json({ error: "Unauthorized" }, 401);
-  const db = await getDb(c);
-  try {
-      const people = await db.prepare("SELECT id, name FROM people").all() as any[];
-      for (const p of people) {
-          const newUrl = `/api/portraits/${encodeURIComponent(p.name.toLowerCase())}.jpg`;
-          await db.prepare("UPDATE people SET image_url = ? WHERE id = ?").run(newUrl, p.id);
-      }
-      return c.json({ success: true, message: "所有人物图片已切换至本地代理模式（按需异步加载）" });
-  } catch (e: any) {
-      return c.json({ error: e.message }, 500);
-  }
+          
+        } catch (e: any) {
+            await send({ type: 'error', msg: e.message });
+        }
+    });
 });
 
 app.get("/archive", async (c) => {
@@ -1379,37 +1364,12 @@ app.get("/archive", async (c) => {
   const limit = parseInt(c.req.query("limit") || "0");
   const search = c.req.query("search") || "";
   
-  let peopleQuery = `
-    SELECT p.*, 
-    (SELECT COUNT(*) FROM relationships WHERE person1_id = p.id OR person2_id = p.id) as connectionsCount,
-    COALESCE(
-       (SELECT f.preset_name FROM figure_pool_sync f WHERE f.archived_person_id = p.id LIMIT 1),
-       (SELECT f.preset_name FROM figure_pool_sync f WHERE p.wikidata_id IS NOT NULL AND p.wikidata_id != '' AND f.wikidata_id = p.wikidata_id LIMIT 1),
-       (SELECT f.preset_name FROM figure_pool_sync f WHERE f.preset_name = p.name LIMIT 1)
-    ) as preset_name
-    FROM people p
-  `;
-  
-  const params: any[] = [];
-  if (search) {
-    peopleQuery += ` WHERE p.name LIKE ? OR p.category LIKE ? `;
-    const s = `%${search}%`;
-    params.push(s, s);
-  }
-  
-  peopleQuery += ` ORDER BY created_at DESC `;
-  
-  if (limit > 0) {
-    peopleQuery += ` LIMIT ? OFFSET ? `;
-    params.push(limit, (page > 0 ? page - 1 : 0) * limit);
-  }
+  let people: any[] = [];
+  let relationships: any[] = [];
+  let total = 0;
 
-  let people = await db.prepare(peopleQuery).all(...params) as any[];
-  const relationships = await db.prepare("SELECT * FROM relationships").all();
-  
-  // Also get total count if paginated
-  let total = people.length;
   if (limit > 0) {
+    // 针对管理员后台的分页查询：只查询该页展示人物（N <= 25）的 preset_name，极大降低计算量
     let countQuery = "SELECT COUNT(*) as count FROM people";
     const countParams: any[] = [];
     if (search) {
@@ -1419,10 +1379,51 @@ app.get("/archive", async (c) => {
     }
     const countRes = await db.prepare(countQuery).get(...countParams) as any;
     total = countRes?.count || 0;
+
+    let peopleQuery = `
+      SELECT p.*,
+      COALESCE(f1.preset_name, f2.preset_name, f3.preset_name) as preset_name
+      FROM people p
+      LEFT JOIN figure_pool_sync f1 ON f1.archived_person_id = p.id
+      LEFT JOIN figure_pool_sync f2 ON p.wikidata_id IS NOT NULL AND p.wikidata_id != '' AND f2.wikidata_id = p.wikidata_id
+      LEFT JOIN figure_pool_sync f3 ON f3.preset_name = p.name
+    `;
+    const params: any[] = [];
+    if (search) {
+      peopleQuery += " WHERE p.name LIKE ? OR p.category LIKE ? OR p.biography LIKE ? ";
+      const s = `%${search}%`;
+      params.push(s, s, s);
+    }
+    peopleQuery += " GROUP BY p.id ORDER BY p.created_at DESC LIMIT ? OFFSET ? ";
+    params.push(limit, (page > 0 ? page - 1 : 0) * limit);
+
+    people = await db.prepare(peopleQuery).all(...params) as any[];
+    relationships = await db.prepare("SELECT * FROM relationships").all();
+  } else {
+    // 针对用户端首页的全量查询：用户端不绘制也不展示预设状态，完全跳过与 figure_pool_sync 的联合查询，彻底避免 O(N) 级单次 1,800+ 子查询
+    let peopleQuery = "SELECT * FROM people";
+    const params: any[] = [];
+    if (search) {
+      peopleQuery += " WHERE name LIKE ? OR category LIKE ? OR biography LIKE ? ";
+      const s = `%${search}%`;
+      params.push(s, s, s);
+    }
+    peopleQuery += " ORDER BY created_at DESC";
+    people = await db.prepare(peopleQuery).all(...params) as any[];
+    relationships = await db.prepare("SELECT * FROM relationships").all();
+    total = people.length;
+  }
+
+  // 在内存中哈希累加连接关系，完全避免数据库级别的 N 次独立嵌套子查询
+  const relationshipCounts = new Map<number, number>();
+  for (const r of relationships) {
+    relationshipCounts.set(r.person1_id, (relationshipCounts.get(r.person1_id) || 0) + 1);
+    relationshipCounts.set(r.person2_id, (relationshipCounts.get(r.person2_id) || 0) + 1);
   }
 
   people = people.map(p => ({
     ...p,
+    connectionsCount: relationshipCounts.get(p.id) || 0,
     image_url: `/api/portraits/${encodeURIComponent(p.name.toLowerCase())}.jpg`
   }));
 
