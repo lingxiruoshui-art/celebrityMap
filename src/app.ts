@@ -1305,15 +1305,45 @@ app.get("/archiver/random-pair", async (c) => {
 
 export async function pickTarget(db: DatabaseAdapter) {
   const people = await db.prepare("SELECT name, raw_relationships FROM people").all() as any[];
-  const archivedSet = new Set(people.map(p => p.name.toLowerCase()));
+  const archivedNamesList: string[] = people.map(p => p.name.trim().toLowerCase());
   
   // Also exclude people in queue (pending, processing, or ALREADY completed to avoid alias re-enqueuing)
   const queuedPeopleRows = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' OR status = 'processing' OR status = 'completed'").all() as any[];
-  queuedPeopleRows.forEach(t => archivedSet.add(t.target_name.toLowerCase()));
+  queuedPeopleRows.forEach(t => archivedNamesList.push(t.target_name.trim().toLowerCase()));
 
   // Also exclude previously failed people from automated picking (so they do not immediately retry automatically)
   const failedPeopleRows = await db.prepare("SELECT DISTINCT LOWER(target_name) as target_name FROM explore_queue WHERE status = 'error'").all() as any[];
-  failedPeopleRows.forEach((t: any) => archivedSet.add(t.target_name.toLowerCase()));
+  failedPeopleRows.forEach((t: any) => archivedNamesList.push(t.target_name.trim().toLowerCase()));
+
+  // Helper to matching preset name with database full names (handles middle dots & synonyms)
+  const isFigInDb = (poolName: string, archivedNames: string[]): boolean => {
+    const pName = poolName.trim().toLowerCase();
+    
+    const synonyms: Record<string, string[]> = {
+      "居里夫人": ["居里", "curie", "玛丽"],
+    };
+
+    for (const aName of archivedNames) {
+      if (aName === pName) return true;
+      
+      // If either name contains the other as substring (minimally 2 characters long to avoid fake 1-char matches)
+      if (aName.includes(pName) || pName.includes(aName)) return true;
+      
+      // Compare the last part separated by dot (e.g., "弗朗西斯科·戈雅" -> last part "戈雅")
+      const partsA = aName.split('·');
+      const lastPartA = partsA[partsA.length - 1];
+      const partsP = pName.split('·');
+      const lastPartP = partsP[partsP.length - 1];
+      if (lastPartA && lastPartP && lastPartA.length >= 2 && lastPartP.length >= 2) {
+        if (lastPartA === lastPartP) return true;
+      }
+
+      if (synonyms[poolName]) {
+        if (synonyms[poolName].some(syn => aName.includes(syn))) return true;
+      }
+    }
+    return false;
+  };
   
   const shuffle = (array: any[]) => {
     for (let i = array.length - 1; i > 0; i--) {
@@ -1327,7 +1357,7 @@ export async function pickTarget(db: DatabaseAdapter) {
   const poolUnarchived: string[] = [];
   for (const cat of CATEGORIES) {
       FIGURE_POOL[cat]?.forEach((n: string) => { 
-          if (!archivedSet.has(n.toLowerCase())) poolUnarchived.push(n); 
+          if (!isFigInDb(n, archivedNamesList)) poolUnarchived.push(n); 
       });
   }
   const uniquePoolUnarchived = Array.from(new Set(poolUnarchived));
@@ -1345,7 +1375,7 @@ export async function pickTarget(db: DatabaseAdapter) {
       rels.forEach((r: any) => {
         if (r.personName) {
            const lowName = r.personName.trim().toLowerCase();
-           if (!archivedSet.has(lowName)) {
+           if (!isFigInDb(r.personName, archivedNamesList)) {
               const existing = connectedCounts.get(lowName);
               if (existing) {
                   existing.count++;
