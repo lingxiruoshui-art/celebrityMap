@@ -5,7 +5,6 @@ import { D1DatabaseAdapter, DatabaseAdapter } from "./db.ts";
 import { CATEGORIES, FIGURE_POOL } from "./figuresPool.ts";
 import { EXPAND_CONNECTIONS_PROMPT, EXPAND_CONNECTIONS_SCHEMA } from "./services/aiService.ts";
 import { initExplorationState, doFinalizeInsert } from "./exploreStep.ts";
-import { sify } from "chinese-conv";
 
 const root = new Hono<{ 
   Bindings: { 
@@ -303,65 +302,7 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
           console.error("Failed to clean up empty-reason error records:", e);
         }
 
-        // Deduplicate and simplify existing names to simplified Simplified Chinese
-        try {
-          const allPeople = await db.prepare("SELECT id, name, views FROM people").all() as any[];
-          for (const p of allPeople) {
-            const tradName = p.name;
-            const simpName = sify(tradName).trim();
-            if (simpName !== tradName) {
-              console.log(`[Deduplication Migration] Found traditional name: "${tradName}", simplifying to "${simpName}"`);
-              const existingSimp = await db.prepare("SELECT id, views FROM people WHERE name = ?").get(simpName) as any;
-              if (existingSimp) {
-                const simpId = existingSimp.id;
-                const tradId = p.id;
-                const totalViews = (existingSimp.views || 0) + (p.views || 0);
-                
-                // Update views of simplified entity
-                await db.prepare("UPDATE people SET views = ? WHERE id = ?").run(totalViews, simpId);
-                
-                // Merge relationships of traditional entity to simplified entity
-                const checkRels = await db.prepare("SELECT id, person1_id, person2_id, relationship_type FROM relationships WHERE person1_id = ? OR person2_id = ?").all(tradId, tradId) as any[];
-                for (const r of checkRels) {
-                  const otherId = r.person1_id === tradId ? r.person2_id : r.person1_id;
-                  const isIncoming = r.person2_id === tradId;
-                  
-                  // Delete traditional relation to avoid duplicate/UNIQUE conflict on retry
-                  await db.prepare("DELETE FROM relationships WHERE id = ?").run(r.id);
-                  
-                  const p1 = Math.min(otherId, simpId);
-                  const p2 = Math.max(otherId, simpId);
-                  try {
-                    await db.prepare("INSERT INTO relationships (person1_id, person2_id, relationship_type) VALUES (?, ?, ?)").run(p1, p2, r.relationship_type);
-                  } catch (relErr) {
-                    // Ignore UNIQUE key errors if connection exists
-                  }
-                }
-                
-                // Delete traditional duplicate person record
-                await db.prepare("DELETE FROM people WHERE id = ?").run(tradId);
-              } else {
-                // Rename traditional name to simplified name
-                await db.prepare("UPDATE people SET name = ? WHERE id = ?").run(simpName, p.id);
-              }
-            }
-          }
-        } catch (migrErr) {
-          console.error("Deduplication database migration failed:", migrErr);
-        }
-
-        // Keep explore_queue items simplified as well
-        try {
-          const allQueues = await db.prepare("SELECT id, target_name FROM explore_queue WHERE status = 'pending' OR status = 'processing'").all() as any[];
-          for (const q of allQueues) {
-            const simpTarget = sify(q.target_name).trim();
-            if (simpTarget !== q.target_name) {
-              await db.prepare("UPDATE explore_queue SET target_name = ? WHERE id = ?").run(simpTarget, q.id);
-            }
-          }
-        } catch (eqMigrErr) {
-          console.error("Queue clean up migration failed:", eqMigrErr);
-        }
+        // 繁简体去重已迁移完成，此处于新环境略过
 
         // Clean up and deduplicate relationships table (ensure min/max ordering and remove duplicates)
         try {
@@ -398,7 +339,7 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
         try {
           const flatPool = Object.values(FIGURE_POOL).flat();
           for (const rawName of flatPool) {
-            const simpName = sify(rawName).trim();
+            const simpName = rawName.trim();
             await db.prepare("INSERT OR IGNORE INTO figure_pool_sync (preset_name, is_archived) VALUES (?, 0)").run(simpName);
           }
         } catch (poolLoadErr) {
@@ -1284,11 +1225,11 @@ app.post("/save-archive", async (c) => {
   const db = await getDb(c);
   let { name, data } = await c.req.json();
   if (!name) return c.json({ error: "Missing name" }, 400);
-  name = sify(name.trim());
+  name = name.trim();
   if (data && data.relationships && Array.isArray(data.relationships)) {
     data.relationships = data.relationships.map((rel: any) => ({
       ...rel,
-      personName: sify((rel.personName || "").trim())
+      personName: (rel.personName || "").trim()
     }));
   }
 
@@ -1643,7 +1584,7 @@ app.post("/archive-figure", async (c) => {
   }
 
   // Use the enqueue logic instead of direct processing
-  const targetName = sify((personName || "").trim());
+  const targetName = (personName || "").trim();
   if (!targetName) return c.json({ error: "Invalid target" }, 400);
   
   // Check if already in people table
@@ -1696,8 +1637,8 @@ app.post("/save-relationship", async (c) => {
   let { sourceName, targetName, relationshipType } = await c.req.json();
   if (!sourceName || !targetName || !relationshipType) return c.json({ error: "Missing info" }, 400);
 
-  sourceName = sify(sourceName.trim());
-  targetName = sify(targetName.trim());
+  sourceName = sourceName.trim();
+  targetName = targetName.trim();
 
   const p1 = await db.prepare("SELECT id FROM people WHERE name = ?").get(sourceName) as any;
   const p2 = await db.prepare("SELECT id FROM people WHERE name = ?").get(targetName) as any;
@@ -2029,7 +1970,7 @@ app.post("/internal/submit", async (c) => {
     const db = await getDb(c);
     const body = await c.req.json();
     const { taskId, success, personData, wikiMeta, error } = body;
-    const targetName = sify((body.targetName || "").trim());
+    const targetName = (body.targetName || "").trim();
     
     if (success) {
         // Validate effective information before proceeding
@@ -2299,7 +2240,7 @@ app.post("/explore/enqueue", async (c) => {
     
     let { targetName } = await c.req.json();
     if (!targetName) return c.json({ error: "Invalid target" }, 400);
-    targetName = sify(targetName.trim());
+    targetName = targetName.trim();
     
     // Check if already in people table
     const existingPerson = await db.prepare("SELECT id FROM people WHERE name = ? COLLATE NOCASE").get(targetName) as any;
@@ -2361,7 +2302,7 @@ app.post("/explore/start", async (c) => {
   }
 
   // Redirection: use enqueue for all exploration starts
-  const targetName = sify((target || "").trim());
+  const targetName = (target || "").trim();
   if (!targetName) return c.json({ error: "探索目标不能为空" }, 400);
 
   // Check if already in people table

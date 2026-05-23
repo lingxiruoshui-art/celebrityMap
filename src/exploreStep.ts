@@ -1,6 +1,5 @@
 import { DatabaseAdapter } from "./db.ts";
 import { ExploreState } from "./exploreTask.ts";
-import { sify } from "chinese-conv";
 
 async function fetchWikidataId(name: string): Promise<string | null> {
     const headers = { "User-Agent": "HistoricalArchiveApp/1.0" };
@@ -41,11 +40,11 @@ export async function initExplorationState(
 }
 
 export async function doFinalizeInsert(db: DatabaseAdapter, finalName: string, personData: any, wikiMeta: any, c: any, addRelationship: any, addLog: any, onDiscover?: (name: string, type: string) => Promise<void>) {
-    finalName = sify(finalName.trim());
+    finalName = finalName.trim();
     if (personData.relationships && Array.isArray(personData.relationships)) {
         personData.relationships = personData.relationships.map((rel: any) => ({
             ...rel,
-            personName: sify((rel.personName || "").trim())
+            personName: (rel.personName || "").trim()
         }));
     }
 
