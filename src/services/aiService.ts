@@ -5,7 +5,7 @@ let ai: GoogleGenAI | null = null;
 export function getGemini(apiKeyOverride?: string): GoogleGenAI {
   if (!ai || apiKeyOverride) {
     // Note: process.env.GEMINI_API_KEY is handled by the platform in the browser
-    const apiKey = apiKeyOverride || process.env.GEMINI_API_KEY || "";
+    const apiKey = apiKeyOverride || (typeof process !== "undefined" && process.env ? process.env.GEMINI_API_KEY : "") || "";
     ai = new GoogleGenAI({ apiKey });
   }
   return ai;

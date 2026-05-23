@@ -262,7 +262,7 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
           )`
         ];
         for (const q of initQueries) {
-          await db.prepare(q).run();
+          await db.exec(q);
         }
         
         const migrations = [
@@ -278,7 +278,7 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
           "CREATE INDEX IF NOT EXISTS idx_figure_pool_sync_wikidata_id ON figure_pool_sync(wikidata_id)"
         ];
         for (const m of migrations) {
-          try { await db.prepare(m).run(); } catch (e) {}
+          try { await db.exec(m); } catch (e) {}
         }
         
         // Clean up historic error records without logged reasons to give them another retry chance
