@@ -2411,10 +2411,10 @@ app.get("/admin/stats", async (c) => {
     // 4. Photo blacklist count
     try {
         const photoBlacklistRows = await db.prepare(`
-            SELECT target_name 
+            SELECT DISTINCT LOWER(target_name) as target_name 
             FROM explore_queue 
             WHERE status = 'error' 
-            GROUP BY target_name 
+            GROUP BY LOWER(target_name) 
             HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2
         `).all() as any[];
         photoBlacklistCount = photoBlacklistRows.length;
@@ -2426,10 +2426,10 @@ app.get("/admin/stats", async (c) => {
     // 5. Other blacklist count
     try {
         const otherBlacklistRows = await db.prepare(`
-            SELECT target_name 
+            SELECT DISTINCT LOWER(target_name) as target_name 
             FROM explore_queue 
             WHERE status = 'error' 
-            GROUP BY target_name 
+            GROUP BY LOWER(target_name) 
             HAVING (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 2
         `).all() as any[];
         otherBlacklistCount = otherBlacklistRows.length;
@@ -2441,10 +2441,10 @@ app.get("/admin/stats", async (c) => {
     // 6. Blacklist count
     try {
         const failedPeopleRows = await db.prepare(`
-            SELECT target_name 
+            SELECT DISTINCT LOWER(target_name) as target_name 
             FROM explore_queue 
             WHERE status = 'error' 
-            GROUP BY target_name 
+            GROUP BY LOWER(target_name) 
             HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2 
                OR (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 2
         `).all() as any[];
@@ -2615,40 +2615,6 @@ app.get("/admin/blacklist", async (c) => {
         names.push(`${target} (共失败 ${errRows.length} 次: ${reasons})`);
     }
     return c.json(names);
-});
-
-app.post("/admin/clear-blacklist-others", async (c) => {
-    const db = await getDb(c);
-    const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
-    if (!isAdmin) return c.json({ error: "Unauthorized" }, 401);
-
-    try {
-        const otherBlacklistRows = await db.prepare(`
-            SELECT DISTINCT LOWER(target_name) as target_name 
-            FROM explore_queue 
-            WHERE status = 'error' 
-            GROUP BY LOWER(target_name) 
-            HAVING (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 2
-        `).all() as any[];
-
-        const namesToClear = otherBlacklistRows.map(row => row.target_name);
-        
-        if (namesToClear.length > 0) {
-            for (const name of namesToClear) {
-                await db.prepare(`
-                    DELETE FROM explore_queue 
-                    WHERE LOWER(target_name) = ? 
-                      AND status = 'error' 
-                      AND NOT (reason LIKE '%缺少真实相片%')
-                `).run(name);
-            }
-        }
-
-        return c.json({ success: true, clearedCount: namesToClear.length, clearedNames: namesToClear });
-    } catch (err: any) {
-        console.error("Failed to clear other blacklist errors:", err);
-        return c.json({ success: false, error: err.message }, 500);
-    }
 });
 
 // Admin enqueues a target manually
