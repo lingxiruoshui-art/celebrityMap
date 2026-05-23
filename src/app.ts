@@ -315,6 +315,9 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
           try {
             await db.prepare("CREATE INDEX IF NOT EXISTS idx_figure_pool_sync_is_archived ON figure_pool_sync(is_archived)").run();
           } catch (e) {}
+          try {
+            await db.prepare("CREATE INDEX IF NOT EXISTS idx_figure_pool_sync_archived_id ON figure_pool_sync(archived_person_id)").run();
+          } catch (e) {}
 
           // Seed missing preset figures if table is empty
           try {
@@ -438,7 +441,8 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
           "CREATE INDEX IF NOT EXISTS idx_relationships_person2 ON relationships(person2_id)",
           "CREATE INDEX IF NOT EXISTS idx_figure_pool_sync_is_archived ON figure_pool_sync(is_archived)",
           "CREATE INDEX IF NOT EXISTS idx_people_wikidata_id ON people(wikidata_id)",
-          "CREATE INDEX IF NOT EXISTS idx_figure_pool_sync_wikidata_id ON figure_pool_sync(wikidata_id)"
+          "CREATE INDEX IF NOT EXISTS idx_figure_pool_sync_wikidata_id ON figure_pool_sync(wikidata_id)",
+          "CREATE INDEX IF NOT EXISTS idx_figure_pool_sync_archived_id ON figure_pool_sync(archived_person_id)"
         ];
         for (const q of indexQueries) {
           try {
@@ -1378,10 +1382,10 @@ app.get("/archive", async (c) => {
   let peopleQuery = `
     SELECT p.*, 
     (SELECT COUNT(*) FROM relationships WHERE person1_id = p.id OR person2_id = p.id) as connectionsCount,
-    (SELECT MIN(f.preset_name) FROM figure_pool_sync f WHERE 
-       p.id = f.archived_person_id 
-       OR (p.wikidata_id = f.wikidata_id AND p.wikidata_id IS NOT NULL AND p.wikidata_id != '')
-       OR LOWER(p.name) = LOWER(f.preset_name)
+    COALESCE(
+       (SELECT f.preset_name FROM figure_pool_sync f WHERE f.archived_person_id = p.id LIMIT 1),
+       (SELECT f.preset_name FROM figure_pool_sync f WHERE p.wikidata_id IS NOT NULL AND p.wikidata_id != '' AND f.wikidata_id = p.wikidata_id LIMIT 1),
+       (SELECT f.preset_name FROM figure_pool_sync f WHERE f.preset_name = p.name LIMIT 1)
     ) as preset_name
     FROM people p
   `;
@@ -1779,13 +1783,13 @@ app.post("/archiver/generate-target", async (c) => {
   const db = await getDb(c);
   const samplePeople = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 20").all() as any[];
   
-  // Exclude blacklisted people (wikidata photo error >= 2, or other errors >= 2)
+  // Exclude blacklisted people (wikidata photo error >= 1, or other errors >= 2)
   const failedPeopleRows = await db.prepare(`
     SELECT target_name 
     FROM explore_queue 
     WHERE status = 'error' 
     GROUP BY LOWER(target_name) 
-    HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2 
+    HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 1 
        OR (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 2
   `).all() as any[];
   const allExcludes = [...samplePeople.map((p: any) => p.name), ...failedPeopleRows.map((p: any) => p.target_name)];
@@ -1851,9 +1855,9 @@ app.post("/archive-figure", async (c) => {
   const totalErrors = errStats?.total_errors || 0;
   const photoErrors = errStats?.photo_errors || 0;
   const otherErrors = totalErrors - photoErrors;
-  if (photoErrors >= 2 || otherErrors >= 2) {
+  if (photoErrors >= 1 || otherErrors >= 2) {
       let bReason = "";
-      if (photoErrors >= 2) {
+      if (photoErrors >= 1) {
           bReason = `Wikidata 缺少相片入库失败达 ${photoErrors} 次`;
       } else {
           const wikiErrorsRows = await db.prepare(`
@@ -2415,7 +2419,7 @@ app.get("/admin/stats", async (c) => {
             FROM explore_queue 
             WHERE status = 'error' 
             GROUP BY LOWER(target_name) 
-            HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2
+            HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 1
         `).all() as any[];
         photoBlacklistCount = photoBlacklistRows.length;
     } catch (e: any) {
@@ -2445,7 +2449,7 @@ app.get("/admin/stats", async (c) => {
             FROM explore_queue 
             WHERE status = 'error' 
             GROUP BY LOWER(target_name) 
-            HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2 
+            HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 1 
                OR (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 2
         `).all() as any[];
         blacklistCount = failedPeopleRows.length;
@@ -2524,10 +2528,10 @@ app.get("/admin/export-alignment", async (c) => {
     try {
         const people = await db.prepare(`
             SELECT p.*,
-            (SELECT MIN(f.preset_name) FROM figure_pool_sync f WHERE 
-               p.id = f.archived_person_id 
-               OR (p.wikidata_id = f.wikidata_id AND p.wikidata_id IS NOT NULL AND p.wikidata_id != '')
-               OR LOWER(p.name) = LOWER(f.preset_name)
+            COALESCE(
+               (SELECT f.preset_name FROM figure_pool_sync f WHERE f.archived_person_id = p.id LIMIT 1),
+               (SELECT f.preset_name FROM figure_pool_sync f WHERE p.wikidata_id IS NOT NULL AND p.wikidata_id != '' AND f.wikidata_id = p.wikidata_id LIMIT 1),
+               (SELECT f.preset_name FROM figure_pool_sync f WHERE f.preset_name = p.name LIMIT 1)
             ) as preset_name
             FROM people p
             ORDER BY p.id ASC
@@ -2583,7 +2587,7 @@ app.get("/admin/blacklist", async (c) => {
             FROM explore_queue 
             WHERE status = 'error' 
             GROUP BY LOWER(target_name) 
-            HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2
+            HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 1
         `).all() as any[];
     } else if (type === "others") {
         rows = await db.prepare(`
@@ -2599,7 +2603,7 @@ app.get("/admin/blacklist", async (c) => {
             FROM explore_queue 
             WHERE status = 'error' 
             GROUP BY LOWER(target_name) 
-            HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 2 
+            HAVING SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END) >= 1 
                OR (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 2
         `).all() as any[];
     }
@@ -2645,9 +2649,9 @@ app.post("/explore/enqueue", async (c) => {
     const totalErrors = errStats?.total_errors || 0;
     const photoErrors = errStats?.photo_errors || 0;
     const otherErrors = totalErrors - photoErrors;
-    if (photoErrors >= 2 || otherErrors >= 2) {
+    if (photoErrors >= 1 || otherErrors >= 2) {
         let bReason = "";
-        if (photoErrors >= 2) {
+        if (photoErrors >= 1) {
             bReason = `Wikidata 缺少相片入库失败达 ${photoErrors} 次`;
         } else {
             const wikiErrorsRows = await db.prepare(`
@@ -2723,9 +2727,9 @@ app.post("/explore/start", async (c) => {
   const totalErrors = errStats?.total_errors || 0;
   const photoErrors = errStats?.photo_errors || 0;
   const otherErrors = totalErrors - photoErrors;
-  if (photoErrors >= 2 || otherErrors >= 2) {
+  if (photoErrors >= 1 || otherErrors >= 2) {
       let bReason = "";
-      if (photoErrors >= 2) {
+      if (photoErrors >= 1) {
           bReason = `Wikidata 缺少相片入库失败达 ${photoErrors} 次`;
       } else {
           const wikiErrorsRows = await db.prepare(`

@@ -48,7 +48,7 @@ export default function App() {
     if (pendingSelectName && data.people.length > 0) {
       const person = data.people.find(p => p.name === pendingSelectName);
       if (person) {
-        setSelectedPersonId(person.id);
+        handleSelectPerson(person.id, true);
         setPendingSelectName(null);
       }
     }
@@ -74,9 +74,15 @@ export default function App() {
     }
   };
 
+  const handleSelectPerson = (id: number, isExplicit = true) => {
+    setSelectedPersonId(id);
+    if (isExplicit) {
+      incrementView(id);
+    }
+  };
+
   useEffect(() => {
     if (selectedPersonId) {
-      incrementView(selectedPersonId);
       setConnectionPage(1); // Reset pagination when person changes
     }
   }, [selectedPersonId]);
@@ -102,7 +108,7 @@ export default function App() {
       const json = await res.json() as any;
       setData(json);
       if (json.people.length > 0 && selectedPersonId === null) {
-        setSelectedPersonId(json.people[0].id);
+        handleSelectPerson(json.people[0].id, false);
       }
     } catch (err) {
       console.error(err);
@@ -280,7 +286,7 @@ export default function App() {
                   onChange={(e) => {
                      const id = parseInt(e.target.value);
                      if (!isNaN(id)) {
-                        setSelectedPersonId(id);
+                        handleSelectPerson(id, true);
                         setDiscoveryPath(null);
                         setSearchQuery("");
                      }
@@ -322,7 +328,7 @@ export default function App() {
                       <button
                         key={p.id}
                         onClick={() => {
-                          setSelectedPersonId(p.id);
+                          handleSelectPerson(p.id, true);
                           setDiscoveryPath(null);
                           setSearchQuery("");
                         }}
@@ -453,7 +459,7 @@ export default function App() {
                           key={i}
                           onClick={() => {
                             if (archivedPerson) {
-                              setSelectedPersonId(archivedPerson.id);
+                              handleSelectPerson(archivedPerson.id, true);
                               setDiscoveryPath(null);
                             }
                           }}
@@ -613,7 +619,7 @@ export default function App() {
                   onRefreshArchive={fetchArchive}
                   onSelectPerson={(id, name) => {
                     if (id > 0) {
-                      setSelectedPersonId(id);
+                      handleSelectPerson(id, true);
                     } else if (name) {
                       setPendingSelectName(name);
                     }
@@ -647,7 +653,7 @@ export default function App() {
               relationships={data.relationships}
               selectedPersonId={selectedPersonId}
               onSelectPerson={(id) => {
-                setSelectedPersonId(id);
+                handleSelectPerson(id, true);
                 setDiscoveryPath(null);
               }}
               discoveryPath={discoveryPath}
@@ -687,7 +693,7 @@ export default function App() {
           onPreviewPerson={(id, name) => {
             setIsAdminOpen(false);
             fetchArchive();
-            if (id > 0) setSelectedPersonId(id);
+            if (id > 0) handleSelectPerson(id, true);
             else if (name) setPendingSelectName(name);
           }}
         />

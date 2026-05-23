@@ -1095,7 +1095,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                     <div className="bg-slate-100 p-2.5 rounded-lg col-span-2 flex flex-col gap-2">
                         <div className="flex items-center justify-between border-b border-dashed border-slate-200 pb-2">
                             <div>
-                                <div className="text-slate-500">缺乏照片黑名单 (失败2次及以上)</div>
+                                <div className="text-slate-500">缺乏照片黑名单 (失败1次及以上)</div>
                                 <div className="font-bold text-red-600 mt-0.5">{adminStats.photoBlacklistCount || 0} 人</div>
                             </div>
                             <button
