@@ -524,7 +524,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                     }
                     return res.json();
                 })
-                .then(data => {
+                .then((data: any) => {
                     if (data.queryErrors) {
                         console.error("Stats API returned partial errors:", data.queryErrors);
                         setErrorMsg(`Stats DB Errors: ${JSON.stringify(data.queryErrors)}`);

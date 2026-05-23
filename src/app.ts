@@ -80,6 +80,7 @@ let dbInitialized = false;
 let initPromise: Promise<void> | null = null;
 
 async function runBackgroundAlignment(db: DatabaseAdapter) {
+  let stats = { newlyAlignedPeople: 0, newlyAlignedPool: 0, remainPeople: 0, remainPool: 0 };
   try {
     console.log("[Wikidata Sync] Starting background Wikidata alignment...");
     
@@ -94,6 +95,7 @@ async function runBackgroundAlignment(db: DatabaseAdapter) {
       const wid = await resolveWikidataId(p.name);
       if (wid) {
         await db.prepare("UPDATE people SET wikidata_id = ? WHERE id = ?").run(wid, p.id);
+        stats.newlyAlignedPeople++;
         console.log(`[Wikidata Sync] Resolved person "${p.name}" to Wikidata ID: ${wid}`);
       }
       // Small delay of 100ms to be extremely polite to API
@@ -108,6 +110,7 @@ async function runBackgroundAlignment(db: DatabaseAdapter) {
       const wid = await resolveWikidataId(pr.preset_name);
       if (wid) {
         await db.prepare("UPDATE figure_pool_sync SET wikidata_id = ? WHERE preset_name = ?").run(wid, pr.preset_name);
+        stats.newlyAlignedPool++;
         console.log(`[Wikidata Sync] Resolved preset "${pr.preset_name}" to Wikidata ID: ${wid}`);
       }
       // Small delay of 100ms to be extremely polite to API
@@ -180,10 +183,16 @@ async function runBackgroundAlignment(db: DatabaseAdapter) {
       }
     }
 
+    const remainPeopleRes = await db.prepare("SELECT COUNT(*) as count FROM people WHERE wikidata_id IS NULL").first() as any;
+    const remainPoolRes = await db.prepare("SELECT COUNT(*) as count FROM figure_pool_sync WHERE wikidata_id IS NULL").first() as any;
+    stats.remainPeople = remainPeopleRes?.count || 0;
+    stats.remainPool = remainPoolRes?.count || 0;
+
     console.log(`[Wikidata Sync] Background alignment complete.`);
   } catch (err) {
     console.error("[Wikidata Sync] Error in background alignment:", err);
   }
+  return stats;
 }
 
 export async function getDb(c: any): Promise<DatabaseAdapter> {
@@ -289,35 +298,16 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
             archived_name TEXT,
             wikidata_id TEXT,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-          )`
-        ];
-        for (const q of initQueries) {
-          await db.prepare(q).run();
-        }
-        
-        const migrations = [
-          "ALTER TABLE people ADD COLUMN image_url TEXT",
-          "ALTER TABLE people ADD COLUMN lifespan TEXT",
-          "ALTER TABLE people ADD COLUMN birthplace TEXT",
-          "ALTER TABLE explore_queue ADD COLUMN reason TEXT",
-          "ALTER TABLE people ADD COLUMN wikidata_id TEXT",
-          "ALTER TABLE figure_pool_sync ADD COLUMN wikidata_id TEXT",
+          )`,
           "CREATE INDEX IF NOT EXISTS idx_relationships_person2 ON relationships(person2_id)",
           "CREATE INDEX IF NOT EXISTS idx_figure_pool_sync_is_archived ON figure_pool_sync(is_archived)",
           "CREATE INDEX IF NOT EXISTS idx_people_wikidata_id ON people(wikidata_id)",
           "CREATE INDEX IF NOT EXISTS idx_figure_pool_sync_wikidata_id ON figure_pool_sync(wikidata_id)"
         ];
-        for (const m of migrations) {
-          try { await db.prepare(m).run(); } catch (e) {}
+        for (const q of initQueries) {
+          await db.prepare(q).run();
         }
         
-        // Clean up historic error records without logged reasons to give them another retry chance
-        try {
-          await db.prepare("DELETE FROM explore_queue WHERE status = 'error' AND (reason IS NULL OR reason = '')").run();
-        } catch (e) {
-          console.error("Failed to clean up empty-reason error records:", e);
-        }
-
         // Mark database initialization as completed to bypass on future cold starts
         try {
           await db.prepare("INSERT OR REPLACE INTO config (key, value) VALUES ('init_done_v2', 'true')").run();
@@ -1515,7 +1505,7 @@ app.post("/archiver/generate-target", async (c) => {
   const db = await getDb(c);
   const samplePeople = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 20").all() as any[];
   
-  // Exclude blacklisted people (wikidata photo error >= 2, or other errors >= 3)
+  // Exclude blacklisted people (wikidata photo error >= 2, or other errors >= 2)
   const failedPeopleRows = await db.prepare(`
     SELECT target_name 
     FROM explore_queue 
@@ -1577,7 +1567,7 @@ app.post("/archive-figure", async (c) => {
   const totalErrors = errStats?.total_errors || 0;
   const photoErrors = errStats?.photo_errors || 0;
   const otherErrors = totalErrors - photoErrors;
-  if (photoErrors >= 2 || otherErrors >= 3) {
+  if (photoErrors >= 2 || otherErrors >= 2) {
       const bReason = photoErrors >= 2 ? `Wikidata 缺少相片入库失败达 ${photoErrors} 次` : `AI调用/系统错误落库失败达 ${otherErrors} 次`;
       return c.json({ error: `[${targetName}] 已触碰时空偏航熔断规则（${bReason}），已被系统自动拦截，不可再入库。` }, 400);
   }
@@ -2139,7 +2129,7 @@ app.get("/admin/stats", async (c) => {
             FROM explore_queue 
             WHERE status = 'error' 
             GROUP BY target_name 
-            HAVING (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 3
+            HAVING (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 2
         `).all() as any[];
         otherBlacklistCount = otherBlacklistRows.length;
     } catch (e: any) {
@@ -2180,18 +2170,17 @@ app.post("/admin/realign-wikidata", async (c) => {
     const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
     if (!isAdmin) return c.json({ error: "Unauthorized" }, 401);
 
-    // Run in background so it doesn't block HTTP response or timeout due to Wikidata rate limits/delays
-    const alignTask = runBackgroundAlignment(db).catch(err => {
+    let stats;
+    try {
+        stats = await runBackgroundAlignment(db);
+    } catch (err) {
         console.error("[Wikidata Sync Manual] Error during manual alignment:", err);
-    });
-    
-    if (c.executionCtx && typeof c.executionCtx.waitUntil === "function") {
-        c.executionCtx.waitUntil(alignTask);
+        return c.json({ success: false, error: "Alignment failed. Check logs." }, 500);
     }
 
     return c.json({ 
         success: true, 
-        message: "全量是对齐任务已在后台启动！(因 Cloudflare Workers 限制，每次点击最多处理 25 个未对齐人物，请根据后台数据分批点击)" 
+        message: `对齐完成！本次新增对齐人物: ${stats?.newlyAlignedPeople}个, 预设池: ${stats?.newlyAlignedPool}个。剩余未对齐人物: ${stats?.remainPeople}个, 预设池未对齐: ${stats?.remainPool}个。` 
     });
 });
 
@@ -2216,7 +2205,7 @@ app.get("/admin/blacklist", async (c) => {
             FROM explore_queue 
             WHERE status = 'error' 
             GROUP BY LOWER(target_name) 
-            HAVING (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 3
+            HAVING (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 2
         `).all() as any[];
     } else {
         rows = await db.prepare(`
@@ -2270,7 +2259,7 @@ app.post("/explore/enqueue", async (c) => {
     const totalErrors = errStats?.total_errors || 0;
     const photoErrors = errStats?.photo_errors || 0;
     const otherErrors = totalErrors - photoErrors;
-    if (photoErrors >= 2 || otherErrors >= 3) {
+    if (photoErrors >= 2 || otherErrors >= 2) {
         const bReason = photoErrors >= 2 ? `Wikidata 缺少相片入库失败达 ${photoErrors} 次` : `AI调用/系统错误落库失败达 ${otherErrors} 次`;
         return c.json({ error: `[${targetName}] 已触碰时空偏航熔断规则（${bReason}），已被系统自动拦截，不可再入库。` }, 400);
     }
@@ -2333,7 +2322,7 @@ app.post("/explore/start", async (c) => {
   const totalErrors = errStats?.total_errors || 0;
   const photoErrors = errStats?.photo_errors || 0;
   const otherErrors = totalErrors - photoErrors;
-  if (photoErrors >= 2 || otherErrors >= 3) {
+  if (photoErrors >= 2 || otherErrors >= 2) {
       const bReason = photoErrors >= 2 ? `Wikidata 缺少相片入库失败达 ${photoErrors} 次` : `AI调用/系统错误落库失败达 ${otherErrors} 次`;
       return c.json({ error: `[${targetName}] 已触碰时空偏航熔断规则（${bReason}），已被系统自动拦截，不可再入库。` }, 400);
   }
