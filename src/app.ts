@@ -80,7 +80,7 @@ let dbInitialized = false;
 let initPromise: Promise<void> | null = null;
 
 async function runBackgroundAlignment(db: DatabaseAdapter) {
-  let stats = { newlyAlignedPeople: 0, newlyAlignedPool: 0, remainPeople: 0, remainPool: 0 };
+  let stats = { newlyAlignedPeople: 0, newlyAlignedPool: 0, remainPeople: 0, remainPool: 0, totalPeople: 0, alignedPeople: 0 };
   try {
     console.log("[Wikidata Sync] Starting background Wikidata alignment...");
     
@@ -229,6 +229,11 @@ async function runBackgroundAlignment(db: DatabaseAdapter) {
     const remainPoolRes = await db.prepare("SELECT COUNT(*) as count FROM figure_pool_sync WHERE wikidata_id IS NULL").get() as any;
     stats.remainPeople = remainPeopleRes?.count || 0;
     stats.remainPool = remainPoolRes?.count || 0;
+
+    const totalPeopleRes = await db.prepare("SELECT COUNT(*) as count FROM people").get() as any;
+    const alignedPeopleRes = await db.prepare("SELECT COUNT(*) as count FROM people WHERE wikidata_id IS NOT NULL").get() as any;
+    stats.totalPeople = totalPeopleRes?.count || 0;
+    stats.alignedPeople = alignedPeopleRes?.count || 0;
 
     console.log(`[Wikidata Sync] Background alignment complete.`);
   } catch (err) {
@@ -2326,7 +2331,7 @@ app.post("/admin/realign-wikidata", async (c) => {
 
     return c.json({ 
         success: true, 
-        message: `对齐完成！本次新增对齐人物: ${stats?.newlyAlignedPeople}个, 预设池: ${stats?.newlyAlignedPool}个。剩余未对齐人物: ${stats?.remainPeople}个, 预设池未对齐: ${stats?.remainPool}个。` 
+        message: `对齐完成！已入库总人数: ${stats?.totalPeople || 0} 人，已对齐: ${stats?.alignedPeople || 0} 人，本次对齐: ${stats?.newlyAlignedPeople || 0} 人 (预设池: ${stats?.newlyAlignedPool || 0} 个)。` 
     });
 });
 
