@@ -125,7 +125,16 @@ export default function NetworkGraph({
 
   const filteredRelationships = useMemo(() => {
     const nodeIds = new Set(filteredNodes.map(p => p.id));
-    return relationships.filter(r => nodeIds.has(r.person1_id) && nodeIds.has(r.person2_id));
+    const seen = new Set<string>();
+    return relationships.filter(r => {
+      if (!nodeIds.has(r.person1_id) || !nodeIds.has(r.person2_id)) return false;
+      const min = Math.min(r.person1_id, r.person2_id);
+      const max = Math.max(r.person1_id, r.person2_id);
+      const key = `${min}_${max}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   }, [filteredNodes, relationships]);
 
   useEffect(() => {

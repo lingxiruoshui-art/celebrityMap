@@ -122,21 +122,28 @@ export default function App() {
     if (!selectedPerson) return [];
 
     // 1. Get from relationships table
-    const tableConnections = data.relationships
+    const tableConnections: { personName: string; relationshipType: string; archivedPerson: any }[] = [];
+    const seenNames = new Set<string>();
+
+    data.relationships
       .filter(
         (r) =>
           r.person1_id === selectedPerson.id ||
           r.person2_id === selectedPerson.id,
       )
-      .map((r) => {
+      .forEach((r) => {
         const otherId =
           r.person1_id === selectedPerson.id ? r.person2_id : r.person1_id;
         const otherPerson = data.people.find((p) => p.id === otherId);
-        return {
-          personName: otherPerson?.name || "未知",
-          relationshipType: r.relationship_type,
-          archivedPerson: otherPerson,
-        };
+        const name = otherPerson?.name || "未知";
+        if (name && name !== "未知" && !seenNames.has(name)) {
+          seenNames.add(name);
+          tableConnections.push({
+            personName: name,
+            relationshipType: r.relationship_type,
+            archivedPerson: otherPerson,
+          });
+        }
       });
 
     // 2. Get from raw_relationships (might have un-archived people)
@@ -150,7 +157,8 @@ export default function App() {
     // Merge them, avoiding duplicates by name
     const merged = [...tableConnections];
     rawRels.forEach((rr) => {
-      if (rr.personName && rr.personName !== "undefined" && !merged.some((m) => m.personName === rr.personName)) {
+      if (rr.personName && rr.personName !== "undefined" && !seenNames.has(rr.personName)) {
+        seenNames.add(rr.personName);
         const archived = data.people.find((p) => p.name === rr.personName);
         merged.push({
           personName: rr.personName,

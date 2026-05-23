@@ -201,8 +201,8 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
                   // Delete traditional relation to avoid duplicate/UNIQUE conflict on retry
                   await db.prepare("DELETE FROM relationships WHERE id = ?").run(r.id);
                   
-                  const p1 = isIncoming ? otherId : simpId;
-                  const p2 = isIncoming ? simpId : otherId;
+                  const p1 = Math.min(otherId, simpId);
+                  const p2 = Math.max(otherId, simpId);
                   try {
                     await db.prepare("INSERT INTO relationships (person1_id, person2_id, relationship_type) VALUES (?, ?, ?)").run(p1, p2, r.relationship_type);
                   } catch (relErr) {
@@ -233,6 +233,37 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
           }
         } catch (eqMigrErr) {
           console.error("Queue clean up migration failed:", eqMigrErr);
+        }
+
+        // Clean up and deduplicate relationships table (ensure min/max ordering and remove duplicates)
+        try {
+          const allRels = await db.prepare("SELECT * FROM relationships").all() as any[];
+          const seenRels = new Set<string>();
+          for (const r of allRels) {
+            const p1 = r.person1_id;
+            const p2 = r.person2_id;
+            const min = Math.min(p1, p2);
+            const max = Math.max(p1, p2);
+            const key = `${min}_${max}`;
+            
+            if (seenRels.has(key)) {
+              // This is a duplicate relationship, let's delete it
+              await db.prepare("DELETE FROM relationships WHERE id = ?").run(r.id);
+            } else {
+              seenRels.add(key);
+              if (p1 !== min || p2 !== max) {
+                // Wrong column order (p1 > p2), update order
+                await db.prepare("DELETE FROM relationships WHERE id = ?").run(r.id);
+                try {
+                  await db.prepare("INSERT INTO relationships (person1_id, person2_id, relationship_type) VALUES (?, ?, ?)").run(min, max, r.relationship_type);
+                } catch (insErr) {
+                  // If it conflicts/fails, we just deleted the duplicate, so that's perfect
+                }
+              }
+            }
+          }
+        } catch (relMigrErr) {
+          console.error("Relationships clean up/deduplication failed:", relMigrErr);
         }
 
         dbInitialized = true;
