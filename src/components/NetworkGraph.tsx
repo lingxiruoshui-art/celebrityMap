@@ -260,9 +260,9 @@ export default function NetworkGraph({
       .attr("cx", "30%")
       .attr("cy", "30%")
       .attr("r", "70%");
-    spherePathGradient.append("stop").attr("offset", "0%").attr("stop-color", "#67e8f9");
-    spherePathGradient.append("stop").attr("offset", "60%").attr("stop-color", "#06b6d4");
-    spherePathGradient.append("stop").attr("offset", "100%").attr("stop-color", "#0891b2");
+    spherePathGradient.append("stop").attr("offset", "0%").attr("stop-color", "#a7f3d0");
+    spherePathGradient.append("stop").attr("offset", "60%").attr("stop-color", "#10b981");
+    spherePathGradient.append("stop").attr("offset", "100%").attr("stop-color", "#047857");
 
     const sphereNewestGradient = defs.append("radialGradient")
       .attr("id", "sphere-newest")
@@ -624,7 +624,7 @@ export default function NetworkGraph({
         })
         .attr("stroke", (d: any) => {
           const inP = hasPath && discoveryPath && discoveryPath.some(p => p.name === d.name);
-          if (inP) return "#4f46e5";
+          if (inP) return "#047857";
           if (d.id === activeId) return "#7c3aed";
           const isNeighbor = !hasPath && activeId && links.some(l => 
             (l.sourcePerson.id === activeId && l.targetPerson.id === d.id) || 

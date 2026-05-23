@@ -1817,7 +1817,22 @@ app.post("/archive-figure", async (c) => {
   const photoErrors = errStats?.photo_errors || 0;
   const otherErrors = totalErrors - photoErrors;
   if (photoErrors >= 2 || otherErrors >= 2) {
-      const bReason = photoErrors >= 2 ? `Wikidata 缺少相片入库失败达 ${photoErrors} 次` : `AI调用/系统错误落库失败达 ${otherErrors} 次`;
+      let bReason = "";
+      if (photoErrors >= 2) {
+          bReason = `Wikidata 缺少相片入库失败达 ${photoErrors} 次`;
+      } else {
+          const wikiErrorsRows = await db.prepare(`
+              SELECT COUNT(*) as count 
+              FROM explore_queue 
+              WHERE LOWER(target_name) = ? AND status = 'error' AND reason LIKE '%Wikidata ID%'
+          `).get(targetName.toLowerCase()) as { count: number };
+          const wikiErrors = wikiErrorsRows?.count || 0;
+          if (wikiErrors >= 2) {
+              bReason = `无法对齐 Wikidata ID 失败达 ${wikiErrors} 次`;
+          } else {
+              bReason = `AI调用/系统错误落库失败达 ${otherErrors} 次`;
+          }
+      }
       return c.json({ error: `[${targetName}] 已触碰时空偏航熔断规则（${bReason}），已被系统自动拦截，不可再入库。` }, 400);
   }
   
@@ -2203,10 +2218,6 @@ app.post("/internal/submit", async (c) => {
              return c.json({ success: false, error: reason });
         }
 
-        // Mark task as completed
-        if (taskId) {
-            await db.prepare("UPDATE explore_queue SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(taskId);
-        }
         await updateExplorationState(db, { status: "running" }, { msg: `Worker 提交数据成功，开始进行同步落库 (${targetName})`, type: "api" });
         
         const finalizeLogs: any[] = [];
@@ -2284,9 +2295,15 @@ app.post("/internal/submit", async (c) => {
             } else {
                 await updateExplorationState(db, { status: "success", newArrivals: [targetName] }, { msg: `任务落库成功，[${targetName}] 正式入驻中心档案库。`, type: "api" });
             }
+            if (taskId) {
+                await db.prepare("UPDATE explore_queue SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(taskId);
+            }
             return c.json({ success: true, serverLogs: finalizeLogs });
         } catch (e: any) {
             console.error("Save error:", e);
+            if (taskId) {
+                await db.prepare("UPDATE explore_queue SET status = 'error', reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run("落库失败: " + e.message, taskId);
+            }
             await updateExplorationState(db, { status: "error", error: e.message }, { msg: `任务落库失败: ${e.message}`, type: "error" });
             return c.json({ success: false, error: e.message });
         }
@@ -2594,7 +2611,22 @@ app.post("/explore/enqueue", async (c) => {
     const photoErrors = errStats?.photo_errors || 0;
     const otherErrors = totalErrors - photoErrors;
     if (photoErrors >= 2 || otherErrors >= 2) {
-        const bReason = photoErrors >= 2 ? `Wikidata 缺少相片入库失败达 ${photoErrors} 次` : `AI调用/系统错误落库失败达 ${otherErrors} 次`;
+        let bReason = "";
+        if (photoErrors >= 2) {
+            bReason = `Wikidata 缺少相片入库失败达 ${photoErrors} 次`;
+        } else {
+            const wikiErrorsRows = await db.prepare(`
+                SELECT COUNT(*) as count 
+                FROM explore_queue 
+                WHERE LOWER(target_name) = ? AND status = 'error' AND reason LIKE '%Wikidata ID%'
+            `).get(targetName.toLowerCase()) as { count: number };
+            const wikiErrors = wikiErrorsRows?.count || 0;
+            if (wikiErrors >= 2) {
+                bReason = `无法对齐 Wikidata ID 失败达 ${wikiErrors} 次`;
+            } else {
+                bReason = `AI调用/系统错误落库失败达 ${otherErrors} 次`;
+            }
+        }
         return c.json({ error: `[${targetName}] 已触碰时空偏航熔断规则（${bReason}），已被系统自动拦截，不可再入库。` }, 400);
     }
     
@@ -2657,7 +2689,22 @@ app.post("/explore/start", async (c) => {
   const photoErrors = errStats?.photo_errors || 0;
   const otherErrors = totalErrors - photoErrors;
   if (photoErrors >= 2 || otherErrors >= 2) {
-      const bReason = photoErrors >= 2 ? `Wikidata 缺少相片入库失败达 ${photoErrors} 次` : `AI调用/系统错误落库失败达 ${otherErrors} 次`;
+      let bReason = "";
+      if (photoErrors >= 2) {
+          bReason = `Wikidata 缺少相片入库失败达 ${photoErrors} 次`;
+      } else {
+          const wikiErrorsRows = await db.prepare(`
+              SELECT COUNT(*) as count 
+              FROM explore_queue 
+              WHERE LOWER(target_name) = ? AND status = 'error' AND reason LIKE '%Wikidata ID%'
+          `).get(targetName.toLowerCase()) as { count: number };
+          const wikiErrors = wikiErrorsRows?.count || 0;
+          if (wikiErrors >= 2) {
+              bReason = `无法对齐 Wikidata ID 失败达 ${wikiErrors} 次`;
+          } else {
+              bReason = `AI调用/系统错误落库失败达 ${otherErrors} 次`;
+          }
+      }
       return c.json({ error: `[${targetName}] 已触碰时空偏航熔断规则（${bReason}），已被系统自动拦截，不可再入库。` }, 400);
   }
 

@@ -138,6 +138,7 @@ export async function initExplorationState(
 
 export async function doFinalizeInsert(db: DatabaseAdapter, finalName: string, personData: any, wikiMeta: any, c: any, addRelationship: any, addLog: any, onDiscover?: (name: string, type: string) => Promise<void>) {
     finalName = sify(finalName.trim());
+    const originalName = finalName;
     if (personData.relationships && Array.isArray(personData.relationships)) {
         personData.relationships = personData.relationships.map((rel: any) => ({
             ...rel,
@@ -167,6 +168,9 @@ export async function doFinalizeInsert(db: DatabaseAdapter, finalName: string, p
     let wikidataId = wikiMeta?.wikidataId || null;
     if (!wikidataId) {
         wikidataId = await fetchWikidataId(finalName);
+    }
+    if (!wikidataId) {
+        throw new Error("未匹配到 Wikidata ID (无法对齐)");
     }
 
     // Check if exists either by normalized name or match by Wikidata ID (synonyms)
@@ -218,12 +222,18 @@ export async function doFinalizeInsert(db: DatabaseAdapter, finalName: string, p
                 SELECT 1 
                 FROM json_each(people.raw_relationships) 
                 WHERE LOWER(json_extract(value, '$.personName')) = LOWER(?)
+                   OR LOWER(json_extract(value, '$.personName')) = LOWER(?)
               )
-        `).all(newId, finalName) as any[];
+        `).all(newId, finalName, originalName) as any[];
         for (const p of previousMentions) {
             try {
                 const rels = JSON.parse(p.raw_relationships || "[]");
-                const matchingRel = rels.find((r: any) => r.personName === finalName);
+                const matchingRel = rels.find((r: any) => 
+                    r.personName && (
+                        r.personName.toLowerCase() === finalName.toLowerCase() || 
+                        r.personName.toLowerCase() === originalName.toLowerCase()
+                    )
+                );
                 if (matchingRel) await addRelationship(db, p.id, newId, matchingRel.relationshipType);
             } catch(e) {}
         }
