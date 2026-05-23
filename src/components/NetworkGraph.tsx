@@ -500,8 +500,18 @@ export default function NetworkGraph({
         const hasPath = discoveryPath && discoveryPath.length > 1;
         linkElements
           .attr("stroke", (l: any) => (hasPath && l.inPath) ? "#10b981" : ((l.sourcePerson.id === d.id || l.targetPerson.id === d.id) ? "#8b5cf6" : "#475569"))
-          .attr("stroke-opacity", (l: any) => (l.sourcePerson.id === d.id || l.targetPerson.id === d.id) ? 1 : (hasPath && l.inPath ? 1 : 0.25))
-          .attr("stroke-width", (l: any) => (l.sourcePerson.id === d.id || l.targetPerson.id === d.id) ? 2.5 : (hasPath && l.inPath ? 2.8 : 0.8));
+          .attr("stroke-opacity", (l: any) => {
+            if (l.sourcePerson.id === d.id || l.targetPerson.id === d.id) return 1;
+            if (hasPath && l.inPath) return 1;
+            if (scaleRef.current > 1.5 || filteredNodes.length <= 25) return 0.65;
+            return 0.25;
+          })
+          .attr("stroke-width", (l: any) => {
+            if (l.sourcePerson.id === d.id || l.targetPerson.id === d.id) return 2.5;
+            if (hasPath && l.inPath) return 2.8;
+            if (scaleRef.current > 1.5 || filteredNodes.length <= 25) return 1.1;
+            return 0.8;
+          });
       })
       .on("mouseleave", function(event, d: any) {
         isHoveringNode = false;
@@ -594,11 +604,13 @@ export default function NetworkGraph({
         .attr("stroke-opacity", (d: any) => {
            if (activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId)) return 1;
            if (hasPath && d.inPath) return 1;
+           if (scaleRef.current > 1.5 || filteredNodes.length <= 25) return 0.65;
            return (activeId || hasPath ? 0.2 : 0.6);
         })
         .attr("stroke-width", (d: any) => {
           if (activeId && (d.sourcePerson.id === activeId || d.targetPerson.id === activeId)) return 2.0;
           if (hasPath && d.inPath) return 2.8;
+          if (scaleRef.current > 1.5 || filteredNodes.length <= 25) return 1.1;
           return 0.8;
         });
 
@@ -651,6 +663,7 @@ export default function NetworkGraph({
             (l.targetPerson.id === activeId && l.sourcePerson.id === d.id)
           );
           if (isNeighbor) return 0.9;
+          if (scaleRef.current > 1.5 || filteredNodes.length <= 25) return 0.9;
           return (activeId || hasPath ? 0.15 : 1);
         });
 
