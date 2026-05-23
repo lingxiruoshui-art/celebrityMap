@@ -242,6 +242,32 @@ async function runBackgroundAlignment(db: DatabaseAdapter) {
   return stats;
 }
 
+export async function autoCleanupOtherBlacklist(db: DatabaseAdapter) {
+  try {
+    const otherBlacklistRows = await db.prepare(`
+        SELECT DISTINCT LOWER(target_name) as target_name 
+        FROM explore_queue 
+        WHERE status = 'error' 
+        GROUP BY LOWER(target_name) 
+        HAVING (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 2
+    `).all() as any[];
+
+    if (otherBlacklistRows && otherBlacklistRows.length > 0) {
+      console.log(`[Auto Startup Cleanup] Cleaning other error blacklist for:`, otherBlacklistRows.map(r => r.target_name));
+      for (const row of otherBlacklistRows) {
+        await db.prepare(`
+            DELETE FROM explore_queue 
+            WHERE LOWER(target_name) = ? 
+              AND status = 'error' 
+              AND NOT (reason LIKE '%缺少真实相片%')
+        `).run(row.target_name);
+      }
+    }
+  } catch (err) {
+    console.error("Failed autoCleanupOtherBlacklist:", err);
+  }
+}
+
 export async function getDb(c: any): Promise<DatabaseAdapter> {
   let db: DatabaseAdapter;
   if (c.env && c.env.DB_ADAPTER) {
@@ -449,6 +475,15 @@ export async function getDb(c: any): Promise<DatabaseAdapter> {
       })();
     }
     await initPromise;
+    // Always run other-blacklist automatic cleanup once during server initialization/cold start
+    if (typeof (globalThis as any).__blacklist_cleaned === "undefined") {
+      (globalThis as any).__blacklist_cleaned = true;
+      try {
+        await autoCleanupOtherBlacklist(db);
+      } catch (cleanErr) {
+        console.error("Failed startup blacklist automatic cleanup:", cleanErr);
+      }
+    }
   }
   return db;
 }
@@ -2580,6 +2615,40 @@ app.get("/admin/blacklist", async (c) => {
         names.push(`${target} (共失败 ${errRows.length} 次: ${reasons})`);
     }
     return c.json(names);
+});
+
+app.post("/admin/clear-blacklist-others", async (c) => {
+    const db = await getDb(c);
+    const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
+    if (!isAdmin) return c.json({ error: "Unauthorized" }, 401);
+
+    try {
+        const otherBlacklistRows = await db.prepare(`
+            SELECT DISTINCT LOWER(target_name) as target_name 
+            FROM explore_queue 
+            WHERE status = 'error' 
+            GROUP BY LOWER(target_name) 
+            HAVING (COUNT(*) - SUM(CASE WHEN reason LIKE '%缺少真实相片%' THEN 1 ELSE 0 END)) >= 2
+        `).all() as any[];
+
+        const namesToClear = otherBlacklistRows.map(row => row.target_name);
+        
+        if (namesToClear.length > 0) {
+            for (const name of namesToClear) {
+                await db.prepare(`
+                    DELETE FROM explore_queue 
+                    WHERE LOWER(target_name) = ? 
+                      AND status = 'error' 
+                      AND NOT (reason LIKE '%缺少真实相片%')
+                `).run(name);
+            }
+        }
+
+        return c.json({ success: true, clearedCount: namesToClear.length, clearedNames: namesToClear });
+    } catch (err: any) {
+        console.error("Failed to clear other blacklist errors:", err);
+        return c.json({ success: false, error: err.message }, 500);
+    }
 });
 
 // Admin enqueues a target manually

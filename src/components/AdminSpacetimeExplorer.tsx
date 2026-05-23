@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef } from "react";
-import { X, Search, ChevronRight, User, Loader2, Sparkles, AlertCircle, Zap, ChevronDown, ChevronUp, RefreshCw, Save, CheckCircle, Layers, Download } from "lucide-react";
+import { X, Search, ChevronRight, User, Loader2, Sparkles, AlertCircle, Zap, ChevronDown, ChevronUp, RefreshCw, Save, CheckCircle, Layers, Download, Trash2 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { getGemini } from "../services/aiService";
 
@@ -461,6 +461,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     missingPhotoCount?: number
   } | null>(null);
   const [isDownloadingBlacklist, setIsDownloadingBlacklist] = useState<string | null>(null);
+  const [isClearingOtherBlacklist, setIsClearingOtherBlacklist] = useState(false);
   
   const [isAligningWikidata, setIsAligningWikidata] = useState(false);
   const [isExportingAlignment, setIsExportingAlignment] = useState(false);
@@ -537,6 +538,35 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
       console.error("Failed to download blacklist", e);
     } finally {
       setIsDownloadingBlacklist(null);
+    }
+  };
+
+  const handleClearOtherBlacklist = async () => {
+    if (!window.confirm("确定要一键清理【其他错误黑名单】中的所有记录，让这些人物可以重新入库吗？")) return;
+    setIsClearingOtherBlacklist(true);
+    try {
+      const res = await fetch("/api/admin/clear-blacklist-others", {
+        method: "POST",
+        headers: { "x-admin-password": localStorage.getItem("admin_password") || "" }
+      });
+      if (res.ok) {
+        const data = await res.json() as { success: boolean, clearedCount?: number };
+        alert(`清理成功！已将 ${data.clearedCount || 0} 个人物从黑名单移徐。`);
+        // Refresh stats
+        const refreshStats = await fetch("/api/admin/stats", { headers: { "x-admin-password": localStorage.getItem("admin_password") || "" } });
+        if (refreshStats.ok) {
+          const stats = await refreshStats.json();
+          setAdminStats(stats);
+        }
+      } else {
+        const errVal = await res.text();
+        alert("清理失败: " + errVal);
+      }
+    } catch (e: any) {
+      console.error("Failed to clear other blacklist", e);
+      alert("清理失败: " + e.message);
+    } finally {
+      setIsClearingOtherBlacklist(false);
     }
   };
 
@@ -1116,18 +1146,33 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                                 <div className="text-slate-500">其他错误黑名单 (失败2次及以上)</div>
                                 <div className="font-bold text-red-600 mt-0.5">{adminStats.otherBlacklistCount || 0} 人</div>
                             </div>
-                            <button
-                              onClick={() => handleDownloadBlacklist("others")}
-                              disabled={isDownloadingBlacklist !== null || !adminStats.otherBlacklistCount}
-                              className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white h-[26px] px-2.5 text-[10px] font-bold rounded-lg transition-all shadow-sm flex items-center justify-center gap-1 active:scale-[0.98] group"
-                            >
-                              {isDownloadingBlacklist === "others" ? (
-                                <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                              ) : (
-                                <Download className="w-2.5 h-2.5 group-hover:translate-y-0.5 transition-transform" />
-                              )}
-                              <span>下载名单</span>
-                            </button>
+                            <div className="flex gap-2">
+                                <button
+                                  onClick={() => handleDownloadBlacklist("others")}
+                                  disabled={isDownloadingBlacklist !== null || !adminStats.otherBlacklistCount}
+                                  className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white h-[26px] px-2.5 text-[10px] font-bold rounded-lg transition-all shadow-sm flex items-center justify-center gap-1 active:scale-[0.98] group"
+                                >
+                                  {isDownloadingBlacklist === "others" ? (
+                                    <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                                  ) : (
+                                    <Download className="w-2.5 h-2.5 group-hover:translate-y-0.5 transition-transform" />
+                                  )}
+                                  <span>下载名单</span>
+                                </button>
+                                <button
+                                  onClick={handleClearOtherBlacklist}
+                                  disabled={isClearingOtherBlacklist || !adminStats.otherBlacklistCount}
+                                  className="bg-red-50 hover:bg-red-100 disabled:opacity-50 text-red-600 border border-red-200 h-[26px] px-2.5 text-[10px] font-bold rounded-lg transition-all flex items-center justify-center gap-1 active:scale-[0.98]"
+                                  title="移徐这些因Wikidata、AI错误拦截的任务记录，使其能重新开始入库"
+                                >
+                                  {isClearingOtherBlacklist ? (
+                                    <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="w-2.5 h-2.5" />
+                                  )}
+                                  <span>一键清理</span>
+                                </button>
+                            </div>
                         </div>
                         <div className="flex flex-col gap-1.5 pt-1.5 border-t border-dashed border-slate-200 mt-1">
                             <div className="flex items-center justify-between">
