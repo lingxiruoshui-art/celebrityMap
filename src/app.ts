@@ -1643,6 +1643,7 @@ app.post("/pathfind", async (c) => {
 
   return c.json({ path: null });
 });
+
 app.post("/archiver/chat", async (c) => {
   const db = await getDb(c);
   const { person1, person2 } = await c.req.json();
@@ -1661,7 +1662,7 @@ app.post("/archiver/chat", async (c) => {
 请模拟这两人之间的一场极其精彩的跨时空对话。要求如下：
 1. **回合与句子限制**：两个人之间进行 2~3 个回合（来回），对话条数总共正好产生 4~6 句话。
 2. **字数严格限制**：每句话的长度必须限制在 1~20 个字（汉语字符）。
-3. 语气和语感要极具特色，必须完美契合该历史人物的个性和背景设定。
+3. 语气 and 语感要极具特色，必须完美契合该历史人物的个性和背景设定。
 4. 必须直接返回 JSON 对象，不要用 markdown 标记。其格式为 {"messages": [{"speaker": "人物名字", "text": "内容"}, ...]}，其中的"人物名字"必须完全是 ${p1Data.name} 或 ${p2Data.name}。`;
 
       const resultText = await callAI(c, db, prompt, "json");
@@ -1684,33 +1685,62 @@ export async function getTopConnectionPoolCandidates(db: DatabaseAdapter) {
   const failedPeopleRows = await db.prepare("SELECT DISTINCT LOWER(target_name) as target_name FROM explore_queue WHERE status = 'error'").all() as any[];
   failedPeopleRows.forEach((t: any) => archivedNamesList.push(t.target_name.trim().toLowerCase()));
 
-  // Helper to matching preset name with database full names (handles middle dots & synonyms)
-  const isFigInDb = (poolName: string, archivedNames: string[]): boolean => {
+  // Optimize lookups with Sets!
+  const archivedSet = new Set(archivedNamesList);
+  
+  // Precompile last parts key lookup (e.g., "弗朗西斯科·戈雅" -> last part "戈雅")
+  const archivedLastPartsSet = new Set<string>();
+  archivedNamesList.forEach(name => {
+    const parts = name.split('·');
+    const last = parts[parts.length - 1];
+    if (last && last.length >= 2) {
+      archivedLastPartsSet.add(last);
+    }
+  });
+
+  const isFigInDbCache = new Map<string, boolean>();
+
+  // Helper matching candidate name with database full names (handles middle dots & synonyms)
+  const isFigInDbCached = (poolName: string): boolean => {
     const pName = poolName.trim().toLowerCase();
-    
+    if (isFigInDbCache.has(pName)) {
+      return isFigInDbCache.get(pName)!;
+    }
+
+    // 1. Exact match in Set
+    if (archivedSet.has(pName)) {
+      isFigInDbCache.set(pName, true);
+      return true;
+    }
+
+    // 2. Last part match (constant-time check!)
+    const partsP = pName.split('·');
+    const lastPartP = partsP[partsP.length - 1];
+    if (lastPartP && lastPartP.length >= 2 && archivedLastPartsSet.has(lastPartP)) {
+      isFigInDbCache.set(pName, true);
+      return true;
+    }
+
+    // 3. Synonyms fast check
     const synonyms: Record<string, string[]> = {
       "居里夫人": ["居里", "curie", "玛丽"],
     };
-
-    for (const aName of archivedNames) {
-      if (aName === pName) return true;
-      
-      // If either name contains the other as substring (minimally 2 characters long to avoid fake 1-char matches)
-      if (aName.includes(pName) || pName.includes(aName)) return true;
-      
-      // Compare the last part separated by dot (e.g., "弗朗西斯科·戈雅" -> last part "戈雅")
-      const partsA = aName.split('·');
-      const lastPartA = partsA[partsA.length - 1];
-      const partsP = pName.split('·');
-      const lastPartP = partsP[partsP.length - 1];
-      if (lastPartA && lastPartP && lastPartA.length >= 2 && lastPartP.length >= 2) {
-        if (lastPartA === lastPartP) return true;
-      }
-
-      if (synonyms[poolName]) {
-        if (synonyms[poolName].some(syn => aName.includes(syn))) return true;
+    if (synonyms[pName]) {
+      if (synonyms[pName].some(syn => archivedNamesList.some(aName => aName.includes(syn)))) {
+        isFigInDbCache.set(pName, true);
+        return true;
       }
     }
+
+    // 4. Substring check (O(N) fallback, but cached so execute at most once per unique name)
+    for (const aName of archivedNamesList) {
+      if (aName.includes(pName) || pName.includes(aName)) {
+        isFigInDbCache.set(pName, true);
+        return true;
+      }
+    }
+
+    isFigInDbCache.set(pName, false);
     return false;
   };
 
@@ -1723,13 +1753,13 @@ export async function getTopConnectionPoolCandidates(db: DatabaseAdapter) {
            const nameTrimmed = r.personName.trim();
            if (isCommonForbiddenName(nameTrimmed)) return;
            const lowName = nameTrimmed.toLowerCase();
-           if (!isFigInDb(r.personName, archivedNamesList)) {
+           if (!isFigInDbCached(r.personName)) {
               const existing = connectedCounts.get(lowName);
               if (existing) {
                   existing.count++;
-               } else {
+              } else {
                   connectedCounts.set(lowName, { originalName: nameTrimmed, count: 1 });
-               }
+              }
            }
         }
       });
@@ -2607,6 +2637,41 @@ app.get("/admin/export-alignment", async (c) => {
         });
     } catch (err: any) {
         console.error("Export alignment error:", err);
+        return c.json({ error: "Export failed: " + err.message }, 500);
+    }
+});
+
+app.get("/admin/export-unarchived-connections", async (c) => {
+    const db = await getDb(c);
+    const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
+    if (!isAdmin) return c.json({ error: "Unauthorized" }, 401);
+
+    try {
+        const candidates = await getTopConnectionPoolCandidates(db);
+        
+        const headers = ["姓名", "被连接次数"];
+        const rows = candidates.map(item => {
+            const escape = (val: any) => {
+                if (val === null || val === undefined) return "";
+                const str = String(val).replace(/"/g, '""').replace(/\r?\n|\r/g, " ");
+                if (str.includes(",") || str.includes('"')) {
+                    return `"${str}"`;
+                }
+                return str;
+            };
+            return [
+                escape(item.originalName),
+                item.count
+            ].join(",");
+        });
+
+        const csvContent = "\ufeff" + [headers.join(","), ...rows].join("\n");
+        return c.text(csvContent, 200, {
+            "Content-Type": "text/csv; charset=utf-8",
+            "Content-Disposition": `attachment; filename="spacetime_unarchived_connections_${new Date().toISOString().slice(0, 10)}.csv"`
+        });
+    } catch (err: any) {
+        console.error("Export unarchived connections error:", err);
         return c.json({ error: "Export failed: " + err.message }, 500);
     }
 });

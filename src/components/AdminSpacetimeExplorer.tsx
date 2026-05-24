@@ -466,6 +466,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
   
   const [isAligningWikidata, setIsAligningWikidata] = useState(false);
   const [isExportingAlignment, setIsExportingAlignment] = useState(false);
+  const [isExportingUnarchived, setIsExportingUnarchived] = useState(false);
   const [wikidataAlignmentMsg, setWikidataAlignmentMsg] = useState<string | null>(null);
 
   const handleTriggerWikidataAlignment = async () => {
@@ -513,6 +514,31 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
       setTimeout(() => setWikidataAlignmentMsg(null), 6000);
     } finally {
       setIsExportingAlignment(false);
+    }
+  };
+
+  const handleExportUnarchivedConnections = async () => {
+    setIsExportingUnarchived(true);
+    try {
+      const res = await fetch("/api/admin/export-unarchived-connections", {
+        headers: { "x-admin-password": localStorage.getItem("admin_password") || "" }
+      });
+      if (!res.ok) {
+        throw new Error("导出失败");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `时空未入库连接热度报表_${new Date().toISOString().slice(0, 10)}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error("Failed to export unarchived connections", e);
+      setWikidataAlignmentMsg("下载连接热度表失败，请稍后重试。");
+      setTimeout(() => setWikidataAlignmentMsg(null), 6000);
+    } finally {
+      setIsExportingUnarchived(false);
     }
   };
 
@@ -1164,31 +1190,33 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                                     <div className="text-[9px] text-slate-400 mb-0.5">Wikidata ID 缺失</div>
                                     <div className="text-[12px] font-black text-amber-600">{adminStats?.missingWikidataCount ?? 0} 人</div>
                                 </div>
-                                 <div className="text-center py-1">
+                                <div className="text-center py-1">
                                     <div className="text-[9px] text-slate-400 mb-0.5">照片缺失</div>
                                     <div className="text-[12px] font-black text-red-500">{adminStats?.missingPhotoCount ?? 0} 人</div>
                                 </div>
                             </div>
-                            {adminStats?.topPoolRecommendations && adminStats.topPoolRecommendations.length > 0 && (
-                              <div className="flex flex-col gap-1 mt-2.5 bg-indigo-50/30 p-2.5 rounded-xl border border-indigo-100/50">
-                                <div className="text-[10px] font-bold text-indigo-600 flex items-center gap-1.5">
-                                  <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-pulse shrink-0"></span>
-                                  <span>时空关联热度 Top 3 (推荐下一步入库)</span>
-                                </div>
-                                <div className="flex flex-wrap gap-1.5 mt-1.5">
-                                  {adminStats.topPoolRecommendations.map((item, index) => (
-                                    <div 
-                                      key={item.name + index} 
-                                      className="flex items-center gap-1.5 bg-white/95 shadow-xs border border-indigo-100 rounded-lg px-2 py-1 text-[11px] font-bold transition-all text-indigo-700"
-                                    >
-                                      <span className="text-[10px] text-indigo-400">#{index + 1}</span>
-                                      <span className="truncate max-w-[90px]">{item.name}</span>
-                                      <span className="text-[9px] text-indigo-500 font-bold">({item.count})</span>
+                            <div className="flex flex-col gap-1.5 pt-2 border-t border-dashed border-slate-200 mt-2">
+                                <div className="flex items-center justify-between gap-3">
+                                    <div className="flex flex-col min-w-0">
+                                        <div className="text-slate-500 font-bold text-[10px] sm:text-[11px]">未入库关联频数导出</div>
+                                        <div className="text-[9px] sm:text-[10px] text-slate-400 font-normal leading-relaxed mt-0.5">
+                                            尚未入库但被关联的人物按提及次数从高到低导出
+                                        </div>
                                     </div>
-                                  ))}
+                                    <button
+                                      onClick={handleExportUnarchivedConnections}
+                                      disabled={isExportingUnarchived}
+                                      className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white h-[28px] px-3 text-[10px] font-bold rounded-lg transition-all shadow-sm flex items-center justify-center gap-1.5 active:scale-[0.98] shrink-0"
+                                    >
+                                      {isExportingUnarchived ? (
+                                        <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                                      ) : (
+                                        <Download className="w-3 h-3 group-hover:translate-y-0.5 transition-transform" />
+                                      )}
+                                      <span>下载数据</span>
+                                    </button>
                                 </div>
-                              </div>
-                            )}
+                            </div>
                             {wikidataAlignmentMsg && (
                               <div className="text-[9px] text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded leading-tight">
                                 {wikidataAlignmentMsg}
