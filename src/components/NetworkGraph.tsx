@@ -941,7 +941,7 @@ export default function NetworkGraph({
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
         >
-          <div className="bg-white/95 backdrop-blur-md p-3.5 sm:p-4 rounded-2xl shadow-2xl border border-indigo-100/80 w-[calc(100vw-2rem)] sm:w-[320px] max-w-[320px] pointer-events-auto flex flex-col">
+          <div className="bg-slate-50/95 backdrop-blur-md p-3.5 sm:p-4 rounded-2xl shadow-2xl border border-slate-200/90 w-[calc(100vw-2rem)] sm:w-[320px] max-w-[320px] pointer-events-auto flex flex-col">
             <div 
               className="flex items-center justify-between mb-3 cursor-grab active:cursor-grabbing touch-none px-1"
               onPointerDown={(e) => controls.start(e)}
@@ -1076,7 +1076,7 @@ export default function NetworkGraph({
             </div>
           </div>
           {/* Arrow */}
-          <div className="w-4 h-4 bg-white border-r border-b border-indigo-100 absolute left-1/2 -translate-x-1/2 -bottom-2 rotate-45 shadow-[4px_4px_8px_rgba(0,0,0,0.02)]" />
+          <div className="w-4 h-4 bg-slate-50 border-r border-b border-slate-200/90 absolute left-1/2 -translate-x-1/2 -bottom-2 rotate-45 shadow-[4px_4px_8px_rgba(0,0,0,0.02)]" />
         </motion.div>
       )}
     </div>
