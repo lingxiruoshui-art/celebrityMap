@@ -845,6 +845,22 @@ export async function fetchMetadataFromWiki(name: string) {
           imageUrl = `https://commons.wikimedia.org/wiki/Special:FilePath/${encodedImageName}?width=500`;
         }
       }
+
+      if (!imageUrl) {
+        const getWikiImage = async (lang: string) => {
+          try {
+            const wikiRes = await fetch(`https://${lang}.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(zhLabel || name)}&prop=pageimages&format=json&pithumbsize=500`, { headers });
+            const wikiData = await wikiRes.json() as any;
+            const pages = wikiData.query?.pages;
+            if (pages) {
+              const pageId = Object.keys(pages)[0];
+              if (pageId !== "-1" && pages[pageId].thumbnail) return pages[pageId].thumbnail.source;
+            }
+          } catch (e) {}
+          return null;
+        };
+        imageUrl = await getWikiImage("zh") || await getWikiImage("en") || "";
+      }
       
       return {
         normalizedName: zhLabel || name,
@@ -929,9 +945,26 @@ app.get("/health", (c) => c.json({ status: "ok" }));
 
 app.get("/portraits/:filename", async (c) => {
   const db = await getDb(c);
+  const imagesBucket = c.env?.IMAGES;
   const rawFilename = c.req.param("filename");
   const namePart = decodeURIComponent(rawFilename.replace(/\.jpg$/i, ''));
+  const r2Key = `portraits/${encodeURIComponent(namePart.toLowerCase())}.jpg`;
   
+  if (imagesBucket) {
+    try {
+      let object = await imagesBucket.get(r2Key);
+      if (object) {
+        const headers = new Headers();
+        object.writeHttpMetadata(headers);
+        headers.set("etag", object.httpEtag);
+        headers.set("Cache-Control", "public, max-age=31536000, immutable");
+        return new Response(object.body as any, { headers });
+      }
+    } catch (e) {
+      console.error("Error reading from R2", e);
+    }
+  }
+
   try {
     const meta = await fetchMetadataFromWiki(namePart);
     if (meta && meta.imageUrl) {
@@ -1111,6 +1144,40 @@ app.get("/admin/visitor-stats", async (c) => {
     deviceStats,
     regions: regionRes || []
   });
+});
+
+app.post("/admin/people/:id/refresh-avatar", async (c) => {
+  if (c.req.header("x-admin-password") !== getAdminPassword(c)) return c.json({ error: "Unauthorized" }, 401);
+  const db = await getDb(c);
+  const id = c.req.param("id");
+  const person = await db.prepare("SELECT name FROM people WHERE id = ?").get(id) as any;
+  if (!person) return c.json({ error: "Person found" }, 404);
+
+  const meta = await fetchMetadataFromWiki(person.name);
+  if (meta && meta.imageUrl) {
+    if (c.env?.IMAGES) {
+      try {
+        const imageRes = await fetch(meta.imageUrl, { headers: { "User-Agent": "HistoricalArchiveApp/1.0" } });
+        if (imageRes.ok) {
+          const buffer = await imageRes.arrayBuffer();
+          const contentType = imageRes.headers.get("content-type") || "image/jpeg";
+          const r2Key = `portraits/${encodeURIComponent(person.name.toLowerCase())}.jpg`;
+          await c.env.IMAGES.put(r2Key, buffer, { httpMetadata: { contentType } });
+          
+          const localUrl = `/api/portraits/${encodeURIComponent(person.name.toLowerCase())}.jpg`;
+          await db.prepare("UPDATE people SET image_url = ? WHERE id = ?").run(localUrl, id);
+          return c.json({ success: true, imageUrl: localUrl });
+        }
+      } catch (e) {
+        console.error("Error saving image to R2", e);
+      }
+    }
+    await db.prepare("UPDATE people SET image_url = ? WHERE id = ?").run(meta.imageUrl, id);
+    return c.json({ success: true, imageUrl: meta.imageUrl });
+  }
+
+  await db.prepare("UPDATE people SET image_url = 'no_photo' WHERE id = ?").run(id);
+  return c.json({ success: true, imageUrl: "no_photo" });
 });
 
 app.delete("/admin/people/:id", async (c) => {
@@ -2396,7 +2463,7 @@ app.get("/admin/stats", async (c) => {
 
     let missingPhotoCount = 0;
     try {
-        const row = await db.prepare("SELECT COUNT(*) as count FROM people WHERE image_url IS NULL OR image_url = '' OR image_url LIKE '%placeholder%'").get() as any;
+        const row = await db.prepare("SELECT COUNT(*) as count FROM people WHERE image_url IS NULL OR image_url = '' OR image_url LIKE '%placeholder%' OR image_url = 'no_photo'").get() as any;
         missingPhotoCount = row ? row.count : 0;
     } catch (e: any) {
         queryErrors.missingPhotoCount = e.message || String(e);

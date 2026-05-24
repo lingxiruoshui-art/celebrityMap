@@ -127,6 +127,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
     onConfirm: () => {},
     isDanger: true
   });
+  const [refreshingAvatarId, setRefreshingAvatarId] = useState<number | null>(null);
 
   useEffect(() => {
     if (logsContainerRef.current) {
@@ -478,6 +479,29 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
     } finally {
       setExpandingId(null);
       setActiveTask(prev => prev ? { ...prev, isRunning: false } : null);
+    }
+  };
+
+  const refreshAvatar = async (id: number) => {
+    setRefreshingAvatarId(id);
+    try {
+      const res = await fetch(`/api/admin/people/${id}/refresh-avatar`, {
+        method: "POST",
+        headers: adminHeaders
+      });
+      if (res.ok) {
+        const data = await res.json() as any;
+        if (data.success) {
+          showNotification('success', '头像回退更新成功');
+          fetchArchive(); // Refresh list to get new image_url
+        } else {
+          showNotification('error', data.error || '头像回退更新失败');
+        }
+      }
+    } catch (e) {
+      showNotification('error', '连接失败');
+    } finally {
+      setRefreshingAvatarId(null);
     }
   };
 
@@ -1026,6 +1050,14 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                               className={`p-2 rounded-lg transition-colors ${(expandingId === p.id || (activeTask?.isRunning && activeTask?.source === 'list')) ? (expandingId === p.id ? 'text-indigo-600 bg-indigo-50' : 'opacity-30 cursor-not-allowed text-slate-400') : 'text-emerald-500 hover:text-emerald-700 hover:bg-emerald-50'}`}
                             >
                               <UserPlus className={`w-4 h-4 ${expandingId === p.id ? 'animate-spin' : ''}`} />
+                            </button>
+                            <button
+                              onClick={() => refreshAvatar(p.id)}
+                              disabled={refreshingAvatarId === p.id}
+                              title="手动尝试抓取Wiki头像"
+                              className={`p-2 rounded-lg transition-colors ${refreshingAvatarId === p.id ? 'opacity-50 text-blue-400' : 'text-blue-500 hover:text-blue-700 hover:bg-blue-50'}`}
+                            >
+                              <RefreshCw className={`w-4 h-4 ${refreshingAvatarId === p.id ? 'animate-spin' : ''}`} />
                             </button>
                             <button onClick={() => deletePerson(p.id)} title="删除" className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
                               <Trash2 className="w-4 h-4" />

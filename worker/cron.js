@@ -383,6 +383,22 @@ export default {
                               wikiMeta.imageUrl = `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(imageName.replace(/ /g, '_'))}?width=500`;
                           }
                       }
+                      
+                      if (!wikiMeta.imageUrl) {
+                          const getWikiImage = async (lang) => {
+                              try {
+                                  const wikiRes = await fetch(`https://${lang}.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(wikiMeta.normalizedName)}&prop=pageimages&format=json&pithumbsize=500`, { headers });
+                                  const wikiData = await wikiRes.json();
+                                  const pages = wikiData.query?.pages;
+                                  if (pages) {
+                                      const pageId = Object.keys(pages)[0];
+                                      if (pageId !== "-1" && pages[pageId].thumbnail) return pages[pageId].thumbnail.source;
+                                  }
+                              } catch (e) {}
+                              return null;
+                          };
+                          wikiMeta.imageUrl = await getWikiImage("zh") || await getWikiImage("en") || null;
+                      }
                   }
               } catch (e) {
                   console.error("Wiki Error", e);
