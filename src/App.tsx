@@ -89,33 +89,64 @@ export default function App() {
 
   const fetchArchive = async () => {
     setIsLoadingArchive(true);
-    try {
-      const res = await fetch("/api/archive");
-      if (!res.ok) {
-        const errorText = await res.text();
-        console.error("Archive fetch error:", errorText);
-        setError(`无法获取馆藏数据: ${res.status} ${res.statusText}`);
-        return;
-      }
-      
-      const contentType = res.headers.get("content-type");
-      if (!contentType || !contentType.includes("application/json")) {
-          const text = await res.text();
-          console.error("Expected JSON but got:", text.slice(0, 200));
-          throw new Error("服务器返回了非 JSON 格式的响应，可能是由于路由配置错误或服务器异常。");
-      }
+    setError(null);
 
-      const json = await res.json() as any;
-      setData(json);
-      if (json.people.length > 0 && selectedPersonId === null) {
-        handleSelectPerson(json.people[0].id, false);
+    // Try to load from localStorage cache first so it renders instantly
+    const cachedData = localStorage.getItem("cached_archive_data");
+    const parsedCache = cachedData ? JSON.parse(cachedData) : null;
+    if (parsedCache && parsedCache.people && parsedCache.people.length > 0) {
+      setData(parsedCache);
+      if (selectedPersonId === null) {
+        handleSelectPerson(parsedCache.people[0].id, false);
       }
-    } catch (err) {
-      console.error(err);
-      setError("网络连接错误，无法访问服务器。");
-    } finally {
-      setIsLoadingArchive(false);
     }
+
+    const maxRetries = 3;
+    let success = false;
+    let lastError: any = null;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const res = await fetch("/api/archive");
+        if (!res.ok) {
+          const errorText = await res.text();
+          throw new Error(`无法获取馆藏数据: ${res.status} ${res.statusText}`);
+        }
+        
+        const contentType = res.headers.get("content-type");
+        if (!contentType || !contentType.includes("application/json")) {
+            throw new Error("服务器返回了非 JSON 格式的响应，可能是由于服务器异常。");
+        }
+
+        const json = await res.json() as any;
+        setData(json);
+        localStorage.setItem("cached_archive_data", JSON.stringify(json));
+        
+        if (json.people.length > 0 && selectedPersonId === null) {
+          handleSelectPerson(json.people[0].id, false);
+        }
+        
+        success = true;
+        break;
+      } catch (err: any) {
+        console.warn(`Fetch archive attempt ${attempt + 1} failed:`, err);
+        lastError = err;
+        if (attempt < maxRetries - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 800 * (attempt + 1))); // exponential delay
+        }
+      }
+    }
+
+    if (!success) {
+      if (parsedCache && parsedCache.people && parsedCache.people.length > 0) {
+        // We have cache, so don't show full-screen blocking error, just show a persistent warning console log
+        console.error("Failed to refresh archive from server, using cached data:", lastError);
+      } else {
+        setError(lastError?.message || "网络连接错误，无法访问服务器。");
+      }
+    }
+    
+    setIsLoadingArchive(false);
   };
 
   useEffect(() => {

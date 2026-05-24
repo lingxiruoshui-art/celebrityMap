@@ -21,6 +21,29 @@ const root = new Hono<{
 
 export const app = root.basePath('/api');
 
+// In-memory caching to avoid database stress and prevent timeout failures
+let archiveCache: any = null;
+let lastArchiveCacheTime = 0;
+const ARCHIVE_CACHE_TTL = 30000; // 30 seconds
+
+let statsCache: any = null;
+let lastStatsCacheTime = 0;
+const STATS_CACHE_TTL = 15000; // 15 seconds
+
+export function bustArchiveAndStatsCaches() {
+  archiveCache = null;
+  lastArchiveCacheTime = 0;
+  statsCache = null;
+  lastStatsCacheTime = 0;
+}
+
+app.use('*', async (c, next) => {
+  await next();
+  if (c.req.method !== 'GET') {
+    bustArchiveAndStatsCaches();
+  }
+});
+
 app.use('*', async (c, next) => {
   const path = c.req.path;
   const db = await getDb(c);
@@ -1358,6 +1381,13 @@ app.get("/archive", async (c) => {
   const limit = parseInt(c.req.query("limit") || "0");
   const search = c.req.query("search") || "";
   
+  // Cache check for main full-archive query (with no pagination/search)
+  if (limit <= 0 && !search && page <= 0) {
+    if (archiveCache !== null && (Date.now() - lastArchiveCacheTime < ARCHIVE_CACHE_TTL)) {
+      return c.json(archiveCache);
+    }
+  }
+
   let people: any[] = [];
   let relationships: any[] = [];
   let total = 0;
@@ -1421,7 +1451,14 @@ app.get("/archive", async (c) => {
     image_url: p.image_url || `/api/portraits/${encodeURIComponent(p.name.toLowerCase())}.jpg`
   }));
 
-  return c.json({ people, relationships, total, page, limit });
+  const resultPayload = { people, relationships, total, page, limit };
+
+  if (limit <= 0 && !search && page <= 0) {
+    archiveCache = resultPayload;
+    lastArchiveCacheTime = Date.now();
+  }
+
+  return c.json(resultPayload);
 });
 
 app.get("/metadata", async (c) => {
@@ -2362,6 +2399,10 @@ app.get("/admin/stats", async (c) => {
     const db = await getDb(c);
     const isAdmin = c.req.header("x-admin-password") === getAdminPassword(c);
     if (!isAdmin) return c.json({ error: "Unauthorized" }, 401);
+
+    if (statsCache !== null && (Date.now() - lastStatsCacheTime < STATS_CACHE_TTL)) {
+        return c.json(statsCache);
+    }
     
     // Total figures pool
     const totalPool = Object.values(FIGURE_POOL).reduce((acc, curr) => acc + curr.length, 0);
@@ -2483,7 +2524,7 @@ app.get("/admin/stats", async (c) => {
         console.error("Error fetching remainingPresetCount:", e);
     }
 
-    return c.json({
+    const resultPayload = {
         totalPool,
         archivedPool: archivedPoolCount,
         connectedTotal: connectedTotalCountUnique,
@@ -2496,7 +2537,12 @@ app.get("/admin/stats", async (c) => {
         missingPhotoCount,
         remainingPresetCount,
         queryErrors: Object.keys(queryErrors).length > 0 ? queryErrors : undefined
-    });
+    };
+
+    statsCache = resultPayload;
+    lastStatsCacheTime = Date.now();
+
+    return c.json(resultPayload);
 });
 
 app.post("/admin/realign-wikidata", async (c) => {

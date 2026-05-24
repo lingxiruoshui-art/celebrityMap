@@ -545,32 +545,53 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
 
   useEffect(() => {
     if (isAdmin) {
-        const fetchStats = () => {
-             fetch("/api/admin/stats", { headers: { "x-admin-password": localStorage.getItem("admin_password") || "" } })
-                .then(async res => {
-                    if (!res.ok) {
-                        const text = await res.text();
-                        throw new Error(`HTTP error ${res.status}: ${text}`);
-                    }
-                    return res.json();
-                })
-                .then((data: any) => {
-                    if (data.queryErrors) {
-                        console.error("Stats API returned partial errors:", data.queryErrors);
-                        setErrorMsg(`Stats DB Errors: ${JSON.stringify(data.queryErrors)}`);
-                    } else {
-                        setErrorMsg(null);
-                    }
-                    setAdminStats(data);
-                })
-                .catch(err => {
-                    console.error("Failed to fetch stats:", err);
-                    setErrorMsg(`Fetch stats fail: ${err.message}`);
-                });
+        let isMounted = true;
+        let consecutiveFailures = 0;
+
+        const fetchStats = async () => {
+             const maxRetries = 2;
+             let success = false;
+             let lastErrorMsg = "";
+
+             for (let attempt = 0; attempt < maxRetries; attempt++) {
+                 try {
+                     const res = await fetch("/api/admin/stats", { 
+                         headers: { "x-admin-password": localStorage.getItem("admin_password") || "" } 
+                     });
+                     if (!res.ok) {
+                         const text = await res.text();
+                         throw new Error(`HTTP error ${res.status}: ${text}`);
+                     }
+                     const data = await res.json() as any;
+                     if (!isMounted) return;
+
+                     setAdminStats(data);
+                     setErrorMsg(null);
+                     consecutiveFailures = 0;
+                     success = true;
+                     break;
+                 } catch (err: any) {
+                     lastErrorMsg = err.message || String(err);
+                     if (attempt < maxRetries - 1) {
+                         await new Promise(r => setTimeout(r, 600));
+                     }
+                 }
+             }
+
+             if (!success && isMounted) {
+                 consecutiveFailures++;
+                 if (consecutiveFailures >= 3) {
+                     setErrorMsg(`更新数据失败 (连续多次失败): ${lastErrorMsg}`);
+                 }
+             }
         };
+
         fetchStats();
-        const interval = setInterval(fetchStats, 5000);
-        return () => clearInterval(interval);
+        const interval = setInterval(fetchStats, 6000); // Poll every 6 seconds instead of 5 to reduce DB load
+        return () => {
+            isMounted = false;
+            clearInterval(interval);
+        };
     }
   }, [isAdmin]);
   
