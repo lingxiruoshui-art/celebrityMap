@@ -1160,43 +1160,47 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                               <span>下载名单</span>
                             </button>
                         </div>
-                        <div className="flex flex-col gap-1.5 pt-2 border-t border-dashed border-slate-200 mt-2">
-                            <div className="flex items-center justify-between gap-3">
-                                <div className="flex flex-col min-w-0">
-                                    <div className="text-slate-500 font-bold">Wikidata 人物全量对齐</div>
-                                    <div className="text-[10px] text-slate-400 font-normal leading-relaxed mt-0.5">
-                                        时空角色与 Wikidata 库全量关联对齐与数据导出
-                                    </div>
-                                </div>
-                                <button
-                                  onClick={handleExportAlignment}
-                                  disabled={isExportingAlignment}
-                                  className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white h-[28px] px-3 text-[10px] font-bold rounded-lg transition-all shadow-sm flex items-center justify-center gap-1.5 active:scale-[0.98] shrink-0"
-                                >
-                                  {isExportingAlignment ? (
-                                    <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                                  ) : (
-                                    <Download className="w-3 h-3 group-hover:translate-y-0.5 transition-transform" />
-                                  )}
-                                  <span>下载数据</span>
-                                </button>
-                            </div>
-                            <div className="grid grid-cols-3 gap-1 mt-1 bg-slate-50/80 p-2 rounded-xl border border-slate-100">
+                        <div className="flex flex-col gap-3 pt-2 border-t border-dashed border-slate-200 mt-2">
+                            {/* 统计指标区提到上方 */}
+                            <div className="grid grid-cols-3 gap-1 bg-slate-50/80 p-2 rounded-xl border border-slate-100">
                                 <div className="text-center py-1">
-                                    <div className="text-[9px] text-slate-400 mb-0.5">已入库总人物</div>
+                                    <div className="text-[9px] text-slate-400 mb-0.5 whitespace-nowrap">已入库总人物</div>
                                     <div className="text-[12px] font-black text-slate-700">{adminStats?.peopleCount ?? 0} 人</div>
                                 </div>
                                 <div className="text-center py-1 border-x border-slate-200/50">
-                                    <div className="text-[9px] text-slate-400 mb-0.5">Wikidata ID 缺失</div>
+                                    <div className="text-[9px] text-slate-400 mb-0.5 whitespace-nowrap">Wikidata ID缺失</div>
                                     <div className="text-[12px] font-black text-amber-600">{adminStats?.missingWikidataCount ?? 0} 人</div>
                                 </div>
                                 <div className="text-center py-1">
-                                    <div className="text-[9px] text-slate-400 mb-0.5">照片缺失</div>
+                                    <div className="text-[9px] text-slate-400 mb-0.5 whitespace-nowrap">照片缺失</div>
                                     <div className="text-[12px] font-black text-red-500">{adminStats?.missingPhotoCount ?? 0} 人</div>
                                 </div>
                             </div>
-                            <div className="flex flex-col gap-1.5 pt-2 border-t border-dashed border-slate-200 mt-2">
+
+                            {/* 两处下载数据功能在位置上挪到一起 */}
+                            <div className="flex flex-col gap-3 border-t border-dashed border-slate-200 pt-3">
                                 <div className="flex items-center justify-between gap-3">
+                                    <div className="flex flex-col min-w-0">
+                                        <div className="text-slate-500 font-bold text-[10px] sm:text-[11px]">Wikidata 人物全量对齐</div>
+                                        <div className="text-[9px] sm:text-[10px] text-slate-400 font-normal leading-relaxed mt-0.5">
+                                            时空角色与 Wikidata 库全量关联对齐与数据导出
+                                        </div>
+                                    </div>
+                                    <button
+                                      onClick={handleExportAlignment}
+                                      disabled={isExportingAlignment}
+                                      className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white h-[28px] px-3 text-[10px] font-bold rounded-lg transition-all shadow-sm flex items-center justify-center gap-1.5 active:scale-[0.98] shrink-0"
+                                    >
+                                      {isExportingAlignment ? (
+                                        <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                                      ) : (
+                                        <Download className="w-3 h-3 group-hover:translate-y-0.5 transition-transform" />
+                                      )}
+                                      <span>下载数据</span>
+                                    </button>
+                                </div>
+
+                                <div className="flex items-center justify-between gap-3 border-t border-dashed border-slate-200/60 pt-3">
                                     <div className="flex flex-col min-w-0">
                                         <div className="text-slate-500 font-bold text-[10px] sm:text-[11px]">未入库关联频数导出</div>
                                         <div className="text-[9px] sm:text-[10px] text-slate-400 font-normal leading-relaxed mt-0.5">

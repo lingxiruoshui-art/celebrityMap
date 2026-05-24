@@ -2537,15 +2537,6 @@ app.get("/admin/stats", async (c) => {
         console.error("Error fetching remainingPresetCount:", e);
     }
 
-    let topPoolRecommendations: { name: string, count: number }[] = [];
-    try {
-        const candidates = await getTopConnectionPoolCandidates(db);
-        topPoolRecommendations = candidates.slice(0, 3).map(c => ({ name: c.originalName, count: c.count }));
-    } catch (e: any) {
-        queryErrors.topPoolRecommendations = e.message || String(e);
-        console.error("Error fetching topPoolRecommendations:", e);
-    }
-
     const resultPayload = {
         totalPool,
         archivedPool: archivedPoolCount,
@@ -2558,7 +2549,7 @@ app.get("/admin/stats", async (c) => {
         missingWikidataCount,
         missingPhotoCount,
         remainingPresetCount,
-        topPoolRecommendations,
+        topPoolRecommendations: [],
         queryErrors: Object.keys(queryErrors).length > 0 ? queryErrors : undefined
     };
 
