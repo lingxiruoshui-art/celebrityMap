@@ -1681,8 +1681,8 @@ export async function getTopConnectionPoolCandidates(db: DatabaseAdapter) {
   const queuedPeopleRows = await db.prepare("SELECT target_name FROM explore_queue WHERE status = 'pending' OR status = 'processing' OR status = 'completed'").all() as any[];
   queuedPeopleRows.forEach(t => archivedNamesList.push(t.target_name.trim().toLowerCase()));
 
-  // Also exclude previously failed people from automated picking (so they do not immediately retry automatically)
-  const failedPeopleRows = await db.prepare("SELECT DISTINCT LOWER(target_name) as target_name FROM explore_queue WHERE status = 'error'").all() as any[];
+  // Also exclude previously failed people from automated picking (so they do not immediately retry automatically, ignoring quota limits)
+  const failedPeopleRows = await db.prepare("SELECT DISTINCT LOWER(target_name) as target_name FROM explore_queue WHERE status = 'error' AND (reason IS NULL OR (LOWER(reason) NOT LIKE '%quota%' AND LOWER(reason) NOT LIKE '%limit%' AND LOWER(reason) NOT LIKE '%限额%' AND LOWER(reason) NOT LIKE '%额度%' AND LOWER(reason) NOT LIKE '%上限%' AND LOWER(reason) NOT LIKE '%exhausted%'))").all() as any[];
   failedPeopleRows.forEach((t: any) => archivedNamesList.push(t.target_name.trim().toLowerCase()));
 
   // Optimize lookups with Sets!
@@ -1799,7 +1799,7 @@ export async function pickTarget(db: DatabaseAdapter) {
       )
       AND LOWER(preset_name) NOT IN (
         SELECT LOWER(target_name) FROM explore_queue
-        WHERE status = 'error'
+        WHERE status = 'error' AND (reason IS NULL OR (LOWER(reason) NOT LIKE '%quota%' AND LOWER(reason) NOT LIKE '%limit%' AND LOWER(reason) NOT LIKE '%限额%' AND LOWER(reason) NOT LIKE '%额度%' AND LOWER(reason) NOT LIKE '%上限%' AND LOWER(reason) NOT LIKE '%exhausted%'))
         GROUP BY LOWER(target_name)
         HAVING COUNT(*) >= 2
       )
@@ -1842,11 +1842,11 @@ app.post("/archiver/generate-target", async (c) => {
   const db = await getDb(c);
   const samplePeople = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 20").all() as any[];
   
-  // Exclude blacklisted people (other errors >= 2)
+  // Exclude blacklisted people (other errors >= 2, excluding quota limits)
   const failedPeopleRows = await db.prepare(`
     SELECT target_name 
     FROM explore_queue 
-    WHERE status = 'error' 
+    WHERE status = 'error' AND (reason IS NULL OR (LOWER(reason) NOT LIKE '%quota%' AND LOWER(reason) NOT LIKE '%limit%' AND LOWER(reason) NOT LIKE '%限额%' AND LOWER(reason) NOT LIKE '%额度%' AND LOWER(reason) NOT LIKE '%上限%' AND LOWER(reason) NOT LIKE '%exhausted%'))
     GROUP BY LOWER(target_name) 
     HAVING COUNT(*) >= 2
   `).all() as any[];
@@ -1905,12 +1905,12 @@ app.post("/archive-figure", async (c) => {
       return c.json({ error: `[${targetName}] 已在档案库中（以标准名称 [${existingPerson.name}] 存在），无需重复入库。`, alreadyExists: true, personId: existingPerson.id }, 400);
   }
 
-  // Check if blacklisted
+  // Check if blacklisted (excluding quota limits)
   const errStats = await db.prepare(`
       SELECT 
         COUNT(*) as total_errors
       FROM explore_queue
-      WHERE LOWER(target_name) = ? AND status = 'error'
+      WHERE LOWER(target_name) = ? AND status = 'error' AND (reason IS NULL OR (LOWER(reason) NOT LIKE '%quota%' AND LOWER(reason) NOT LIKE '%limit%' AND LOWER(reason) NOT LIKE '%限额%' AND LOWER(reason) NOT LIKE '%额度%' AND LOWER(reason) NOT LIKE '%上限%' AND LOWER(reason) NOT LIKE '%exhausted%'))
   `).get(targetName.toLowerCase()) as { total_errors: number };
 
   const totalErrors = errStats?.total_errors || 0;
@@ -2484,7 +2484,7 @@ app.get("/admin/stats", async (c) => {
         const otherBlacklistRows = await db.prepare(`
             SELECT DISTINCT LOWER(target_name) as target_name 
             FROM explore_queue 
-            WHERE status = 'error' 
+            WHERE status = 'error' AND (reason IS NULL OR (LOWER(reason) NOT LIKE '%quota%' AND LOWER(reason) NOT LIKE '%limit%' AND LOWER(reason) NOT LIKE '%限额%' AND LOWER(reason) NOT LIKE '%额度%' AND LOWER(reason) NOT LIKE '%上限%' AND LOWER(reason) NOT LIKE '%exhausted%'))
             GROUP BY LOWER(target_name) 
             HAVING COUNT(*) >= 2
         `).all() as any[];
@@ -2534,7 +2534,7 @@ app.get("/admin/stats", async (c) => {
               AND LOWER(preset_name) NOT IN (
                 SELECT LOWER(target_name) 
                 FROM explore_queue 
-                WHERE status = 'error' 
+                WHERE status = 'error' AND (reason IS NULL OR (LOWER(reason) NOT LIKE '%quota%' AND LOWER(reason) NOT LIKE '%limit%' AND LOWER(reason) NOT LIKE '%限额%' AND LOWER(reason) NOT LIKE '%额度%' AND LOWER(reason) NOT LIKE '%上限%' AND LOWER(reason) NOT LIKE '%exhausted%'))
                 GROUP BY LOWER(target_name) 
                 HAVING COUNT(*) >= 2
               )
@@ -2688,7 +2688,7 @@ app.get("/admin/blacklist", async (c) => {
         rows = await db.prepare(`
             SELECT target_name 
             FROM explore_queue 
-            WHERE status = 'error' 
+            WHERE status = 'error' AND (reason IS NULL OR (LOWER(reason) NOT LIKE '%quota%' AND LOWER(reason) NOT LIKE '%limit%' AND LOWER(reason) NOT LIKE '%限额%' AND LOWER(reason) NOT LIKE '%额度%' AND LOWER(reason) NOT LIKE '%上限%' AND LOWER(reason) NOT LIKE '%exhausted%'))
             GROUP BY LOWER(target_name) 
             HAVING COUNT(*) >= 2
         `).all() as any[];
@@ -2696,7 +2696,7 @@ app.get("/admin/blacklist", async (c) => {
         rows = await db.prepare(`
             SELECT target_name 
             FROM explore_queue 
-            WHERE status = 'error' 
+            WHERE status = 'error' AND (reason IS NULL OR (LOWER(reason) NOT LIKE '%quota%' AND LOWER(reason) NOT LIKE '%limit%' AND LOWER(reason) NOT LIKE '%限额%' AND LOWER(reason) NOT LIKE '%额度%' AND LOWER(reason) NOT LIKE '%上限%' AND LOWER(reason) NOT LIKE '%exhausted%'))
             GROUP BY LOWER(target_name) 
             HAVING COUNT(*) >= 2
         `).all() as any[];
@@ -2705,7 +2705,7 @@ app.get("/admin/blacklist", async (c) => {
     const names = [];
     for (const r of rows) {
         const target = r.target_name;
-        const errRows = await db.prepare("SELECT reason, created_at FROM explore_queue WHERE LOWER(target_name) = ? AND status = 'error' ORDER BY created_at ASC").all(target.toLowerCase()) as any[];
+        const errRows = await db.prepare("SELECT reason, created_at FROM explore_queue WHERE LOWER(target_name) = ? AND status = 'error' AND (reason IS NULL OR (LOWER(reason) NOT LIKE '%quota%' AND LOWER(reason) NOT LIKE '%limit%' AND LOWER(reason) NOT LIKE '%限额%' AND LOWER(reason) NOT LIKE '%额度%' AND LOWER(reason) NOT LIKE '%上限%' AND LOWER(reason) NOT LIKE '%exhausted%')) ORDER BY created_at ASC").all(target.toLowerCase()) as any[];
         const reasons = errRows.map(er => {
             const dateStr = er.created_at ? er.created_at.substring(5, 16) : "未知时间";
             return `[${dateStr}] ${er.reason || "未知原因"}`;
@@ -2731,12 +2731,12 @@ app.post("/explore/enqueue", async (c) => {
         return c.json({ error: `[${targetName}] 已在档案库中，无需入队。`, alreadyExists: true }, 400);
     }
     
-    // Check if blacklisted
+    // Check if blacklisted (excluding quota limits)
     const errStats = await db.prepare(`
         SELECT 
           COUNT(*) as total_errors
         FROM explore_queue
-        WHERE LOWER(target_name) = ? AND status = 'error'
+        WHERE LOWER(target_name) = ? AND status = 'error' AND (reason IS NULL OR (LOWER(reason) NOT LIKE '%quota%' AND LOWER(reason) NOT LIKE '%limit%' AND LOWER(reason) NOT LIKE '%限额%' AND LOWER(reason) NOT LIKE '%额度%' AND LOWER(reason) NOT LIKE '%上限%' AND LOWER(reason) NOT LIKE '%exhausted%'))
     `).get(targetName.toLowerCase()) as { total_errors: number };
 
     const totalErrors = errStats?.total_errors || 0;
@@ -2802,12 +2802,12 @@ app.post("/explore/start", async (c) => {
       return c.json({ success: true, message: `[${targetName}] 已在馆藏中，档案数据将会被激活并展示。`, alreadyExists: true, personId: existingPerson.id });
   }
 
-  // Check if blacklisted
+  // Check if blacklisted (excluding quota limits)
   const errStats = await db.prepare(`
       SELECT 
         COUNT(*) as total_errors
       FROM explore_queue
-      WHERE LOWER(target_name) = ? AND status = 'error'
+      WHERE LOWER(target_name) = ? AND status = 'error' AND (reason IS NULL OR (LOWER(reason) NOT LIKE '%quota%' AND LOWER(reason) NOT LIKE '%limit%' AND LOWER(reason) NOT LIKE '%限额%' AND LOWER(reason) NOT LIKE '%额度%' AND LOWER(reason) NOT LIKE '%上限%' AND LOWER(reason) NOT LIKE '%exhausted%'))
   `).get(targetName.toLowerCase()) as { total_errors: number };
 
   const totalErrors = errStats?.total_errors || 0;
