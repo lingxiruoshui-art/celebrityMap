@@ -459,7 +459,8 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     peopleCount?: number,
     missingWikidataCount?: number,
     missingPhotoCount?: number,
-    remainingPresetCount?: number
+    remainingPresetCount?: number,
+    topPoolRecommendations?: { name: string, count: number }[]
   } | null>(null);
   const [isDownloadingBlacklist, setIsDownloadingBlacklist] = useState<string | null>(null);
   
@@ -1163,11 +1164,31 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                                     <div className="text-[9px] text-slate-400 mb-0.5">Wikidata ID 缺失</div>
                                     <div className="text-[12px] font-black text-amber-600">{adminStats?.missingWikidataCount ?? 0} 人</div>
                                 </div>
-                                <div className="text-center py-1">
+                                 <div className="text-center py-1">
                                     <div className="text-[9px] text-slate-400 mb-0.5">照片缺失</div>
                                     <div className="text-[12px] font-black text-red-500">{adminStats?.missingPhotoCount ?? 0} 人</div>
                                 </div>
                             </div>
+                            {adminStats?.topPoolRecommendations && adminStats.topPoolRecommendations.length > 0 && (
+                              <div className="flex flex-col gap-1 mt-2.5 bg-indigo-50/30 p-2.5 rounded-xl border border-indigo-100/50">
+                                <div className="text-[10px] font-bold text-indigo-600 flex items-center gap-1.5">
+                                  <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-pulse shrink-0"></span>
+                                  <span>时空关联热度 Top 3 (推荐下一步入库)</span>
+                                </div>
+                                <div className="flex flex-wrap gap-1.5 mt-1.5">
+                                  {adminStats.topPoolRecommendations.map((item, index) => (
+                                    <div 
+                                      key={item.name + index} 
+                                      className="flex items-center gap-1.5 bg-white/95 shadow-xs border border-indigo-100 rounded-lg px-2 py-1 text-[11px] font-bold transition-all text-indigo-700"
+                                    >
+                                      <span className="text-[10px] text-indigo-400">#{index + 1}</span>
+                                      <span className="truncate max-w-[90px]">{item.name}</span>
+                                      <span className="text-[9px] text-indigo-500 font-bold">({item.count})</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                             {wikidataAlignmentMsg && (
                               <div className="text-[9px] text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded leading-tight">
                                 {wikidataAlignmentMsg}

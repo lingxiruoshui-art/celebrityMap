@@ -267,7 +267,6 @@ async function runBackgroundAlignment(db: DatabaseAdapter) {
 
 export async function autoCleanupOtherBlacklist(db: DatabaseAdapter) {
   // Disabled automatically clearing blacklist/errors on startup as requested
-  console.log("[Auto Startup Cleanup] Automatic cleanup of error blacklist has been disabled.");
 }
 
 export async function getDb(c: any): Promise<DatabaseAdapter> {
@@ -1673,7 +1672,7 @@ app.post("/archiver/chat", async (c) => {
   }
 });
 
-export async function pickTarget(db: DatabaseAdapter) {
+export async function getTopConnectionPoolCandidates(db: DatabaseAdapter) {
   const people = await db.prepare("SELECT name, raw_relationships FROM people").all() as any[];
   const archivedNamesList: string[] = people.map(p => p.name.trim().toLowerCase());
   
@@ -1714,29 +1713,22 @@ export async function pickTarget(db: DatabaseAdapter) {
     }
     return false;
   };
-  
-  const shuffle = (array: any[]) => {
-    for (let i = array.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [array[i], array[j]] = [array[j], array[i]];
-    }
-    return array;
-  };
 
-  // Priority 1: From Relationships (Secondary Nodes / Connected figures) - Pick most connected (Connection Pool, sorted by connection count high to low)
   const connectedCounts = new Map<string, { originalName: string, count: number }>();
   people.forEach(p => {
     try {
       const rels = JSON.parse(p.raw_relationships || "[]");
       rels.forEach((r: any) => {
         if (r.personName) {
-           const lowName = r.personName.trim().toLowerCase();
+           const nameTrimmed = r.personName.trim();
+           if (isCommonForbiddenName(nameTrimmed)) return;
+           const lowName = nameTrimmed.toLowerCase();
            if (!isFigInDb(r.personName, archivedNamesList)) {
               const existing = connectedCounts.get(lowName);
               if (existing) {
                   existing.count++;
                } else {
-                  connectedCounts.set(lowName, { originalName: r.personName, count: 1 });
+                  connectedCounts.set(lowName, { originalName: nameTrimmed, count: 1 });
                }
            }
         }
@@ -1744,14 +1736,28 @@ export async function pickTarget(db: DatabaseAdapter) {
     } catch(e) {}
   });
 
-  if (connectedCounts.size >= 1) {
-      const candidates = Array.from(connectedCounts.values());
-      candidates.sort((a, b) => b.count - a.count);
+  const candidates = Array.from(connectedCounts.values());
+  candidates.sort((a, b) => b.count - a.count);
+  return candidates;
+}
+
+export async function pickTarget(db: DatabaseAdapter) {
+  const candidates = await getTopConnectionPoolCandidates(db);
+
+  if (candidates.length >= 1) {
       const topCount = candidates[0].count;
       const topCandidates = candidates.filter(c => c.count === topCount);
       const picked = topCandidates[Math.floor(Math.random() * topCandidates.length)].originalName;
       return { targetName: picked, strategy: `时空关系高阶补位 (连接数: ${topCount})` };
   }
+
+  const shuffle = (array: any[]) => {
+    for (let i = array.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
+  };
 
   // Priority 2: From pre-defined Figure Pool (Background Collection) via the database table figure_pool_sync (Fallback if no connections left)
   const poolUnarchivedRows = await db.prepare(`
@@ -2501,6 +2507,15 @@ app.get("/admin/stats", async (c) => {
         console.error("Error fetching remainingPresetCount:", e);
     }
 
+    let topPoolRecommendations: { name: string, count: number }[] = [];
+    try {
+        const candidates = await getTopConnectionPoolCandidates(db);
+        topPoolRecommendations = candidates.slice(0, 3).map(c => ({ name: c.originalName, count: c.count }));
+    } catch (e: any) {
+        queryErrors.topPoolRecommendations = e.message || String(e);
+        console.error("Error fetching topPoolRecommendations:", e);
+    }
+
     const resultPayload = {
         totalPool,
         archivedPool: archivedPoolCount,
@@ -2513,6 +2528,7 @@ app.get("/admin/stats", async (c) => {
         missingWikidataCount,
         missingPhotoCount,
         remainingPresetCount,
+        topPoolRecommendations,
         queryErrors: Object.keys(queryErrors).length > 0 ? queryErrors : undefined
     };
 
