@@ -829,6 +829,7 @@ export async function fetchMetadataFromWiki(name: string) {
       console.log(`[Wiki API] Parsed description: ${description.substring(0, 50)}...`);
       const claims = item.claims || {};
       let imageUrl = "";
+      let imageSource = "";
       
       let isHuman = false;
       if (claims.P31) {
@@ -843,6 +844,7 @@ export async function fetchMetadataFromWiki(name: string) {
         if (imageName) {
           const encodedImageName = encodeURIComponent(imageName.replace(/ /g, '_'));
           imageUrl = `https://commons.wikimedia.org/wiki/Special:FilePath/${encodedImageName}?width=500`;
+          imageSource = 'Wikidata';
         }
       }
 
@@ -861,13 +863,24 @@ export async function fetchMetadataFromWiki(name: string) {
           return null;
         };
         const enLabel = item.labels?.en?.value;
-        imageUrl = await getWikiImage("zh", zhLabel || name) || await getWikiImage("en", enLabel || name) || "";
+        const zhImage = await getWikiImage("zh", zhLabel || name);
+        if (zhImage) {
+          imageUrl = zhImage;
+          imageSource = "Wikipedia (中文)";
+        } else {
+          const enImage = await getWikiImage("en", enLabel || name);
+          if (enImage) {
+            imageUrl = enImage;
+            imageSource = "Wikipedia (英文)";
+          }
+        }
       }
       
       return {
         normalizedName: zhLabel || name,
         description,
         imageUrl: imageUrl || null,
+        imageSource: imageSource || null,
         wikidataId: entityId || null
       };
     }
@@ -1157,6 +1170,7 @@ app.post("/admin/people/:id/refresh-avatar", async (c) => {
 
   const meta = await fetchMetadataFromWiki(person.name);
   if (meta && meta.imageUrl) {
+    const sourceText = meta.imageSource ? ` (来源: ${meta.imageSource})` : '';
     if (c.env?.IMAGES) {
       try {
         const imageRes = await fetch(meta.imageUrl, { headers: { "User-Agent": "HistoricalArchiveApp/1.0" } });
@@ -1168,18 +1182,18 @@ app.post("/admin/people/:id/refresh-avatar", async (c) => {
           
           const localUrl = `/api/portraits/${encodeURIComponent(person.name.toLowerCase())}.jpg`;
           await db.prepare("UPDATE people SET image_url = ? WHERE id = ?").run(localUrl, id);
-          return c.json({ success: true, imageUrl: localUrl, message: "找到头像并成功转存" });
+          return c.json({ success: true, imageUrl: localUrl, message: `找到头像并成功转存${sourceText}` });
         }
       } catch (e) {
         console.error("Error saving image to R2", e);
       }
     }
     await db.prepare("UPDATE people SET image_url = ? WHERE id = ?").run(meta.imageUrl, id);
-    return c.json({ success: true, imageUrl: meta.imageUrl, message: "找到头像更新成功" });
+    return c.json({ success: true, imageUrl: meta.imageUrl, message: `找到头像更新成功${sourceText}` });
   }
 
   await db.prepare("UPDATE people SET image_url = 'no_photo' WHERE id = ?").run(id);
-  return c.json({ success: true, imageUrl: "no_photo", message: "未找到头像" });
+  return c.json({ success: true, imageUrl: "no_photo", message: "未找到头像 (Wikidata/Wikipedia 均无)" });
 });
 
 app.delete("/admin/people/:id", async (c) => {
