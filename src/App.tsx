@@ -351,10 +351,10 @@ export default function App() {
               <div className="flex flex-col gap-8">
                 <div className="flex items-start gap-6">
                   <button
-                    onClick={() => setZoomedImage(selectedPerson.image_url)}
+                    onClick={() => selectedPerson.image_url && selectedPerson.image_url !== "no_photo" && setZoomedImage(selectedPerson.image_url)}
                     className="w-32 h-44 bg-gradient-to-br from-slate-100 to-slate-200 rounded-2xl border border-slate-200/50 flex-shrink-0 relative overflow-hidden shadow-inner flex items-center justify-center group cursor-zoom-in"
                   >
-                    {selectedPerson.image_url ? (
+                    {selectedPerson.image_url && selectedPerson.image_url !== "no_photo" ? (
                       <img
                         src={selectedPerson.image_url}
                         alt={selectedPerson.name}
@@ -362,8 +362,8 @@ export default function App() {
                         referrerPolicy="no-referrer"
                       />
                     ) : (
-                      <div className="w-full h-full flex items-center justify-center text-slate-800 uppercase tracking-tighter text-6xl font-black italic opacity-10 rotate-12 absolute scale-150">
-                        {selectedPerson.name.slice(0, 2)}
+                      <div className="w-full h-full flex items-center justify-center bg-slate-50 text-slate-400 absolute">
+                        <User className="w-14 h-14 object-contain opacity-75" />
                       </div>
                     )}
                     <div className="absolute inset-0 bg-gradient-to-t from-slate-900/60 to-transparent flex flex-col justify-end p-3 z-10 pointer-events-none">
@@ -477,7 +477,7 @@ export default function App() {
                                   : "bg-slate-100"
                               }`}
                             >
-                              {archivedPerson?.image_url ? (
+                              {archivedPerson?.image_url && archivedPerson.image_url !== "no_photo" ? (
                                 <img
                                   src={archivedPerson.image_url}
                                   alt={rel.personName}

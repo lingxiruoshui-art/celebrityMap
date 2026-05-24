@@ -147,7 +147,7 @@ export async function doFinalizeInsert(db: DatabaseAdapter, finalName: string, p
     }
 
     const portraitUrlRaw = wikiMeta?.imageUrl;
-    const portraitUrl = `/api/portraits/${encodeURIComponent(finalName.toLowerCase())}.jpg`;
+    const portraitUrl = portraitUrlRaw ? `/api/portraits/${encodeURIComponent(finalName.toLowerCase())}.jpg` : "no_photo";
     if (c.env && c.env.IMAGES && portraitUrlRaw) {
         try {
             console.log(`[doFinalizeInsert] 正在抓取画像 -> ${portraitUrlRaw}`);

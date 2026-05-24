@@ -368,10 +368,6 @@ export default {
                   }
               }
               
-              if (!wikiMeta.imageUrl) {
-                  throw new Error(`缺少真实相片影像或档案：为了确保连通网络的品质，中心服务器拒绝接收此请求。`);
-              }
-              
               targetName = wikiMeta.normalizedName;
               await reportState({ target: targetName, phase: "ai_core", wikiMeta });
               await reportLog(`[WIKI] 特征采集成功：${wikiMeta.description.substring(0, 100)}`, "success");

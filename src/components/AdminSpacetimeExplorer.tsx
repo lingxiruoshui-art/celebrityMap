@@ -458,7 +458,8 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
     otherBlacklistCount?: number,
     peopleCount?: number,
     missingWikidataCount?: number,
-    missingPhotoCount?: number
+    missingPhotoCount?: number,
+    remainingPresetCount?: number
   } | null>(null);
   const [isDownloadingBlacklist, setIsDownloadingBlacklist] = useState<string | null>(null);
   
@@ -1093,27 +1094,9 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                         <div className="font-bold text-slate-800">{adminStats.connectedTotal} / {adminStats.connectedArchived}</div>
                     </div>
                     <div className="bg-slate-100 p-2.5 rounded-lg col-span-2 flex flex-col gap-2">
-                        <div className="flex items-center justify-between border-b border-dashed border-slate-200 pb-2">
+                        <div className="flex items-center justify-between">
                             <div>
-                                <div className="text-slate-500">缺乏照片黑名单 (失败1次及以上)</div>
-                                <div className="font-bold text-red-600 mt-0.5">{adminStats.photoBlacklistCount || 0} 人</div>
-                            </div>
-                            <button
-                              onClick={() => handleDownloadBlacklist("photos")}
-                              disabled={isDownloadingBlacklist !== null || !adminStats.photoBlacklistCount}
-                              className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white h-[26px] px-2.5 text-[10px] font-bold rounded-lg transition-all shadow-sm flex items-center justify-center gap-1 active:scale-[0.98] group"
-                            >
-                              {isDownloadingBlacklist === "photos" ? (
-                                <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                              ) : (
-                                <Download className="w-2.5 h-2.5 group-hover:translate-y-0.5 transition-transform" />
-                              )}
-                              <span>下载名单</span>
-                            </button>
-                        </div>
-                        <div className="flex items-center justify-between pt-1">
-                            <div>
-                                <div className="text-slate-500">其他错误黑名单 (失败2次及以上)</div>
+                                <div className="text-slate-500">因各种错误故障导致无法入库 (失败2次及以上)</div>
                                 <div className="font-bold text-red-600 mt-0.5">{adminStats.otherBlacklistCount || 0} 人</div>
                             </div>
                             <button
@@ -1130,12 +1113,17 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                             </button>
                         </div>
                         <div className="flex flex-col gap-1.5 pt-1.5 border-t border-dashed border-slate-200 mt-1">
-                            <div className="flex items-center justify-between">
-                                <div className="text-slate-500">Wikidata 人物全量对齐</div>
+                            <div className="flex items-start justify-between gap-1.5">
+                                <div className="flex flex-col">
+                                    <div className="text-slate-500">Wikidata 人物全量对齐</div>
+                                    <div className="text-[10px] text-slate-400 font-normal leading-normal mt-0.5 max-w-[210px]">
+                                        FIGUREPOOL尚有 <span className="font-semibold text-indigo-600">{adminStats?.remainingPresetCount ?? 0}</span> 人待入库后（被加入黑名单的除外），将转向连接池人物入库（按被连接数从高往低）
+                                    </div>
+                                </div>
                                 <button
                                   onClick={handleExportAlignment}
                                   disabled={isExportingAlignment}
-                                  className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white h-[26px] px-2.5 text-[10px] font-bold rounded-lg transition-all shadow-sm flex items-center justify-center gap-1 active:scale-[0.98]"
+                                  className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white h-[26px] px-2.5 text-[10px] font-bold rounded-lg transition-all shadow-sm flex items-center justify-center gap-1 active:scale-[0.98] shrink-0"
                                 >
                                   {isExportingAlignment ? (
                                     <Loader2 className="w-2.5 h-2.5 animate-spin" />

@@ -963,7 +963,7 @@ export default function NetworkGraph({
               <div className="flex items-start justify-between gap-3 shrink-0">
                 <div className="flex flex-col items-center gap-1 w-14 shrink-0">
                   <div className="w-8 h-8 rounded-lg bg-slate-50 overflow-hidden flex items-center justify-center text-slate-400 border border-slate-100 transition-all hover:bg-white hover:border-indigo-200 shadow-sm">
-                    {selectedRelationship.source.image_url ? (
+                    {selectedRelationship.source.image_url && selectedRelationship.source.image_url !== "no_photo" ? (
                       <img 
                         src={selectedRelationship.source.image_url} 
                         className="w-full h-full object-cover pointer-events-none" 
@@ -988,7 +988,7 @@ export default function NetworkGraph({
 
                 <div className="flex flex-col items-center gap-1 w-14 shrink-0">
                   <div className="w-8 h-8 rounded-lg bg-slate-50 overflow-hidden flex items-center justify-center text-slate-400 border border-slate-100 transition-all hover:bg-white hover:border-indigo-200 shadow-sm">
-                    {selectedRelationship.target.image_url ? (
+                    {selectedRelationship.target.image_url && selectedRelationship.target.image_url !== "no_photo" ? (
                       <img 
                         src={selectedRelationship.target.image_url} 
                         className="w-full h-full object-cover pointer-events-none" 
@@ -1041,12 +1041,17 @@ export default function NetworkGraph({
                               animationFillMode: 'both' 
                             }}
                           >
-                            <div className="w-5 h-5 shrink-0 rounded-md overflow-hidden bg-slate-100 border border-slate-200 mt-1 shadow-sm">
-                              <img 
-                                src={isSource ? selectedRelationship.source.image_url : selectedRelationship.target.image_url} 
-                                alt={msg.speaker} 
-                                className="w-full h-full object-cover" 
-                              />
+                            <div className="w-5 h-5 shrink-0 rounded-md overflow-hidden bg-slate-100 border border-slate-200 mt-1 shadow-sm flex items-center justify-center">
+                              {((isSource ? selectedRelationship.source.image_url : selectedRelationship.target.image_url) && 
+                                (isSource ? selectedRelationship.source.image_url : selectedRelationship.target.image_url) !== "no_photo") ? (
+                                <img 
+                                  src={isSource ? selectedRelationship.source.image_url : selectedRelationship.target.image_url} 
+                                  alt={msg.speaker} 
+                                  className="w-full h-full object-cover" 
+                                />
+                              ) : (
+                                <User className="w-3 h-3 text-slate-400" />
+                              )}
                             </div>
                             <div className={`group relative p-2.5 rounded-2xl text-[11px] font-medium leading-relaxed max-w-[80%] shadow-sm border ${
                               isSource 
