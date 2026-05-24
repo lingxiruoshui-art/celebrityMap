@@ -218,7 +218,7 @@ export default {
                                   body: JSON.stringify({
                                       model: modelId,
                                       messages: [
-                                          { role: "system", content: "你是一个历史学和百科知识专家。请直接返回 JSON 格式结果，不带 Markdown 格式。声明：你必须全程使用简体中文（Simplified Chinese），绝对禁止使用繁体字。此外，严禁处理或提及任何中国近代及现代政治领导人（如毛泽东等），如果涉及到此类人物，请选择一个不敏感的历史替代方案或返回 accepted: false。" },
+                                          { role: "system", content: "你是一个历史学和百科知识专家。请直接返回 JSON 格式结果，不带 Markdown 格式。声明：你必须全程使用简体中文（Simplified Chinese），绝对禁止使用繁体字。此外，严禁处理、提及或关联任何中国近代及现代政治家、革命领导人、军事或外交领袖（如毛泽东、周恩来等）和现存仍在世的人物（如刘德华等）。所有推荐、关联或连接的人也都受到这两个硬性指标的严格约束。如果涉及此类人物，请选择历史合规的替代方案，或返回 accepted: false。" },
                                           { role: "user", content: prompt }
                                       ],
                                       ...(isJson ? { response_format: { type: "json_object" } } : {})
@@ -226,7 +226,7 @@ export default {
                                });
                           } else {
                               const requestBody = {
-                                  contents: [{ parts: [{ text: prompt + "\n\n重要：请务必使用简体中文（Simplified Chinese）回答，严禁出现繁体字。此外，禁止提及中国近代及现代政治领导人（如毛泽东、周恩来等）。" }] }],
+                                  contents: [{ parts: [{ text: prompt + "\n\n重要：请务必使用简体中文（Simplified Chinese）回答，严禁出现繁体字。此外，绝对禁止提及、推荐或关联中国近代及现代政治、革命、军事或外交领导人（如毛泽东、周恩来、孙中山、蒋介石等）以及任何仍在世的人物（如刘德华等在世名人）。被推荐、连接或关联的人也完全受这两个硬性规则的限制。" }] }],
                                   generationConfig: isJson ? { responseMimeType: "application/json" } : {}
                               };
                               if (isJson && schema) requestBody.generationConfig.responseSchema = schema;
@@ -335,6 +335,7 @@ export default {
                       
                       // Check if living/still alive (P569/P570)
                       let isAliveVal = false;
+                      let birthYearVal = null;
                       if (item.claims) {
                           const hasDeathDate = !!item.claims.P570;
                           const birthTimesnak = item.claims.P569?.[0]?.mainsnak?.datavalue?.value?.time;
@@ -342,8 +343,9 @@ export default {
                               const match = birthTimesnak.match(/^\+?(-?\d+)/);
                               if (match) {
                                   const birthYear = parseInt(match[1]);
-                                  // If born after 1920 (modern scale) and has no death date, reject as living/alive.
-                                  if (birthYear > 1920 && !hasDeathDate) {
+                                  birthYearVal = birthYear;
+                                  // If born after 1905 (representing 20th century onwards) and has no death date, reject as living/alive.
+                                  if (birthYear > 1905 && !hasDeathDate) {
                                       isAliveVal = true;
                                   }
                               }
@@ -352,6 +354,17 @@ export default {
                       
                       if (isAliveVal) {
                           throw new Error(`拒绝收录：[${wikiMeta.normalizedName}] 属于现代在世人物。本时空博物馆仅收录并展示已故的历史传奇。`);
+                      }
+
+                      // Check if common forbidden Chinese politician or living person by name
+                      const listForbidden = [
+                          "周恩来", "毛泽东", "邓小平", "刘少奇", "朱德", "彭德怀", "林彪", "江泽民", "胡锦涛", "习近平", "温家宝", "朱镕基", "李克强",
+                          "蒋介石", "孙中山", "宋美龄", "宋庆龄", "宋子文", "孔祥熙", "陈独秀", "李大钊", "刘德华", "张学良", "汪精卫", "李鹏", "赵紫阳", "华国锋"
+                      ];
+                      const sName = wikiMeta.normalizedName;
+                      const matchesForbidden = listForbidden.some(item => sName.includes(item) || item.includes(sName));
+                      if (matchesForbidden) {
+                          throw new Error(`拒绝收录：[${sName}] 属于中国近代或现代政治/军事相关敏感人物，或是在世当代名人。`);
                       }
 
                       if (item.claims?.P18) {
@@ -400,8 +413,8 @@ export default {
 2. **禁止任何半角双引号 (")**：传记和格言中引用必须使用全角引号 (“ ”)。
 3. **严禁在字符串内手动换行**：段落间仅限 "\\n\\n" 分隔。
 3. **强制简体**：必须全程使用中国大陆标准的**简体中文**（Simplified Chinese），严禁使用繁体字（例如：应使用“拿破仑”而非“拿破崙”，应使用“罗伯托”而非“羅伯托”）。如果输入的参考资料中包含繁体字，请务必将其转换为简体后再输出。
-4. **负面约束**：严禁描述、建议或关联任何中国近代及现代政治领导人（Sensitive Figures）。
-5. **严禁在世人物**：本时空博物馆只收录已故的历史人物。如果该人物至今仍然在世（例如1920年之后出生且无确切去世记录、或任何至今健在的现代政治/科学/演艺界公众人物），请务必在返回的JSON中设置 "accepted": false。
+4. **负面约束**：绝对禁止选取、描述、提及或关联任何中国近代及现代政治家、革命领导人、军事或外交大员（如周恩来、毛泽东、蒋介石、孙中山等敏感政治或历史人物）。如果此人或关联推荐者有敏感政治背景，请务必设置 "accepted": false。
+5. **严禁在世人物**：本时空博物馆只收录已故的历史传奇。绝对禁止选取任何今天仍然在世或近年没有明确离世记录的人（如刘德华等仍然在世的当代歌手、演员、政商名人）。若属该情况，请务必将 "accepted": false 返回。
 6. 请确保仅返回一个合法的 JSON 对象。`;
 
               const coreSchema = {
@@ -465,7 +478,7 @@ export default {
 1. **关系网络**：必须是真实的名人。外国历史人物必须使用**通用的简体中文译名**（严禁 Einstein 这种原文，严禁使用繁体字）。
 2. **严禁英文**：personName 字段绝对禁止出现任何英文字母。
 3. **强制简体**：必须全程使用**简体中文**，严禁使用繁体字。输入的任何参考名如果是繁体，必须转换为简体。
-4. **负面约束**：严禁关联、建议或提取任何关于中国近代及现代政治领导人（Sensitive Figures）的信息。
+4. **负面约束**：绝对禁止关联、提取、建议或推荐任何中国近代及现代政治、革命、军事或外交大员（如周恩来、毛泽东、蒋介石、孙中山等敏感政治/革命人物），也绝对不能提任何现存仍在世的人物（如刘德华等目前健在的演艺、体育、政商公众人物）。被连接/关联的所有相关人物皆全量受到该条款的严格禁制限制，不合规的名人不要将其列入 relationships 中。
 5. **JSON 安全**：禁止使用半角双引号 (")，禁止在字符串内直接换行。
 6. **姓名规范**：对于中国古人，请使用其最广为人知的姓名。
 7. **内容完整性**：绝对禁止返回空数组（硬性指标）。

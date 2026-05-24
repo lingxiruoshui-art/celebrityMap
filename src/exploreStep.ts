@@ -2,6 +2,98 @@ import { DatabaseAdapter } from "./db.ts";
 import { ExploreState } from "./exploreTask.ts";
 import { sify } from "chinese-conv";
 
+export function isCommonForbiddenName(name: string): boolean {
+    const list = [
+        "周恩来", "毛泽东", "邓小平", "刘少奇", "朱德", "彭德怀", "林彪", "江泽民", "胡锦涛", "习近平", "温家宝", "朱镕基", "李克强",
+        "蒋介石", "孙中山", "宋美龄", "宋庆龄", "宋子文", "孔祥熙", "陈独秀", "李大钊", "刘德华", "张学良", "汪精卫", "李鹏", "赵紫阳", "华国锋"
+    ];
+    const n = sify(name.trim());
+    return list.some(item => n.includes(item) || item.includes(n));
+}
+
+export function checkForbiddenBack(name: string, description: string, lifespan: string, biography: string): { forbidden: boolean, reason: string | null } {
+    name = name || "";
+    description = description || "";
+    lifespan = lifespan || "";
+    biography = biography || "";
+
+    const fullText = (name + " " + description + " " + lifespan + " " + biography).toLowerCase();
+
+    if (isCommonForbiddenName(name)) {
+        return { forbidden: true, reason: `[${name}] 属于已知受限归档人物（中国近代政治家或当代在世名人）。本馆暂不予收录。` };
+    }
+
+    // 1. Check if living person
+    let isLiving = false;
+    
+    if (lifespan) {
+        const hasNow = lifespan.includes("至今") || lifespan.includes("现在") || lifespan.endsWith("-") || lifespan.endsWith("–");
+        if (hasNow) {
+            isLiving = true;
+        }
+        
+        const years = lifespan.match(/(\d+)年/g);
+        if (years && years.length > 0) {
+            const birthYear = parseInt(years[0]);
+            if (birthYear > 1905) {
+                if (years.length === 1 && (lifespan.includes("-") || lifespan.includes("–") || lifespan.includes("~"))) {
+                    isLiving = true;
+                } else if (years.length === 2) {
+                     // has birth and death, fine!
+                } else {
+                     isLiving = true;
+                }
+            }
+        }
+    }
+
+    if (isLiving) {
+        return { forbidden: true, reason: `[${name}] 属于现代在世人物。本时空博物馆仅收录并展示已经逝世的历史传奇。` };
+    }
+
+    // 2. Check if modern/contemporary Chinese politician/military/revolutionary
+    let birthYear: number | null = null;
+    if (lifespan) {
+        const years = lifespan.match(/(\d+)年/g);
+        if (years && years.length > 0) {
+            birthYear = parseInt(years[0]);
+        }
+    }
+
+    const isModernOrContemporary = !birthYear || birthYear >= 1800;
+    const isOfChineseOrigin = name.match(/[\u4e00-\u9fa5]/) && (
+        fullText.includes("中国") || 
+        fullText.includes("中共") || 
+        fullText.includes("中华") || 
+        fullText.includes("清朝") || 
+        fullText.includes("国民党") ||
+        fullText.includes("内阁")
+    );
+
+    if (isOfChineseOrigin && isModernOrContemporary) {
+        const politicalKeywords = [
+            "政治", "革命", "总理", "总统", "主席", "书记", "外交", "军事", "元帅", "将军", 
+            "中共", "共产党", "国民党", "建国", "起义", "内阁", "中委", "常委", "委员", 
+            "领导人", "官僚", "大臣", "政客", "国务卿"
+        ];
+        
+        const hasPoliticalKeyword = politicalKeywords.some(keyword => fullText.includes(keyword));
+        if (hasPoliticalKeyword) {
+            const strongPoliticalKeywords = [
+                "总理", "总统", "主席", "书记", "外交部长", "政治局", "常委", "元帅", "蒋介石",
+                "周恩来", "朱德", "刘少奇", "邓小平", "彭德怀", "林彪", "宋庆龄", "孙中山", "毛泽东",
+                "政治家", "革命家", "国民党", "北洋", "大总统"
+            ];
+            const hasStrongPoliticalKeyword = strongPoliticalKeywords.some(keyword => fullText.includes(keyword));
+            if (hasStrongPoliticalKeyword) {
+                return { forbidden: true, reason: `[${name}] 属于中国近代或现代政治/军事/革命领导人物（系统解析到包含核心政治属性或敏感情境）。本馆暂不收录此类人物。` };
+            }
+        }
+    }
+
+    return { forbidden: false, reason: null };
+}
+
 function generateWikidataSearchTerms(name: string): string[] {
   const terms: string[] = [];
   const rawClean = name.trim();
@@ -139,11 +231,30 @@ export async function initExplorationState(
 export async function doFinalizeInsert(db: DatabaseAdapter, finalName: string, personData: any, wikiMeta: any, c: any, addRelationship: any, addLog: any, onDiscover?: (name: string, type: string) => Promise<void>) {
     finalName = sify(finalName.trim());
     const originalName = finalName;
+
+    // Check main target against forbidden criteria (political/living)
+    const checkTarget = checkForbiddenBack(finalName, wikiMeta?.description, personData.lifespan, personData.biography);
+    if (checkTarget.forbidden) {
+        if (addLog) addLog(`落库校验熔断: ${checkTarget.reason}`, "error");
+        throw new Error(checkTarget.reason || "触碰中国近代政治家或在世当代名人限制。");
+    }
+
     if (personData.relationships && Array.isArray(personData.relationships)) {
-        personData.relationships = personData.relationships.map((rel: any) => ({
-            ...rel,
-            personName: sify((rel.personName || "").trim())
-        }));
+        personData.relationships = personData.relationships
+            .map((rel: any) => ({
+                ...rel,
+                personName: sify((rel.personName || "").trim())
+            }))
+            .filter((rel: any) => {
+                const name = rel.personName;
+                if (!name || name.length < 2) return false;
+                if (isCommonForbiddenName(name)) {
+                    console.log(`[Validation Check] 过滤掉禁用关联人物: ${name}`);
+                    if (addLog) addLog(`过滤掉禁用关联人物: ${name}`, "info");
+                    return false;
+                }
+                return true;
+            });
     }
 
     const portraitUrlRaw = wikiMeta?.imageUrl;

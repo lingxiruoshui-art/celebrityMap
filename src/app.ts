@@ -4,7 +4,7 @@ import { GoogleGenAI } from "@google/genai";
 import { D1DatabaseAdapter, DatabaseAdapter } from "./db.ts";
 import { CATEGORIES, FIGURE_POOL } from "./figuresPool.ts";
 import { EXPAND_CONNECTIONS_PROMPT, EXPAND_CONNECTIONS_SCHEMA } from "./services/aiService.ts";
-import { initExplorationState, doFinalizeInsert } from "./exploreStep.ts";
+import { initExplorationState, doFinalizeInsert, isCommonForbiddenName, checkForbiddenBack } from "./exploreStep.ts";
 import { sify } from "chinese-conv";
 
 const root = new Hono<{ 
@@ -1809,9 +1809,9 @@ app.post("/archiver/generate-target", async (c) => {
 1. 不包含在以下列表中：[${sampleNames}]
 2. 此人必须在 Wikidata/Wikipedia 有详尽记载。
 3. 请只返回此人的标准中文译名（必须是简体中文），不带任何其他文字。
-4. 禁止选取中国近代及现代政治领导人（如毛泽东等）。
+4. 绝对禁止选取任何中国近代及现代政治家、革命领导人、军事或外交统帅（如周恩来、孙中山、蒋介石、毛泽东等）。被选取及未来被连接/关联的人全量受到该条款的严格限制。
 5. 严禁出现繁体字。
-6. 必须是已故的历史人物，严禁选取任何仍然在世的当代名人（如马斯克、比尔·盖茨等当代尚健在的人物）。`;
+6. 必须是已故的历史人物，绝对禁止选取任何仍然在世的当代名人（如刘德华等目前健在的演艺明星、体育大咖、科技商界政要等）。`;
 
   try {
       const resultText = await callAI(c, db, prompt, "text");
@@ -1834,6 +1834,10 @@ app.post("/archive-figure", async (c) => {
   // Use the enqueue logic instead of direct processing
   const targetName = sify((personName || "").trim());
   if (!targetName) return c.json({ error: "Invalid target" }, 400);
+
+  if (isCommonForbiddenName(targetName)) {
+      return c.json({ error: `[${targetName}] 属于已知受限归档人物（中国近代政治家或当代在世名人）。本馆暂不予收录。` }, 400);
+  }
   
   // Resolve Wikidata ID immediately to search for standard spellings and avoid duplicate archival
   let wikidataId: string | null = null;
@@ -2276,6 +2280,11 @@ app.post("/internal/submit", async (c) => {
                  
                  const normalizedRelation = sify(relatedName.trim());
                  if (!normalizedRelation || normalizedRelation.length < 2 || normalizedRelation.length > 40) return;
+
+                 if (isCommonForbiddenName(normalizedRelation)) {
+                     console.log(`[Validation Check] 拦截自动加入禁用关联人物: ${normalizedRelation}`);
+                     return;
+                 }
 
                  // 拦截检测：如果姓名中包含英文 A-Z (且不是极短的特殊缩写)，则视为未翻译别名，不入排队队列
                  if (/[a-zA-Z]/.test(normalizedRelation) && normalizedRelation.length > 4) {
