@@ -243,31 +243,8 @@ async function runBackgroundAlignment(db: DatabaseAdapter) {
 }
 
 export async function autoCleanupOtherBlacklist(db: DatabaseAdapter) {
-  try {
-    // Delete any photo errors from queue to immediately unblock them
-    await db.prepare("DELETE FROM explore_queue WHERE reason LIKE '%缺少真实相片%'").run();
-
-    const otherBlacklistRows = await db.prepare(`
-        SELECT DISTINCT LOWER(target_name) as target_name 
-        FROM explore_queue 
-        WHERE status = 'error' 
-        GROUP BY LOWER(target_name) 
-        HAVING COUNT(*) >= 2
-    `).all() as any[];
-
-    if (otherBlacklistRows && otherBlacklistRows.length > 0) {
-      console.log(`[Auto Startup Cleanup] Cleaning other error blacklist for:`, otherBlacklistRows.map(r => r.target_name));
-      for (const row of otherBlacklistRows) {
-        await db.prepare(`
-            DELETE FROM explore_queue 
-            WHERE LOWER(target_name) = ? 
-              AND status = 'error'
-        `).run(row.target_name);
-      }
-    }
-  } catch (err) {
-    console.error("Failed autoCleanupOtherBlacklist:", err);
-  }
+  // Disabled automatically clearing blacklist/errors on startup as requested
+  console.log("[Auto Startup Cleanup] Automatic cleanup of error blacklist has been disabled.");
 }
 
 export async function getDb(c: any): Promise<DatabaseAdapter> {
