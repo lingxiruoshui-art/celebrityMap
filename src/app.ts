@@ -1591,19 +1591,13 @@ app.post("/pathfind", async (c) => {
   let { sourceName, targetName } = await c.req.json();
   if (!sourceName || !targetName) return c.json({ error: "Missing names" }, 400);
 
-  // Optimize: only load needed columns and use efficient lookups
-  const people = await db.prepare("SELECT id, name FROM people").all() as any[];
+  const people = await db.prepare("SELECT id, name, raw_relationships FROM people").all() as any[];
+  const relationships = await db.prepare("SELECT * FROM relationships").all() as any[];
+
   const nameToId = new Map(people.map(p => [p.name, p.id]));
   const idToName = new Map(people.map(p => [p.id, p.name]));
 
-  const startId = nameToId.get(sourceName);
-  const endId = nameToId.get(targetName);
-
-  if (startId === undefined || endId === undefined) return c.json({ path: null });
-
-  const relationships = await db.prepare("SELECT person1_id, person2_id, relationship_type FROM relationships").all() as any[];
   const adj = new Map<number, { id: number, type: string }[]>();
-  
   relationships.forEach(r => {
     if (!adj.has(r.person1_id)) adj.set(r.person1_id, []);
     if (!adj.has(r.person2_id)) adj.set(r.person2_id, []);
@@ -1611,27 +1605,45 @@ app.post("/pathfind", async (c) => {
     adj.get(r.person2_id)!.push({ id: r.person1_id, type: r.relationship_type });
   });
 
-  const queue: { id: number, path: { name: string, type?: string }[] }[] = [{ id: startId, path: [{ name: sourceName }] }];
-  const visited = new Set([startId]);
-  let head = 0;
+  people.forEach(p => {
+    try {
+      const raw = JSON.parse(p.raw_relationships || "[]");
+      raw.forEach((r: any) => {
+        if (!r.personName) return;
+        const targetId = nameToId.get(r.personName);
+        if (targetId !== undefined && targetId !== p.id) {
+          if (!adj.has(p.id)) adj.set(p.id, []);
+          if (!adj.get(p.id)!.some(n => n.id === targetId)) adj.get(p.id)!.push({ id: targetId, type: r.relationshipType || "历史关联" });
+          if (!adj.has(targetId)) adj.set(targetId, []);
+          if (!adj.get(targetId)!.some(n => n.id === p.id)) adj.get(targetId)!.push({ id: p.id, type: r.relationshipType || "历史关联" });
+        }
+      });
+    } catch (e) {}
+  });
 
-  while (head < queue.length) {
-    const { id, path } = queue[head++];
-    if (id === endId) return c.json({ path });
+  const startId = nameToId.get(sourceName);
+  const endId = nameToId.get(targetName);
 
-    const neighbors = adj.get(id) || [];
-    for (const n of neighbors) {
-      if (!visited.has(n.id)) {
-        visited.add(n.id);
-        queue.push({ id: n.id, path: [...path, { name: idToName.get(n.id)!, type: n.type }] });
+  if (startId !== undefined && endId !== undefined) {
+    const queue: { id: number, path: { name: string, type?: string }[] }[] = [{ id: startId, path: [{ name: sourceName }] }];
+    const visited = new Set([startId]);
+
+    while (queue.length > 0) {
+      const { id, path } = queue.shift()!;
+      if (id === endId) return c.json({ path });
+
+      const neighbors = adj.get(id) || [];
+      for (const n of neighbors) {
+        if (!visited.has(n.id)) {
+          visited.add(n.id);
+          queue.push({ id: n.id, path: [...path, { name: idToName.get(n.id)!, type: n.type }] });
+        }
       }
     }
-    if (queue.length > 2000) break; // Safety break
   }
 
   return c.json({ path: null });
 });
-
 app.post("/archiver/chat", async (c) => {
   const db = await getDb(c);
   const { person1, person2 } = await c.req.json();
@@ -1649,51 +1661,16 @@ app.post("/archiver/chat", async (c) => {
 
 请模拟这两人之间的一场极其精彩的跨时空对话。要求如下：
 1. **回合与句子限制**：两个人之间进行 2~3 个回合（来回），对话条数总共正好产生 4~6 句话。
-2. **字数严格限制**：每句话的长度必须限制在 1~20 个字（汉字/字符）之间。极其简练，杜绝废话，多一个字都会被系统截断！
-3. **经典气质与形象特征**：两个历史人物应极度保留其历史上的经典气质、学说口吻与性格习惯，形象特色鲜明、高辨识度，严禁千人一面。
-4. **对白风格与化学反应**：对白必须兼具深邃哲思与风趣幽默，化学反应鲜明亮眼，拒绝白开水对话。
-5. **强烈的情感冲击**：可以是充满犀利吐槽的超级爆笑、带着黑色幽默的超级讽刺、或是直击宿命遗憾的超级感人。必须非常接地气、抓人眼球，让普通现代观众能瞬间被吸引和代入。
-6. **合规与规范**：你必须全程使用简体中文，严禁使用任何繁体字，坚决不涉及任何中国近代以来的政治敏感人物和话题。
+2. **字数严格限制**：每句话的长度必须限制在 1~20 个字（汉语字符）。
+3. 语气和语感要极具特色，必须完美契合该历史人物的个性和背景设定。
+4. 必须直接返回 JSON 对象，不要用 markdown 标记。其格式为 {"messages": [{"speaker": "人物名字", "text": "内容"}, ...]}，其中的"人物名字"必须完全是 ${p1Data.name} 或 ${p2Data.name}。`;
 
-请直接返回 JSON 数组，格式如下：
-[
-  { "speaker": "${p1Data.name}", "text": "..." },
-  { "speaker": "${p2Data.name}", "text": "..." },
-  ...
-]
-只返回 JSON 代码块，不要包含 Markdown 格式。`;
-
-      const result = await callAI(c, db, prompt, "json", {
-          type: "array",
-          items: {
-              type: "object",
-              properties: {
-                  speaker: { type: "string" },
-                  text: { type: "string" }
-              },
-              required: ["speaker", "text"]
-          }
-      });
-
-      const messages = JSON.parse(result || "[]");
-      // Enforce dialog length limit on the backend result just in case
-      const validatedMessages = messages.map((m: any) => ({
-          speaker: m.speaker,
-          text: (m.text || "").substring(0, 20)
-      }));
-      return c.json({ messages: validatedMessages });
+      const resultText = await callAI(c, db, prompt, "json");
+      const data = JSON.parse(resultText);
+      return c.json(data);
   } catch (e: any) {
-      console.error("Chat error:", e);
-      return c.json({ error: "跨时空通讯信号中断: " + e.message }, 500);
+      return c.json({ error: e.message }, 500);
   }
-});
-
-app.get("/archiver/random-pair", async (c) => {
-  const db = await getDb(c);
-  const count = await db.prepare("SELECT COUNT(*) as count FROM people").get() as { count: number };
-  if (count.count < 2) return c.json({ error: "Need at least 2 people in database" }, 400);
-  const people = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 2").all() as any[];
-  return c.json({ sourceName: people[0].name, targetName: people[1].name });
 });
 
 export async function pickTarget(db: DatabaseAdapter) {
@@ -1745,8 +1722,38 @@ export async function pickTarget(db: DatabaseAdapter) {
     }
     return array;
   };
-  
-  // Priority 1: From pre-defined Figure Pool (Background Collection) via the database table figure_pool_sync
+
+  // Priority 1: From Relationships (Secondary Nodes / Connected figures) - Pick most connected (Connection Pool, sorted by connection count high to low)
+  const connectedCounts = new Map<string, { originalName: string, count: number }>();
+  people.forEach(p => {
+    try {
+      const rels = JSON.parse(p.raw_relationships || "[]");
+      rels.forEach((r: any) => {
+        if (r.personName) {
+           const lowName = r.personName.trim().toLowerCase();
+           if (!isFigInDb(r.personName, archivedNamesList)) {
+              const existing = connectedCounts.get(lowName);
+              if (existing) {
+                  existing.count++;
+               } else {
+                  connectedCounts.set(lowName, { originalName: r.personName, count: 1 });
+               }
+           }
+        }
+      });
+    } catch(e) {}
+  });
+
+  if (connectedCounts.size >= 1) {
+      const candidates = Array.from(connectedCounts.values());
+      candidates.sort((a, b) => b.count - a.count);
+      const topCount = candidates[0].count;
+      const topCandidates = candidates.filter(c => c.count === topCount);
+      const picked = topCandidates[Math.floor(Math.random() * topCandidates.length)].originalName;
+      return { targetName: picked, strategy: `时空关系高阶补位 (连接数: ${topCount})` };
+  }
+
+  // Priority 2: From pre-defined Figure Pool (Background Collection) via the database table figure_pool_sync (Fallback if no connections left)
   const poolUnarchivedRows = await db.prepare(`
     SELECT preset_name FROM figure_pool_sync
     WHERE is_archived = 0
@@ -1767,36 +1774,6 @@ export async function pickTarget(db: DatabaseAdapter) {
   if (uniquePoolUnarchived.length >= 1) {
       const picked = shuffle([...uniquePoolUnarchived])[0];
       return { targetName: picked, strategy: "图谱预设池" };
-  }
-
-  // Priority 2: From Relationships (Secondary Nodes / Connected figures) - Pick most connected
-  const connectedCounts = new Map<string, { originalName: string, count: number }>();
-  people.forEach(p => {
-    try {
-      const rels = JSON.parse(p.raw_relationships || "[]");
-      rels.forEach((r: any) => {
-        if (r.personName) {
-           const lowName = r.personName.trim().toLowerCase();
-           if (!isFigInDb(r.personName, archivedNamesList)) {
-              const existing = connectedCounts.get(lowName);
-              if (existing) {
-                  existing.count++;
-              } else {
-                  connectedCounts.set(lowName, { originalName: r.personName, count: 1 });
-              }
-           }
-        }
-      });
-    } catch(e) {}
-  });
-
-  if (connectedCounts.size >= 1) {
-      const candidates = Array.from(connectedCounts.values());
-      candidates.sort((a, b) => b.count - a.count);
-      const topCount = candidates[0].count;
-      const topCandidates = candidates.filter(c => c.count === topCount);
-      const picked = topCandidates[Math.floor(Math.random() * topCandidates.length)].originalName;
-      return { targetName: picked, strategy: `时空关系高阶补位 (连接数: ${topCount})` };
   }
   
   // Fallback: Empty state

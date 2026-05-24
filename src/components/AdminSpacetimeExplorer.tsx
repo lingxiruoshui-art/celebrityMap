@@ -1138,7 +1138,7 @@ export default forwardRef<SpacetimeExplorerHandle, SpacetimeExplorerProps>(funct
                                 <div className="flex flex-col min-w-0">
                                     <div className="text-slate-500 font-bold">Wikidata 人物全量对齐</div>
                                     <div className="text-[10px] text-slate-400 font-normal leading-relaxed mt-0.5">
-                                        FIGUREPOOL尚有 <span className="font-semibold text-indigo-600">{adminStats?.remainingPresetCount ?? 0}</span> 人待入库后（被加入黑名单的除外），将转向连接池人物入库（按被连接数从高往低）
+                                        时空角色与 Wikidata 库全量关联对齐与数据导出
                                     </div>
                                 </div>
                                 <button
