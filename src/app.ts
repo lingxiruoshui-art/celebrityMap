@@ -830,6 +830,14 @@ export async function fetchMetadataFromWiki(name: string) {
       const claims = item.claims || {};
       let imageUrl = "";
       
+      let isHuman = false;
+      if (claims.P31) {
+          isHuman = claims.P31.some((c: any) => c.mainsnak?.datavalue?.value?.id === 'Q5');
+      }
+      if (!isHuman && !claims.P569 && !claims.P570) {
+          throw new Error(`[${zhLabel || name}] 疑似非历史人物实体（无 Q5/生卒时间）。系统仅收录历史名宿。`);
+      }
+      
       if (claims.P18 && claims.P18.length > 0) {
         const imageName = claims.P18[0].mainsnak?.datavalue?.value;
         if (imageName) {
@@ -871,9 +879,11 @@ export async function fetchMetadataFromWiki(name: string) {
 }
 
 async function getPortraitUrl(c: any, name: string): Promise<string | null> {
-  const imagesBucket = c.env?.IMAGES;
-  const localPath = `/api/portraits/${encodeURIComponent(name.toLowerCase())}.jpg`;
-  return localPath;
+  const meta = await fetchMetadataFromWiki(name);
+  if (meta && meta.imageUrl) {
+    return meta.imageUrl;
+  }
+  return "no_photo";
 }
 
 export async function addRelationship(db: DatabaseAdapter, p1: number, p2: number, type: string) {
@@ -917,114 +927,36 @@ app.get("/sitemap.xml", async (c) => {
 
 app.get("/health", (c) => c.json({ status: "ok" }));
 
-async function fetchAndStoreImage(c: any, filename: string) {
-  const imagesBucket = c.env?.IMAGES;
-  
-  const nameString = String(filename || "");
-  const name = decodeURIComponent(nameString.replace(/\.jpg$/i, ''));
-  const headers = { "User-Agent": "HistoricalArchiveApp/1.0" };
+app.get("/portraits/:filename", async (c) => {
+  const db = await getDb(c);
+  const rawFilename = c.req.param("filename");
+  const namePart = decodeURIComponent(rawFilename.replace(/\.jpg$/i, ''));
   
   try {
-    let finalUrl = "";
-    
-    // Search in Wikipedia/Wikidata
-    const searchWikidata = async (lang: string) => {
-      const res = await fetch(`https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(name)}&language=${lang}&format=json`, { headers });
-      const data = await res.json() as any;
-      return data.search?.[0];
-    };
-
-    let entity = await searchWikidata("zh");
-    if (!entity) entity = await searchWikidata("en");
-    if (entity) {
-      const entityRes = await fetch(`https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${entity.id}&props=claims&format=json`, { headers });
-      const entityData = await entityRes.json() as any;
-      const item = entityData.entities[entity.id];
-      if (item && item.claims && item.claims.P18 && item.claims.P18.length > 0) {
-        const imageName = item.claims.P18[0].mainsnak?.datavalue?.value;
-        if (imageName) {
-          finalUrl = `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(imageName.replace(/ /g, '_'))}?width=500`;
-        }
-      }
-    }
-
-    if (!finalUrl) {
-      const getWikiImage = async (lang: string) => {
-        const wikiRes = await fetch(`https://${lang}.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(name)}&prop=pageimages&format=json&pithumbsize=500`, { headers });
-        const wikiData = await wikiRes.json() as any;
-        const pages = wikiData.query?.pages;
-        if (pages) {
-          const pageId = Object.keys(pages)[0];
-          if (pageId !== "-1" && pages[pageId].thumbnail) return pages[pageId].thumbnail.source;
-        }
-        return null;
-      };
-      finalUrl = await getWikiImage("zh") || await getWikiImage("en") || "";
-    }
-
-    if (!finalUrl) {
-      finalUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent("Historical portrait of " + name + ", realistic oil painting style, highly detailed, historical accuracy")}`;
-    }
-
-    if (finalUrl) {
-      const imageRes = await fetch(finalUrl, { headers });
-      if (imageRes.ok) {
-        const contentType = imageRes.headers.get("content-type") || "image/jpeg";
-        const buffer = await imageRes.arrayBuffer();
-        
-        if (imagesBucket) {
-           // We derive the canonical key here
-           const canonicalKey = `portraits/${encodeURIComponent(name.toLowerCase())}.jpg`;
-           await imagesBucket.put(canonicalKey, buffer, { httpMetadata: { contentType: contentType } });
-        }
-        
-        return { body: buffer, contentType };
-      }
+    const meta = await fetchMetadataFromWiki(namePart);
+    if (meta && meta.imageUrl) {
+       // Lazy migration: directly update the database with the real remote URL to prevent future hits
+       await db.prepare("UPDATE people SET image_url = ? WHERE name = ? COLLATE NOCASE").run(meta.imageUrl, namePart);
+       return c.redirect(meta.imageUrl, 302);
     }
   } catch (e) {
-    console.error("Lazy transfer error for", name, e);
+    console.error("Migration fallback error for", namePart, e);
   }
-  return null;
-}
 
-app.get("/portraits/:filename", async (c) => {
-  const imagesBucket = c.env?.IMAGES;
-  const rawFilename = c.req.param("filename");
-  // Hono param is decoded, so we re-normalize it for R2 search
-  const namePart = rawFilename.replace(/\.jpg$/i, '');
-  const r2Key = `portraits/${encodeURIComponent(namePart.toLowerCase())}.jpg`;
+  // If no image is available, update database to no_photo to prevent future hits
+  try {
+     await db.prepare("UPDATE people SET image_url = 'no_photo' WHERE name = ? COLLATE NOCASE").run(namePart);
+  } catch(e) {}
+
+  // Return a generic fallback SVG icon matching <User /> from Lucide
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-user"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`;
   
-  if (imagesBucket) {
-    let object = await imagesBucket.get(r2Key);
-    
-    if (!object) {
-      const result = await fetchAndStoreImage(c, rawFilename);
-      if (result) {
-        const headers = new Headers();
-        headers.set("Content-Type", result.contentType);
-        headers.set("Cache-Control", "public, max-age=31536000, immutable");
-        return new Response(result.body as any, { headers });
-      }
-      return c.json({ error: "Image not found" }, 404);
+  return new Response(svg, {
+    headers: {
+      "Content-Type": "image/svg+xml",
+      "Cache-Control": "public, max-age=86400"
     }
-    
-    const headers = new Headers();
-    object.writeHttpMetadata(headers);
-    headers.set("etag", object.httpEtag);
-    headers.set("Cache-Control", "public, max-age=31536000, immutable");
-    
-    return new Response(object.body as any, { headers });
-  } else {
-    // If no R2 bucket (e.g. in AI Studio preview), just fetch and stream
-    const result = await fetchAndStoreImage(c, rawFilename);
-    if (result) {
-      const headers = new Headers();
-      headers.set("Content-Type", result.contentType);
-      headers.set("Cache-Control", "public, max-age=31536000, immutable");
-      return new Response(result.body as any, { headers });
-    }
-    return c.json({ error: "Image not found (No R2)" }, 404);
-  }
+  });
 });
 
 app.post("/admin/verify", async (c) => {
@@ -1426,7 +1358,7 @@ app.get("/archive", async (c) => {
   people = people.map(p => ({
     ...p,
     connectionsCount: relationshipCounts.get(p.id) || 0,
-    image_url: `/api/portraits/${encodeURIComponent(p.name.toLowerCase())}.jpg`
+    image_url: p.image_url || `/api/portraits/${encodeURIComponent(p.name.toLowerCase())}.jpg`
   }));
 
   return c.json({ people, relationships, total, page, limit });

@@ -258,22 +258,7 @@ export async function doFinalizeInsert(db: DatabaseAdapter, finalName: string, p
     }
 
     const portraitUrlRaw = wikiMeta?.imageUrl;
-    const portraitUrl = portraitUrlRaw ? `/api/portraits/${encodeURIComponent(finalName.toLowerCase())}.jpg` : "no_photo";
-    if (c.env && c.env.IMAGES && portraitUrlRaw) {
-        try {
-            console.log(`[doFinalizeInsert] 正在抓取画像 -> ${portraitUrlRaw}`);
-            const imgRes = await fetch(portraitUrlRaw);
-            if (imgRes.ok) {
-                const buffer = await imgRes.arrayBuffer();
-                await c.env.IMAGES.put(`portraits/${encodeURIComponent(finalName.toLowerCase())}.jpg`, buffer, {
-                    httpMetadata: { contentType: imgRes.headers.get("content-type") || "image/jpeg" }
-                });
-                if (addLog) addLog(`肖像同步成功`, "success");
-            }
-        } catch(e) {
-            console.log(`[doFinalizeInsert] 画像抓取失败，略过`, e);
-        }
-    }
+    const portraitUrl = portraitUrlRaw ? portraitUrlRaw : "no_photo";
     
     // Resolve Wikidata ID for the person
     let wikidataId = wikiMeta?.wikidataId || null;

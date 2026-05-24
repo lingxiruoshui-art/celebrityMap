@@ -333,6 +333,16 @@ export default {
                       wikiMeta.normalizedName = item.labels?.zh?.value || entity.label || targetName;
                       wikiMeta.description = item.descriptions?.zh?.value || item.descriptions?.en?.value || entity.description || "";
                       
+                      // Check if it's a human
+                      let isHuman = false;
+                      if (item.claims?.P31) {
+                          isHuman = item.claims.P31.some(c => c.mainsnak?.datavalue?.value?.id === 'Q5');
+                      }
+                      // If it's not a human (Q5) and lacks basic life events, reject it
+                      if (!isHuman && !item.claims?.P569 && !item.claims?.P570) {
+                          throw new Error(`拒绝收录：[${wikiMeta.normalizedName}] 经系统判断可能不是真实人物实体（如非组织、虚构概念或项目等）。本馆仅收录历史人物。`);
+                      }
+
                       // Check if living/still alive (P569/P570)
                       let isAliveVal = false;
                       let birthYearVal = null;
