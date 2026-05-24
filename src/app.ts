@@ -1830,6 +1830,14 @@ app.post("/archiver/pick-target", async (c) => {
   return c.json(await pickTarget(db));
 });
 
+app.get("/archiver/random-pair", async (c) => {
+  const db = await getDb(c);
+  const count = await db.prepare("SELECT COUNT(*) as count FROM people").get() as { count: number };
+  if (!count || count.count < 2) return c.json({ error: "Need at least 2 people in database" }, 400);
+  const people = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 2").all() as any[];
+  return c.json({ sourceName: people[0].name, targetName: people[1].name });
+});
+
 app.post("/archiver/generate-target", async (c) => {
   const db = await getDb(c);
   const samplePeople = await db.prepare("SELECT name FROM people ORDER BY RANDOM() LIMIT 20").all() as any[];
