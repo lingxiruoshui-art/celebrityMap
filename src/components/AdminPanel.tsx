@@ -492,10 +492,10 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
       if (res.ok) {
         const data = await res.json() as any;
         if (data.success) {
-          showNotification('success', '头像回退更新成功');
+          showNotification('success', data.message || '头像更新成功');
           fetchArchive(); // Refresh list to get new image_url
         } else {
-          showNotification('error', data.error || '头像回退更新失败');
+          showNotification('error', data.error || '头像更新失败');
         }
       }
     } catch (e) {

@@ -323,7 +323,17 @@ export default {
               try {
                   const searchRes = await fetch(`https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(targetName)}&language=zh&format=json`, { headers });
                   const searchData = await searchRes.json();
-                  const entity = searchData.search?.[0];
+                  let entity = searchData.search?.[0];
+                  
+                  if (!entity) {
+                      // Fallback to English search by removing non-English chars temporarily
+                      const cleanEng = targetName.replace(/[·\-\s\.]+$/, "").trim();
+                      if (cleanEng && cleanEng !== targetName) {
+                          const engSearchRes = await fetch(`https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(cleanEng)}&language=en&format=json`, { headers });
+                          const engSearchData = await engSearchRes.json();
+                          entity = engSearchData.search?.[0];
+                      }
+                  }
                   
                   if (entity) {
                       const entityRes = await fetch(`https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${entity.id}&props=claims|descriptions|labels&languages=zh|en&format=json`, { headers });
@@ -384,10 +394,12 @@ export default {
                           }
                       }
                       
+                      const enLabel = item.labels?.en?.value;
                       if (!wikiMeta.imageUrl) {
-                          const getWikiImage = async (lang) => {
+                          const getWikiImage = async (lang, searchTitle) => {
+                              if (!searchTitle) return null;
                               try {
-                                  const wikiRes = await fetch(`https://${lang}.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(wikiMeta.normalizedName)}&prop=pageimages&format=json&pithumbsize=500`, { headers });
+                                  const wikiRes = await fetch(`https://${lang}.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(searchTitle)}&prop=pageimages&format=json&pithumbsize=500`, { headers });
                                   const wikiData = await wikiRes.json();
                                   const pages = wikiData.query?.pages;
                                   if (pages) {
@@ -397,12 +409,12 @@ export default {
                               } catch (e) {}
                               return null;
                           };
-                          wikiMeta.imageUrl = await getWikiImage("zh") || await getWikiImage("en") || null;
+                          wikiMeta.imageUrl = await getWikiImage("zh", wikiMeta.normalizedName) || await getWikiImage("en", enLabel || targetName) || null;
                       }
                   }
               } catch (e) {
                   console.error("Wiki Error", e);
-                  if (e.message && e.message.includes("现代在世人物")) {
+                  if (e.message && (e.message.includes("拒绝收录") || e.message.includes("现代在生人物") || e.message.includes("不符合收录条件"))) {
                       throw e;
                   }
               }
@@ -439,9 +451,10 @@ export default {
 2. **禁止任何半角双引号 (")**：传记和格言中引用必须使用全角引号 (“ ”)。
 3. **严禁在字符串内手动换行**：段落间仅限 "\\n\\n" 分隔。
 3. **强制简体**：必须全程使用中国大陆标准的**简体中文**（Simplified Chinese），严禁使用繁体字（例如：应使用“拿破仑”而非“拿破崙”，应使用“罗伯托”而非“羅伯托”）。如果输入的参考资料中包含繁体字，请务必将其转换为简体后再输出。
-4. **负面约束**：绝对禁止选取、描述、提及或关联任何中国近代及现代政治家、革命领导人、军事或外交大员（如周恩来、毛泽东、蒋介石、孙中山等敏感政治或历史人物）。如果此人或关联推荐者有敏感政治背景，请务必设置 "accepted": false。
-5. **严禁在世人物**：本时空博物馆只收录已故的历史传奇。绝对禁止选取任何今天仍然在世或近年没有明确离世记录的人（如刘德华等仍然在世的当代歌手、演员、政商名人）。若属该情况，请务必将 "accepted": false 返回。
-6. 请确保仅返回一个合法的 JSON 对象。`;
+4. **严禁非人实体**：向 Wikidata 二次确认，如果该词条（${targetName}）实际上并不是一个真实存在的历史人物（例如它是一部作品名称如“维瓦尔第作品列表”、书籍、神话生物、事件、组织机构等），请务必将 \`"accepted": false\` 并在 biography 给出原因反馈。
+5. **负面约束**：绝对禁止选取、描述、提及或关联任何中国近代及现代政治家、革命领导人、军事或外交大员（如周恩来、毛泽东、蒋介石、孙中山等敏感政治或历史人物）。如果此人或关联推荐者有敏感政治背景，请务必设置 "accepted": false。
+6. **严禁在世人物**：本时空博物馆只收录已故的历史传奇。绝对禁止选取任何今天仍然在世或近年没有明确离世记录的人（如刘德华等仍然在世的当代歌手、演员、政商名人）。若属该情况，请务必将 "accepted": false 返回。
+7. 请确保仅返回一个合法的 JSON 对象。`;
 
               const coreSchema = {
                   type: "OBJECT",
@@ -468,7 +481,7 @@ export default {
               }
 
               if (!coreData || coreData.accepted === false) {
-                  throw new Error(`目标基础资料缺失或并非受支持的绝对真实历史人物大图鉴内容。`);
+                  throw new Error(`目标基础资料缺失或并非受支持的历史人物实体。AI 反馈：${coreData ? coreData.biography : '解析失败'}`);
               }
               
               await reportLog("核心档案确立。", "success");

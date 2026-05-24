@@ -847,9 +847,10 @@ export async function fetchMetadataFromWiki(name: string) {
       }
 
       if (!imageUrl) {
-        const getWikiImage = async (lang: string) => {
+        const getWikiImage = async (lang: string, searchTitle: string) => {
+          if (!searchTitle) return null;
           try {
-            const wikiRes = await fetch(`https://${lang}.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(zhLabel || name)}&prop=pageimages&format=json&pithumbsize=500`, { headers });
+            const wikiRes = await fetch(`https://${lang}.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(searchTitle)}&prop=pageimages&format=json&pithumbsize=500`, { headers });
             const wikiData = await wikiRes.json() as any;
             const pages = wikiData.query?.pages;
             if (pages) {
@@ -859,7 +860,8 @@ export async function fetchMetadataFromWiki(name: string) {
           } catch (e) {}
           return null;
         };
-        imageUrl = await getWikiImage("zh") || await getWikiImage("en") || "";
+        const enLabel = item.labels?.en?.value;
+        imageUrl = await getWikiImage("zh", zhLabel || name) || await getWikiImage("en", enLabel || name) || "";
       }
       
       return {
@@ -1151,7 +1153,7 @@ app.post("/admin/people/:id/refresh-avatar", async (c) => {
   const db = await getDb(c);
   const id = c.req.param("id");
   const person = await db.prepare("SELECT name FROM people WHERE id = ?").get(id) as any;
-  if (!person) return c.json({ error: "Person found" }, 404);
+  if (!person) return c.json({ error: "Person not found" }, 404);
 
   const meta = await fetchMetadataFromWiki(person.name);
   if (meta && meta.imageUrl) {
@@ -1166,18 +1168,18 @@ app.post("/admin/people/:id/refresh-avatar", async (c) => {
           
           const localUrl = `/api/portraits/${encodeURIComponent(person.name.toLowerCase())}.jpg`;
           await db.prepare("UPDATE people SET image_url = ? WHERE id = ?").run(localUrl, id);
-          return c.json({ success: true, imageUrl: localUrl });
+          return c.json({ success: true, imageUrl: localUrl, message: "找到头像并成功转存" });
         }
       } catch (e) {
         console.error("Error saving image to R2", e);
       }
     }
     await db.prepare("UPDATE people SET image_url = ? WHERE id = ?").run(meta.imageUrl, id);
-    return c.json({ success: true, imageUrl: meta.imageUrl });
+    return c.json({ success: true, imageUrl: meta.imageUrl, message: "找到头像更新成功" });
   }
 
   await db.prepare("UPDATE people SET image_url = 'no_photo' WHERE id = ?").run(id);
-  return c.json({ success: true, imageUrl: "no_photo" });
+  return c.json({ success: true, imageUrl: "no_photo", message: "未找到头像" });
 });
 
 app.delete("/admin/people/:id", async (c) => {
