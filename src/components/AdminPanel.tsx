@@ -995,7 +995,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                         </td>
                         <td className="px-2 py-3">
                           <div className="w-10 h-10 mx-auto rounded-full bg-slate-100 text-slate-300 flex items-center justify-center overflow-hidden border border-slate-200">
-                            {p.image_url && p.image_url !== "no_photo" ? <img src={p.image_url} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : <User className="w-5 h-5" />}
+                            {p.image_url && p.image_url !== "no_photo" ? <img src={p.image_url} alt="" className="w-full h-full object-cover object-top" referrerPolicy="no-referrer" /> : <User className="w-5 h-5" />}
                           </div>
                         </td>
                         <td 

@@ -389,7 +389,7 @@ export default function App() {
                       <img
                         src={selectedPerson.image_url}
                         alt={selectedPerson.name}
-                        className="w-full h-full object-cover transition-transform group-hover:scale-110"
+                        className="w-full h-full object-cover object-top transition-transform group-hover:scale-110"
                         referrerPolicy="no-referrer"
                       />
                     ) : (
@@ -512,7 +512,7 @@ export default function App() {
                                 <img
                                   src={archivedPerson.image_url}
                                   alt={rel.personName}
-                                  className="w-full h-full object-cover"
+                                  className="w-full h-full object-cover object-top"
                                   referrerPolicy="no-referrer"
                                 />
                               ) : (

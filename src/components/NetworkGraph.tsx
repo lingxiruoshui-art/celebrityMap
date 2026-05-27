@@ -966,7 +966,7 @@ export default function NetworkGraph({
                     {selectedRelationship.source.image_url && selectedRelationship.source.image_url !== "no_photo" ? (
                       <img 
                         src={selectedRelationship.source.image_url} 
-                        className="w-full h-full object-cover pointer-events-none" 
+                        className="w-full h-full object-cover object-top pointer-events-none" 
                         alt={selectedRelationship.source.name}
                         referrerPolicy="no-referrer"
                       />
@@ -991,7 +991,7 @@ export default function NetworkGraph({
                     {selectedRelationship.target.image_url && selectedRelationship.target.image_url !== "no_photo" ? (
                       <img 
                         src={selectedRelationship.target.image_url} 
-                        className="w-full h-full object-cover pointer-events-none" 
+                        className="w-full h-full object-cover object-top pointer-events-none" 
                         alt={selectedRelationship.target.name}
                         referrerPolicy="no-referrer"
                       />
@@ -1047,7 +1047,7 @@ export default function NetworkGraph({
                                 <img 
                                   src={isSource ? selectedRelationship.source.image_url : selectedRelationship.target.image_url} 
                                   alt={msg.speaker} 
-                                  className="w-full h-full object-cover" 
+                                  className="w-full h-full object-cover object-top" 
                                 />
                               ) : (
                                 <User className="w-3 h-3 text-slate-400" />
