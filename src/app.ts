@@ -1127,24 +1127,225 @@ app.get("/admin/visitor-stats", async (c) => {
   if (c.req.header("x-admin-password") !== getAdminPassword(c)) return c.json({ error: "Unauthorized" }, 401);
   const db = await getDb(c);
   
-  // 1, 2, 3: Optimize DB queries by running them concurrently
-  const [totalRes, deviceRes, regionRes] = await Promise.all([
+  // Fetch raw counts grouped by city + country
+  const [totalRes, deviceRes, rawRegions] = await Promise.all([
     db.prepare("SELECT COUNT(*) as count FROM (SELECT ip, ua, strftime('%Y-%m-%d %H', timestamp) FROM visitor_logs GROUP BY ip, ua, strftime('%Y-%m-%d %H', timestamp))").get() as any,
     db.prepare("SELECT device, COUNT(*) as count FROM (SELECT device, ip, ua, strftime('%Y-%m-%d %H', timestamp) FROM visitor_logs GROUP BY device, ip, ua, strftime('%Y-%m-%d %H', timestamp)) GROUP BY device").all() as any,
     db.prepare(`
-      SELECT 
-        CASE WHEN city != '未知' THEN city ELSE country END as region,
-        COUNT(*) as count 
+      SELECT city, country, COUNT(*) as count 
       FROM (
         SELECT city, country, ip, ua, strftime('%Y-%m-%d %H', timestamp) 
         FROM visitor_logs 
         GROUP BY city, country, ip, ua, strftime('%Y-%m-%d %H', timestamp)
       ) 
-      GROUP BY region 
-      ORDER BY count DESC 
-      LIMIT 10
+      GROUP BY city, country
     `).all() as any
   ]);
+
+  const COUNTRY_CODE_TO_CN: Record<string, string> = {
+    "CN": "中国", "HK": "中国香港", "MO": "中国澳门", "TW": "中国台湾",
+    "US": "美国", "GB": "英国", "UK": "英国", "SG": "新加坡", "JP": "日本",
+    "KR": "韩国", "DE": "德国", "FR": "法国", "CA": "加拿大", "AU": "澳大利亚",
+    "RU": "俄罗斯", "IN": "印度", "MY": "马来西亚", "TH": "泰国", "VN": "越南",
+    "PH": "菲律宾", "ID": "印度尼西亚", "NL": "荷兰", "CH": "瑞士", "SE": "瑞典",
+    "NZ": "新西兰", "IT": "意大利", "ES": "西班牙", "BR": "巴西", "ZA": "南非",
+    "IE": "爱尔兰", "BE": "比利时", "AT": "奥地利", "DK": "丹麦", "FI": "芬兰",
+    "NO": "挪威", "PT": "葡萄牙", "AE": "阿联酋", "SA": "沙特阿拉伯", "IL": "以色列",
+    "TR": "土耳其", "PL": "波兰", "MX": "墨西哥", "UA": "乌克兰", "EG": "埃及",
+    "NG": "尼日利亚", "PK": "巴基斯坦", "BD": "孟加拉国", "IS": "冰岛", "GR": "希腊",
+    "CL": "智利", "CO": "哥伦比亚", "PE": "秘鲁", "AR": "阿根廷", "KH": "柬埔寨",
+    "MM": "缅甸", "LA": "老挝", "NP": "尼泊尔", "LK": "斯里兰卡", "MN": "蒙古",
+    "KZ": "哈萨克斯坦", "UZ": "乌兹别克斯坦",
+  };
+
+  const PROVINCE_MAPPING: Record<string, string> = {
+    "shanghai": "上海", "beijing": "北京", "tianjin": "天津", "chongqing": "重庆",
+    "guangdong": "广东", "guangzhou": "广东", "shenzhen": "广东", "dongguan": "广东",
+    "foshan": "广东", "shantou": "广东", "zhuhai": "广东", "huizhou": "广东",
+    "jiangmen": "广东", "zhongshan": "广东", "zhanjiang": "广东", "maoming": "广东",
+    "zhaoqing": "广东", "meizhou": "广东", "heyuan": "广东", "shanwei": "广东",
+    "yangjiang": "广东", "qingyuan": "广东", "chaozhou": "广东", "jieyang": "广东",
+    "yunfu": "广东",
+    "zhejiang": "浙江", "hangzhou": "浙江", "ningbo": "浙江", "wenzhou": "浙江",
+    "shaoxing": "浙江", "huzhou": "浙江", "jiaxing": "浙江", "jinhua": "浙江",
+    "quzhou": "浙江", "zhoushan": "浙江", "taizhou": "浙江", "lishui": "浙江",
+    "jiangsu": "江苏", "nanjing": "江苏", "suzhou": "江苏", "wuxi": "江苏",
+    "changzhou": "江苏", "xuzhou": "江苏", "nantong": "江苏", "lianyungang": "江苏",
+    "huai'an": "江苏", "huaian": "江苏", "yancheng": "江苏", "yangzhou": "江苏",
+    "zhenjiang": "江苏", "suqian": "江苏",
+    "sichuan": "四川", "chengdu": "四川", "mianyang": "四川", "deyang": "四川",
+    "nanchong": "四川", "yibin": "四川", "luzhou": "四川", "leshan": "四川",
+    "fujian": "福建", "fuzhou": "福建", "xiamen": "福建", "quanzhou": "福建",
+    "zhangzhou": "福建", "putian": "福建", "nan'an": "福建", "nanan": "福建",
+    "longyan": "福建", "sanming": "福建", "nanping": "福建", "ningde": "福建",
+    "shandong": "山东", "jinan": "山东", "qingdao": "山东", "yantai": "山东",
+    "weifang": "山东", "zibo": "山东", "jining": "山东", "linyi": "山东",
+    "dezhou": "山东", "liaocheng": "山东", "heze": "山东", "rizhao": "山东",
+    "zaozhuang": "山东", "dongying": "山东", "weihai": "山东", "taian": "山东",
+    "binzhou": "山东",
+    "hubei": "湖北", "wuhan": "湖北", "yichang": "湖北", "xiangyang": "湖北",
+    "jingzhou": "湖北", "xiaogan": "湖北", "huanggang": "湖北",
+    "hunan": "湖南", "changsha": "湖南", "zhuzhou": "湖南", "xiangtan": "湖南",
+    "hengyang": "湖南", "yueyang": "湖南", "changde": "湖南",
+    "henan": "河南", "zhengzhou": "河南", "luoyang": "河南", "nanyang": "河南",
+    "xinxiang": "河南", "anyang": "河南", "kaifeng": "河南",
+    "hebei": "河北", "shijiazhuang": "河北", "tangshan": "河北", "baoding": "河北",
+    "langfang": "河北", "qinhuangdao": "河北", "handan": "河北",
+    "liaoning": "辽宁", "shenyang": "辽宁", "dalian": "辽宁", "anshan": "辽宁",
+    "fushun": "辽宁",
+    "jilin": "吉林", "changchun": "吉林",
+    "heilongjiang": "黑龙江", "harbin": "黑龙江", "daqing": "黑龙江",
+    "anhui": "安徽", "hefei": "安徽", "wuhu": "安徽", "bengbu": "安徽",
+    "huainan": "安徽", "maanshan": "安徽",
+    "jiangxi": "江西", "nanchang": "江西", "ganzhou": "江西", "jiujiang": "江西",
+    "shaanxi": "陕西", "xian": "陕西", "baoji": "陕西", "xianyang": "陕西",
+    "guangxi": "广西", "nanning": "广西", "guilin": "广西", "liuzhou": "广西",
+    "guizhou": "贵州", "guiyang": "贵州", "zunyi": "贵州",
+    "yunnan": "云南", "kunming": "云南", "dali": "云南", "lijiang": "云南",
+    "hainan": "海南", "haikou": "海南", "sanya": "海南",
+    "shanxi": "山西", "taiyuan": "山西", "datong": "山西",
+    "gansu": "甘肃", "lanzhou": "甘肃", "tianshui": "甘肃",
+    "qinghai": "青海", "xining": "青海",
+    "ningxia": "宁夏", "yinchuan": "宁夏",
+    "xinjiang": "新疆", "urumqi": "新疆",
+    "tibet": "西藏", "lhasa": "西藏",
+    "inner mongolia": "内蒙古", "neimenggu": "内蒙古", "hohhot": "内蒙古", "baotou": "内蒙古",
+    "taiwan": "中国台湾", "hong kong": "中国香港", "macau": "中国澳门", "macao": "中国澳门",
+  };
+
+  const normalizeChineseProvince = (name: string): string => {
+    let norm = name.trim();
+    const provinces = [
+      "北京", "天津", "上海", "重庆",
+      "河北", "山西", "辽宁", "吉林", "黑龙江", "江苏", "浙江", "安徽", "福建", "江西", "山东", "河南", "湖北", "湖南", "广东", "海南", "四川", "贵州", "云南", "陕西", "甘肃", "青海",
+      "内蒙古", "广西", "西藏", "宁夏", "新疆",
+      "香港", "澳门", "台湾"
+    ];
+    for (const prov of provinces) {
+      if (norm.includes(prov)) {
+        if (prov === "香港") return "中国香港";
+        if (prov === "澳门") return "中国澳门";
+        if (prov === "台湾") return "中国台湾";
+        return prov;
+      }
+    }
+    const cityToProvince: Record<string, string> = {
+      "广州": "广东", "深圳": "广东", "东莞": "广东", "佛山": "广东", "中山": "广东", "惠州": "广东", "珠海": "广东", "汕头": "广东", "江门": "广东", "湛江": "广东", "茂名": "广东", "肇庆": "广东",
+      "杭州": "浙江", "宁波": "浙江", "温州": "浙江", "绍兴": "浙江", "金华": "浙江", "台州": "浙江", "嘉兴": "浙江", "湖州": "浙江",
+      "南京": "江苏", "苏州": "江苏", "无锡": "江苏", "常州": "江苏", "南通": "江苏", "徐州": "江苏", "扬州": "江苏", "镇江": "江苏", "泰州": "江苏", "盐城": "江苏", "连云港": "江苏", "淮安": "江苏", "宿迁": "江苏",
+      "成都": "四川", "绵阳": "四川", "德阳": "四川", "南充": "四川", "宜宾": "四川", "泸州": "四川", "乐山": "四川",
+      "福州": "福建", "厦门": "福建", "泉州": "福建", "漳州": "福建", "莆田": "福建", "宁德": "福建",
+      "济南": "山东", "青岛": "山东", "烟台": "山东", "潍坊": "山东", "淄博": "山东", "临沂": "山东", "济宁": "山东",
+      "武汉": "湖北", "宜昌": "湖北", "襄阳": "湖北", "荆州": "湖北",
+      "长沙": "湖南", "株洲": "湖南", "湘潭": "湖南", "衡阳": "湖南", "岳阳": "湖南",
+      "郑州": "河南", "洛阳": "河南", "南阳": "河南",
+      "石家庄": "河北", "唐山": "河北", "保定": "河北",
+      "沈阳": "辽宁", "大连": "辽宁",
+      "长春": "吉林", "哈尔滨": "黑龙江", "大庆": "黑龙江",
+      "合肥": "安徽", "芜湖": "安徽",
+      "南昌": "江西", "赣州": "江西",
+      "西安": "陕西", "宝鸡": "陕西",
+      "南宁": "广西", "桂林": "广西", "柳州": "广西",
+      "贵阳": "贵州", "遵义": "贵州",
+      "昆明": "云南", "大理": "云南", "丽江": "云南",
+      "海口": "海南", "三亚": "海南",
+      "太原": "山西", "大同": "山西",
+      "兰州": "甘肃", "天水": "甘肃",
+      "西宁": "青海", "银川": "宁夏", "乌鲁木齐": "新疆", "拉萨": "西藏",
+      "呼和浩特": "内蒙古", "包头": "内蒙古",
+    };
+    for (const [city, prov] of Object.entries(cityToProvince)) {
+      if (norm.includes(city)) {
+        return prov;
+      }
+    }
+    return norm;
+  };
+
+  const aggregated: Record<string, number> = {};
+  if (Array.isArray(rawRegions)) {
+    for (const row of rawRegions) {
+      const rawCity = (row.city || '未知').trim();
+      const rawCountry = (row.country || '未知').trim();
+      const count = row.count || 0;
+
+      let resolvedName = "其他/未知";
+      const countryUpper = rawCountry.toUpperCase();
+
+      const isChineseCity = /[\u4e00-\u9fa5]/.test(rawCity);
+      const isChineseCountry = /[\u4e00-\u9fa5]/.test(rawCountry);
+
+      if (countryUpper === "CN" || rawCountry === "中国" || rawCountry === "China" || (isChineseCountry && (rawCountry.includes("中国") || rawCountry === "中国"))) {
+        if (isChineseCity) {
+          resolvedName = normalizeChineseProvince(rawCity);
+        } else {
+          const cityLower = rawCity.toLowerCase();
+          if (PROVINCE_MAPPING[cityLower]) {
+            resolvedName = PROVINCE_MAPPING[cityLower];
+          } else if (rawCity !== "未知" && rawCity !== "unknown" && rawCity !== "") {
+            resolvedName = rawCity;
+          } else {
+            resolvedName = "中国";
+          }
+        }
+      } else if (countryUpper === "HK" || rawCountry === "Hong Kong" || rawCity.toLowerCase() === "hong kong" || rawCountry.includes("香港") || rawCity.includes("香港")) {
+        resolvedName = "中国香港";
+      } else if (countryUpper === "MO" || rawCountry === "Macau" || rawCountry === "Macao" || rawCity.toLowerCase() === "macau" || rawCity.toLowerCase() === "macao" || rawCountry.includes("澳门") || rawCity.includes("澳门")) {
+        resolvedName = "中国澳门";
+      } else if (countryUpper === "TW" || rawCountry === "Taiwan" || rawCity.toLowerCase() === "taiwan" || rawCountry.includes("台湾") || rawCity.includes("台湾")) {
+        resolvedName = "中国台湾";
+      } else {
+        if (COUNTRY_CODE_TO_CN[countryUpper]) {
+          resolvedName = COUNTRY_CODE_TO_CN[countryUpper];
+        } else if (isChineseCountry) {
+          resolvedName = rawCountry;
+        } else {
+          const countryLower = rawCountry.toLowerCase();
+          let foundCountry = "";
+          for (const [code, cn] of Object.entries(COUNTRY_CODE_TO_CN)) {
+            if (code.toLowerCase() === countryLower) {
+              foundCountry = cn;
+              break;
+            }
+          }
+          const commonNames: Record<string, string> = {
+            "united states": "美国", "united kingdom": "英国", "singapore": "新加坡", "japan": "日本",
+            "germany": "德国", "france": "法国", "australia": "澳大利亚", "canada": "加拿大",
+            "south korea": "韩国", "russia": "俄罗斯", "india": "印度", "malaysia": "马来西亚",
+            "thailand": "泰国", "vietnam": "越南", "philippines": "菲律宾", "indonesia": "印度尼西亚",
+            "netherlands": "荷兰", "switzerland": "瑞士", "sweden": "瑞典", "new zealand": "新西兰",
+            "italy": "意大利", "spain": "西班牙", "brazil": "巴西", "south africa": "南非",
+            "london": "英国", "america": "美国", "england": "英国"
+          };
+          
+          if (foundCountry) {
+            resolvedName = foundCountry;
+          } else if (commonNames[countryLower]) {
+            resolvedName = commonNames[countryLower];
+          } else if (rawCountry !== "未知" && rawCountry !== "unknown" && rawCountry !== "") {
+            resolvedName = rawCountry;
+          } else if (rawCity !== "未知" && rawCity !== "unknown" && rawCity !== "") {
+            const cityLower = rawCity.toLowerCase();
+            if (cityLower === "singapore") resolvedName = "新加坡";
+            else if (cityLower === "london") resolvedName = "英国";
+            else if (cityLower === "denver" || cityLower === "columbus" || cityLower === "new york" || cityLower === "new york city" || cityLower === "los angeles") resolvedName = "美国";
+            else if (cityLower === "sydney") resolvedName = "澳大利亚";
+            else if (PROVINCE_MAPPING[cityLower]) resolvedName = PROVINCE_MAPPING[cityLower];
+            else resolvedName = rawCity;
+          } else {
+            resolvedName = "未知地区";
+          }
+        }
+      }
+
+      if (resolvedName === "未知") resolvedName = "未知地区";
+      aggregated[resolvedName] = (aggregated[resolvedName] || 0) + count;
+    }
+  }
+
+  const regions = Object.entries(aggregated)
+    .map(([region, count]) => ({ region, count }))
+    .sort((a, b) => b.count - a.count);
 
   const totalVisits = totalRes?.count || 0;
 
@@ -1156,7 +1357,7 @@ app.get("/admin/visitor-stats", async (c) => {
   return c.json({
     totalVisits,
     deviceStats,
-    regions: regionRes || []
+    regions
   });
 });
 

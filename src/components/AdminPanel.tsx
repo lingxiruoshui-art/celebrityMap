@@ -83,6 +83,7 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
     deviceStats: { Desktop: number; Mobile: number };
     regions: { region: string; count: number }[];
   } | null>(null);
+  const [visitorRegionPage, setVisitorRegionPage] = useState(1);
 
   // Audit states
   const [feedbacks, setFeedbacks] = useState<any[]>([]);
@@ -1518,32 +1519,96 @@ export default function AdminPanel({ onClose, onAuthorized, onPreviewPerson }: A
                   </div>
 
                   {/* Regions Table */}
-                  <div className="bg-white border border-slate-100 rounded-3xl overflow-hidden shadow-sm">
+                  <div className="bg-white border border-slate-100 rounded-3xl overflow-hidden shadow-sm flex flex-col">
                     <div className="p-5 border-b border-slate-100 flex items-center justify-between">
                       <h4 className="font-bold text-slate-800">全球客源地</h4>
-                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">展示 {visitorStats.regions.length} 个地区</span>
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">共 {(visitorStats.regions || []).length} 个地区</span>
                     </div>
-                    <div className="p-2 sm:p-5 h-[340px] md:h-[400px] overflow-y-auto">
+                    <div className="p-2 sm:p-5 min-h-[250px] overflow-y-auto flex-1">
                       <div className="space-y-4 mt-2">
-                        {visitorStats.regions.map((reg, idx) => (
-                          <div key={idx} className="flex items-center gap-3 sm:gap-4 group">
-                            <div className="w-7 h-7 shrink-0 bg-slate-50 flex items-center justify-center rounded-lg text-[10px] font-black text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors">
-                              {idx + 1}
-                            </div>
-                            <div className="w-16 sm:w-24 shrink-0 text-xs sm:text-sm font-bold text-slate-700 truncate">{reg.region}</div>
-                            <div className="flex-1 h-2 sm:h-2 bg-slate-50 rounded-full overflow-hidden relative">
-                              <motion.div 
-                                initial={{ width: 0 }}
-                                animate={{ width: `${(reg.count / Math.max(...visitorStats.regions.map(r => r.count))) * 100}%` }}
-                                className="h-full bg-indigo-500/80 rounded-full"
-                              />
-                            </div>
-                            <div className="w-32 shrink-0 flex items-center justify-end gap-2 text-[10px] sm:text-xs">
-                              <span className="text-slate-400 font-bold">占比 {(reg.count / visitorStats.totalVisits * 100).toFixed(1)}%</span>
-                              <span className="text-slate-800 font-black w-8 text-right">{reg.count}</span>
-                            </div>
-                          </div>
-                        ))}
+                        {!(visitorStats.regions && visitorStats.regions.length > 0) ? (
+                          <div className="text-center py-12 text-slate-400 text-xs font-medium">暂无客源地数据</div>
+                        ) : (
+                          (() => {
+                            const itemsPerPageRegion = 15;
+                            const totalPagesRegion = Math.ceil((visitorStats.regions || []).length / itemsPerPageRegion);
+                            const activePage = Math.min(visitorRegionPage, Math.max(1, totalPagesRegion));
+                            const paginated = (visitorStats.regions || []).slice((activePage - 1) * itemsPerPageRegion, activePage * itemsPerPageRegion);
+                            const maxCount = Math.max(...visitorStats.regions.map(r => r.count), 1);
+                            
+                            return (
+                              <>
+                                {paginated.map((reg, idx) => {
+                                  const globalIdx = (activePage - 1) * itemsPerPageRegion + idx;
+                                  return (
+                                    <div key={globalIdx} className="flex items-center gap-3 sm:gap-4 group">
+                                      <div className="w-7 h-7 shrink-0 bg-slate-50 flex items-center justify-center rounded-lg text-[10px] font-black text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors">
+                                        {globalIdx + 1}
+                                      </div>
+                                      <div className="w-24 sm:w-32 shrink-0 text-xs sm:text-sm font-bold text-slate-700 truncate" title={reg.region}>
+                                        {reg.region}
+                                      </div>
+                                      <div className="flex-1 h-2 bg-slate-50 rounded-full overflow-hidden relative">
+                                        <motion.div 
+                                          initial={{ width: 0 }}
+                                          animate={{ width: `${(reg.count / maxCount) * 100}%` }}
+                                          className="h-full bg-indigo-500/80 rounded-full"
+                                        />
+                                      </div>
+                                      <div className="w-32 shrink-0 flex items-center justify-end gap-2 text-[10px] sm:text-xs">
+                                        <span className="text-slate-400 font-bold">占比 {(reg.count / (visitorStats.totalVisits || 1) * 100).toFixed(1)}%</span>
+                                        <span className="text-slate-800 font-black w-8 text-right">{reg.count}</span>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+
+                                {totalPagesRegion > 1 && (
+                                  <div className="flex items-center justify-between border-t border-slate-100 pt-4 mt-4 px-1">
+                                    <div className="text-[10px] sm:text-xs text-slate-400 font-medium">
+                                      显示 {(activePage - 1) * itemsPerPageRegion + 1} 到 {Math.min(activePage * itemsPerPageRegion, visitorStats.regions.length)} 条，共 {visitorStats.regions.length} 条
+                                    </div>
+                                    <div className="flex gap-1">
+                                      <button
+                                        onClick={() => setVisitorRegionPage(p => Math.max(1, p - 1))}
+                                        disabled={activePage === 1}
+                                        className="p-1 rounded bg-slate-50 text-slate-500 hover:bg-indigo-50 hover:text-indigo-600 disabled:opacity-50 transition-colors"
+                                        title="上一页"
+                                      >
+                                        <ChevronLeft className="w-4 h-4" />
+                                      </button>
+                                      {Array.from({ length: totalPagesRegion }).map((_, i) => {
+                                        const p = i + 1;
+                                        if (p === 1 || p === totalPagesRegion || (p >= activePage - 1 && p <= activePage + 1)) {
+                                          return (
+                                            <button
+                                              key={p}
+                                              onClick={() => setVisitorRegionPage(p)}
+                                              className={`w-6 h-6 rounded text-[10px] font-bold transition-colors ${activePage === p ? 'bg-indigo-600 text-white' : 'bg-slate-50 text-slate-600 hover:bg-indigo-50 hover:text-indigo-600'}`}
+                                            >
+                                              {p}
+                                            </button>
+                                          );
+                                        } else if (p === activePage - 2 || p === activePage + 2) {
+                                          return <span key={p} className="w-6 h-6 flex items-center justify-center text-[10px] text-slate-400">...</span>;
+                                        }
+                                        return null;
+                                      })}
+                                      <button
+                                        onClick={() => setVisitorRegionPage(p => Math.min(totalPagesRegion, p + 1))}
+                                        disabled={activePage === totalPagesRegion}
+                                        className="p-1 rounded bg-slate-50 text-slate-500 hover:bg-indigo-50 hover:text-indigo-600 disabled:opacity-50 transition-colors"
+                                        title="下一页"
+                                      >
+                                        <ChevronRight className="w-4 h-4" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                              </>
+                            );
+                          })()
+                        )}
                       </div>
                     </div>
                   </div>
