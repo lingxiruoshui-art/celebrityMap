@@ -320,6 +320,7 @@ export default {
               // Wikipedia fetch
               const headers = { "User-Agent": "HistoricalArchiveApp/1.0" };
               let wikiMeta = { normalizedName: targetName, description: "", imageUrl: null };
+              let wikidataId = null;
               try {
                   const searchRes = await fetch(`https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(targetName)}&language=zh&format=json`, { headers });
                   const searchData = await searchRes.json();
@@ -336,6 +337,7 @@ export default {
                   }
                   
                   if (entity) {
+                      wikidataId = entity.id;
                       const entityRes = await fetch(`https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${entity.id}&props=claims|descriptions|labels&languages=zh|en&format=json`, { headers });
                       const entityData = await entityRes.json();
                       const item = entityData.entities[entity.id];
@@ -423,6 +425,63 @@ export default {
               await reportState({ target: targetName, phase: "ai_core", wikiMeta });
               await reportLog(`[WIKI] 特征采集成功：${wikiMeta.description.substring(0, 100)}`, "success");
               
+              // ============ PHASE: OPTIMIZER CHECK ============
+              let existsCheck = null;
+              try {
+                  const checkUrl = `${origin}/api/internal/check-person?wikidataId=${encodeURIComponent(wikidataId || "")}&name=${encodeURIComponent(targetName)}`;
+                  const checkRes = await fetch(checkUrl, {
+                      headers: { "Authorization": `Bearer ${secret}` }
+                  });
+                  if (checkRes.ok) {
+                      existsCheck = await checkRes.json();
+                  }
+              } catch (e) {
+                  console.error("Failed to check if person exists", e);
+              }
+
+              if (existsCheck && existsCheck.exists && existsCheck.person) {
+                  const p = existsCheck.person;
+                  await reportLog(`[时空折叠] 生效：经 Wikidata 对齐，该节点 (ID: ${wikidataId || p.wikidata_id || 'Q_MATCH'}) 已存在于史册库，对应主档案为「${p.name}」。`, "success");
+                  await reportLog(`[优化激活] 正在自动同步多重别名属性并关联，跳过重复的 AI 文本重新生成，秒级完成归档！`, "info");
+                  
+                  const pAchievements = typeof p.achievements === 'string' ? JSON.parse(p.achievements) : (p.achievements || []);
+                  const pRelations = typeof p.raw_relationships === 'string' ? JSON.parse(p.raw_relationships) : (p.raw_relationships || []);
+
+                  const finalPersonData = {
+                      category: p.category || "未知",
+                      keyword: p.keyword || "",
+                      biography: p.biography || "",
+                      achievements: pAchievements,
+                      relationships: pRelations,
+                      lifespan: p.lifespan || "",
+                      birthplace: p.birthplace || "",
+                      accepted: true,
+                      standardChineseName: p.name || targetName
+                  };
+
+                  await reportLog("正在直接传输镜像并在主服务器同步落库...", "heartbeat");
+                  const submitRes = await fetch(`${origin}/api/internal/submit`, {
+                      method: "POST",
+                      headers: { "Authorization": `Bearer ${secret}`, "Content-Type": "application/json" },
+                      body: JSON.stringify({ taskId, targetName: p.name || targetName, success: true, personData: finalPersonData, wikiMeta })
+                  });
+                  
+                  if (!submitRes.ok) {
+                      throw new Error(`同步握手失败 (Pages App 响应异常): ` + await submitRes.text());
+                  }
+                  
+                  const submitInfo = await submitRes.json();
+                  if (!submitInfo.success) {
+                      throw new Error(submitInfo.error || "中心服务器拒绝入库申请");
+                  }
+                  
+                  await reportLog(`[时空折叠] 画像与关系别名对齐合并完毕。`, "success");
+                  await reportState({ status: "success", target: p.name || targetName, newArrivals: [], path: [{ name: p.name || targetName, type: "镜像对齐合并完成" }] });
+                  
+                  msg.ack();
+                  console.log(`[Worker Queue] Ack'd message (optimized bypass)`);
+                  continue;
+              }
               
               // ============ PHASE: AI CORE ============
               const corePrompt = `你是一位研究历史人物的传记专家。请为人物 "${targetName}" 撰写一份既有历史厚度又风趣幽默的传记。

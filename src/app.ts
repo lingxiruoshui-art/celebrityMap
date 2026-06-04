@@ -2461,6 +2461,28 @@ app.get("/internal/next-task", async (c) => {
     }
 });
 
+// 1.5. Check if person already exists by Wikidata ID or name (optimizer)
+app.get("/internal/check-person", async (c) => {
+    if (!checkInternalSecret(c)) return c.json({ error: "Unauthorized" }, 401);
+    const db = await getDb(c);
+    const wikidataId = c.req.query("wikidataId");
+    const name = c.req.query("name");
+    
+    if (wikidataId) {
+        const person = await db.prepare("SELECT id, name, category, keyword, biography, achievements, raw_relationships, lifespan, birthplace, image_url, wikidata_id FROM people WHERE wikidata_id = ?").get(wikidataId) as any;
+        if (person) {
+            return c.json({ exists: true, person });
+        }
+    }
+    if (name) {
+        const person = await db.prepare("SELECT id, name, category, keyword, biography, achievements, raw_relationships, lifespan, birthplace, image_url, wikidata_id FROM people WHERE name = ? COLLATE NOCASE").get(name) as any;
+        if (person) {
+            return c.json({ exists: true, person });
+        }
+    }
+    return c.json({ exists: false });
+});
+
 // 2. Worker reports state
 app.post("/internal/state", async (c) => {
     if (!checkInternalSecret(c)) return c.json({ error: "Unauthorized" }, 401);
